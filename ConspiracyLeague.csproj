@@ -1,0 +1,22 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ConspiracyLeague</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Core — отдельный проект с игровой логикой, его исходники сюда не включаем. -->
+  <ItemGroup>
+    <Compile Remove="Core/**" />
+    <None Remove="Core/**" />
+    <EmbeddedResource Remove="Core/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Core/ConspiracyLeague.Core.csproj" />
+  </ItemGroup>
+
+</Project>
