@@ -12,6 +12,7 @@ public sealed class HomelessCard : PersonCard
       name: "Бездомный",
       successChancePercent: 50,
       cost: 0,
+      influence: 1,
       onPlayFromHand: new GainMoneyEffect(2),
       onPlacedInHeadquarters: Effect.None)
   {

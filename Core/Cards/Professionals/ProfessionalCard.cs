@@ -1,5 +1,6 @@
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Passives;
+using ConspiracyLeague.Core.Theories;
 
 namespace ConspiracyLeague.Core.Cards.Professionals;
 
@@ -21,14 +22,20 @@ namespace ConspiracyLeague.Core.Cards.Professionals;
 /// </remarks>
 public abstract class ProfessionalCard : PersonCard
 {
+  /// <summary>
+  /// Влияние профессионала.
+  /// </summary>
+  public const int ProfessionalInfluence = 3;
+
   protected ProfessionalCard(
     string name,
     int successChancePercent,
     int cost,
     Effect onPlayFromHand,
     Effect onPlacedInHeadquarters,
-    PassiveAbility? passive = null)
-    : base(name, successChancePercent, cost, onPlayFromHand, onPlacedInHeadquarters, passive)
+    PassiveAbility? passive = null,
+    Theory? theory = null)
+    : base(name, successChancePercent, cost, ProfessionalInfluence, onPlayFromHand, onPlacedInHeadquarters, passive, theory)
   {
   }
 }

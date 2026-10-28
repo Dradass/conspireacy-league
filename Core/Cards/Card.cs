@@ -1,6 +1,7 @@
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Core.Passives;
+using ConspiracyLeague.Core.Theories;
 
 namespace ConspiracyLeague.Core.Cards;
 
@@ -15,6 +16,11 @@ public abstract class Card
   public string Name { get; }
 
   /// <summary>
+  /// Теория, к которой относится карточка. У персон может отсутствовать.
+  /// </summary>
+  public Theory? Theory { get; }
+
+  /// <summary>
   /// Действие при розыгрыше с руки.
   /// </summary>
   public Effect OnPlayFromHand { get; }
@@ -24,10 +30,11 @@ public abstract class Card
   /// </summary>
   public PassiveAbility Passive { get; }
 
-  protected Card(string name, Effect onPlayFromHand, PassiveAbility? passive = null)
+  protected Card(string name, Theory? theory, Effect onPlayFromHand, PassiveAbility? passive = null)
   {
     ArgumentException.ThrowIfNullOrWhiteSpace(name);
     Name = name;
+    Theory = theory;
     OnPlayFromHand = onPlayFromHand;
     Passive = passive ?? PassiveAbility.None;
   }

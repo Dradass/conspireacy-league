@@ -12,6 +12,7 @@ public sealed class CitizenCard : PersonCard
       name: "Гражданин",
       successChancePercent: 80,
       cost: 4,
+      influence: 2,
       onPlayFromHand: new ChooseOneEffect(
         new GainMoneyEffect(3),
         new AddAdeptsEffect(1, AdeptDestination.Theory)),

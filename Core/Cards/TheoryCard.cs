@@ -1,5 +1,6 @@
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Passives;
+using ConspiracyLeague.Core.Theories;
 
 namespace ConspiracyLeague.Core.Cards;
 
@@ -8,8 +9,13 @@ namespace ConspiracyLeague.Core.Cards;
 /// </summary>
 public abstract class TheoryCard : Card
 {
-  protected TheoryCard(string name, Effect onPlayFromHand, PassiveAbility? passive = null)
-    : base(name, onPlayFromHand, passive)
+  /// <summary>
+  /// Теория, к которой относится карточка. У карточки теории она обязательна.
+  /// </summary>
+  public new Theory Theory => base.Theory!;
+
+  protected TheoryCard(string name, Theory theory, Effect onPlayFromHand, PassiveAbility? passive = null)
+    : base(name, theory ?? throw new ArgumentNullException(nameof(theory)), onPlayFromHand, passive)
   {
   }
 }

@@ -1,6 +1,7 @@
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Core.Passives;
+using ConspiracyLeague.Core.Theories;
 
 namespace ConspiracyLeague.Core.Cards;
 
@@ -21,6 +22,11 @@ public abstract class PersonCard : Card
   public int Cost { get; }
 
   /// <summary>
+  /// Влияние.
+  /// </summary>
+  public int Influence { get; }
+
+  /// <summary>
   /// Действие при выкладывании в штаб теории.
   /// </summary>
   public Effect OnPlacedInHeadquarters { get; }
@@ -29,16 +35,20 @@ public abstract class PersonCard : Card
     string name,
     int successChancePercent,
     int cost,
+    int influence,
     Effect onPlayFromHand,
     Effect onPlacedInHeadquarters,
-    PassiveAbility? passive = null)
-    : base(name, onPlayFromHand, passive)
+    PassiveAbility? passive = null,
+    Theory? theory = null)
+    : base(name, theory, onPlayFromHand, passive)
   {
     ArgumentOutOfRangeException.ThrowIfNegative(successChancePercent);
     ArgumentOutOfRangeException.ThrowIfGreaterThan(successChancePercent, 100);
     ArgumentOutOfRangeException.ThrowIfNegative(cost);
+    ArgumentOutOfRangeException.ThrowIfNegative(influence);
     SuccessChancePercent = successChancePercent;
     Cost = cost;
+    Influence = influence;
     OnPlacedInHeadquarters = onPlacedInHeadquarters;
   }
 
