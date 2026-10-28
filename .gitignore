@@ -1,0 +1,11 @@
+# Godot
+.godot/
+/android/
+# .NET
+bin/
+obj/
+*.user
+# IDE
+.vs/
+.idea/
+.vscode/

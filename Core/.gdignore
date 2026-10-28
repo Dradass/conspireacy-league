@@ -1,0 +1,4 @@
+<ItemGroup>
+  <Compile Remove="Core/**" />
+  <ProjectReference Include="Core/ConspiracyLeague.Core.csproj" />
+</ItemGroup>
