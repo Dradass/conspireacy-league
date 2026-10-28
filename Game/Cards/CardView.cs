@@ -11,6 +11,7 @@ public partial class CardView : Node2D
   private static readonly Vector2 LiftedScale = Vector2.One * 1.08f;
 
   private bool _lifted;
+  private bool _isHeadquarters;
 
   /// <summary>
   /// Отображаемая карточка.
@@ -32,9 +33,23 @@ public partial class CardView : Node2D
   }
 
   /// <summary>
+  /// Карточка — штаб теории.
+  /// </summary>
+  public bool IsHeadquarters
+  {
+    get => _isHeadquarters;
+    set
+    {
+      _isHeadquarters = value;
+      QueueRedraw();
+    }
+  }
+
+  /// <summary>
   /// Создать отображение карточки.
   /// </summary>
   public static CardView Create(Card card) => new() { Card = card, Name = card.GetType().Name };
 
-  public override void _Draw() => CardPainter.DrawFace(this, new Rect2(-CardPainter.CardSize / 2, CardPainter.CardSize), Card, _lifted);
+  public override void _Draw() =>
+    CardPainter.DrawFace(this, new Rect2(-CardPainter.CardSize / 2, CardPainter.CardSize), Card, _lifted, _isHeadquarters);
 }

@@ -13,6 +13,11 @@ public partial class DeckView : Control
   private const float LayerOffset = 3f;
   private const float LabelHeight = 24f;
 
+  /// <summary>
+  /// Карточки в колоде мельче, чем на столе: колоды не должны закрывать зону игрока.
+  /// </summary>
+  private static readonly Vector2 DeckCardSize = CardPainter.CardSize * 0.75f;
+
   private static readonly Color EmptyColor = new(1, 1, 1, 0.35f);
   private static readonly Color LabelColor = new("fdfaf2");
 
@@ -43,7 +48,7 @@ public partial class DeckView : Control
       _title = title,
       _accent = cards.Count > 0 ? CardPainter.AccentOf(cards[0]) : EmptyColor,
       MouseFilter = MouseFilterEnum.Stop,
-      CustomMinimumSize = CardPainter.CardSize + new Vector2(LayerOffset, LayerOffset) * (MaxVisibleLayers - 1) + new Vector2(0, LabelHeight),
+      CustomMinimumSize = DeckCardSize + new Vector2(LayerOffset, LayerOffset) * (MaxVisibleLayers - 1) + new Vector2(0, LabelHeight),
     };
     for (var i = cards.Count - 1; i >= 0; i--)
       deck.Push(cards[i]);
@@ -87,7 +92,7 @@ public partial class DeckView : Control
       CardPainter.DrawBack(this, LayerRect(i), _accent, i == layers - 1 ? _title : null);
 
     var labelRect = new Rect2(0, Size.Y - LabelHeight, Size.X, LabelHeight);
-    CardPainter.DrawCenteredText(this, $"{_title}: {_cards.Count}", labelRect, 14, LabelColor);
+    CardPainter.DrawCenteredText(this, $"Карт: {_cards.Count}", labelRect, 14, LabelColor);
   }
 
   private void Refresh()
@@ -102,7 +107,7 @@ public partial class DeckView : Control
   private static Rect2 LayerRect(int layer)
   {
     var bottom = new Vector2(0, LayerOffset * (MaxVisibleLayers - 1));
-    return new Rect2(bottom + new Vector2(LayerOffset, -LayerOffset) * layer, CardPainter.CardSize);
+    return new Rect2(bottom + new Vector2(LayerOffset, -LayerOffset) * layer, DeckCardSize);
   }
 
   private Rect2 TopCardRect() => LayerRect(Mathf.Max(Mathf.Min(_cards.Count, MaxVisibleLayers) - 1, 0));

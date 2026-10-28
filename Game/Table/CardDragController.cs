@@ -1,4 +1,6 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Field;
+using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Cards;
 using ConspiracyLeague.Game.Ui;
 using Godot;
@@ -6,38 +8,44 @@ using Godot;
 namespace ConspiracyLeague.Game.Table;
 
 /// <summary>
-/// Перетаскивание карточек: из колоды на стол и между ячейками стола.
+/// Перетаскивание карточек из колоды на стол.
 /// </summary>
 /// <remarks>
-/// Карточку можно положить только в свободную ячейку сетки. Иначе (или по Esc)
-/// она возвращается туда, откуда её взяли.
+/// Куда можно положить карточку, решает <see cref="PlayingField"/>. Если туда нельзя (или нажат Esc),
+/// карточка возвращается в колоду. Выложенные карточки больше не перемещаются.
 /// </remarks>
 public partial class CardDragController : Node
 {
   private const double ReturnDuration = 0.2;
 
   private Board _board = null!;
+  private Player _player = null!;
   private CanvasLayer _dragLayer = null!;
   private Drag? _drag;
+
+  /// <summary>
+  /// Карточку не дали положить; аргумент — причина.
+  /// </summary>
+  public event Action<string>? PlacementDenied;
 
   /// <summary>
   /// Перетаскиваемая карточка и откуда её взяли.
   /// </summary>
   /// <param name="View">Карточка.</param>
-  /// <param name="GrabOffset">Смещение центра карточки относительно курсора.</param>
   /// <param name="SourceDeck">Колода, из которой взяли карточку.</param>
-  /// <param name="SourceCell">Ячейка, из которой взяли карточку.</param>
-  private sealed record Drag(CardView View, Vector2 GrabOffset, DeckView? SourceDeck, Vector2I? SourceCell);
+  private sealed record Drag(CardView View, DeckView SourceDeck);
 
   /// <summary>
   /// Настроить контроллер.
   /// </summary>
   /// <param name="board">Стол.</param>
+  /// <param name="player">Игрок, который выкладывает карточки.</param>
   /// <param name="dragLayer">Слой поверх интерфейса, следующий за камерой: в нём летит карточка.</param>
   /// <param name="decks">Колоды, из которых можно тянуть карточки.</param>
-  public void Initialize(Board board, CanvasLayer dragLayer, IEnumerable<DeckView> decks)
+  public void Initialize(Board board, Player player, CanvasLayer dragLayer, IEnumerable<DeckView> decks)
   {
     _board = board;
+    _player = player;
     _dragLayer = dragLayer;
     foreach (var deck in decks)
       deck.CardDragStarted += OnDeckCardDragStarted;
@@ -58,28 +66,15 @@ public partial class CardDragController : Node
     }
   }
 
-  public override void _UnhandledInput(InputEvent @event)
-  {
-    if (_drag is not null || @event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
-      return;
-
-    var mouse = MouseOnTable();
-    if (_board.CellAt(mouse) is not { } cell || _board.Take(cell) is not { } view)
-      return;
-
-    _dragLayer.AddChild(view);
-    Begin(new Drag(view, view.Position - mouse, null, cell));
-    GetViewport().SetInputAsHandled();
-  }
-
   public override void _Process(double delta)
   {
     // Обновляем каждый кадр, а не только при движении мыши: камера может сдвинуться под карточкой.
     if (_drag is null)
       return;
 
-    _drag.View.Position = MouseOnTable() + _drag.GrabOffset;
-    _board.Highlight(_board.CellAt(_drag.View.Position));
+    _drag.View.Position = MouseOnTable();
+    var cell = _board.CellAt(_drag.View.Position);
+    _board.Highlight(cell, cell is { } target ? Check(_drag.View.Card, target) : null);
   }
 
   private void OnDeckCardDragStarted(DeckView deck, Card card)
@@ -92,14 +87,10 @@ public partial class CardDragController : Node
 
     var view = CardView.Create(card);
     view.Position = MouseOnTable();
+    view.Lifted = true;
     _dragLayer.AddChild(view);
-    Begin(new Drag(view, Vector2.Zero, deck, null));
-  }
-
-  private void Begin(Drag drag)
-  {
-    _drag = drag;
-    drag.View.Lifted = true;
+    _drag = new Drag(view, deck);
+    _board.ShowAvailable(_board.Field.AvailableCells(card, _player));
     Input.SetDefaultCursorShape(Input.CursorShape.Drag);
   }
 
@@ -108,19 +99,29 @@ public partial class CardDragController : Node
     if (End() is not { } drag)
       return;
 
-    if (_board.CellAt(drag.View.Position) is { } cell && _board.IsFree(cell))
+    if (_board.CellAt(drag.View.Position) is not { } cell)
     {
-      _dragLayer.RemoveChild(drag.View);
-      _board.Place(drag.View, cell);
+      ReturnToDeck(drag);
+      return;
     }
-    else
-      ReturnToSource(drag);
+
+    var check = Check(drag.View.Card, cell);
+    if (!check.IsAllowed)
+    {
+      PlacementDenied?.Invoke(check.Reason!);
+      ReturnToDeck(drag);
+      return;
+    }
+
+    drag.View.IsHeadquarters = _board.Field.Place(drag.View.Card, cell.ToCell(), _player).CreatesHeadquarters;
+    _dragLayer.RemoveChild(drag.View);
+    _board.Place(drag.View, cell);
   }
 
   private void Cancel()
   {
     if (End() is { } drag)
-      ReturnToSource(drag);
+      ReturnToDeck(drag);
   }
 
   private Drag? End()
@@ -128,23 +129,15 @@ public partial class CardDragController : Node
     var drag = _drag;
     _drag = null;
     _board.Highlight(null);
+    _board.HideAvailable();
     Input.SetDefaultCursorShape();
     return drag;
   }
 
-  private void ReturnToSource(Drag drag)
+  private void ReturnToDeck(Drag drag)
   {
     var view = drag.View;
-    if (drag.SourceCell is { } cell)
-    {
-      _dragLayer.RemoveChild(view);
-      _board.Place(view, cell);
-      return;
-    }
-
-    if (drag.SourceDeck is not { } deck)
-      return;
-
+    var deck = drag.SourceDeck;
     // Колода живёт в координатах экрана, карточка — в координатах стола.
     var target = GetViewport().GetCanvasTransform().AffineInverse() * deck.TopCardCenter;
     var tween = view.CreateTween();
@@ -157,6 +150,8 @@ public partial class CardDragController : Node
       deck.Push(view.Card);
     }));
   }
+
+  private PlacementCheck Check(Card card, Vector2I cell) => _board.Field.Check(card, cell.ToCell(), _player);
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
 }
