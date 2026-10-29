@@ -9,6 +9,11 @@ namespace ConspiracyLeague.Core.Field;
 /// </summary>
 public sealed class TheoryColumn
 {
+  /// <summary>
+  /// Штаб проверяется на состоятельность, только если лидеров (карточек в стопке) больше этого числа.
+  /// </summary>
+  public const int SolvencyCheckLeadersThreshold = 3;
+
   private readonly List<TheoryMember> _members = [];
 
   /// <summary>
@@ -50,6 +55,28 @@ public sealed class TheoryColumn
   /// Количество адептов теории.
   /// </summary>
   public int Adepts { get; private set; }
+
+  /// <summary>
+  /// Штаб теории закрыт как несостоятельный: в стопку больше нельзя класть карточки, адепты не приходят
+  /// и не приносят денег.
+  /// </summary>
+  public bool IsClosed { get; private set; }
+
+  /// <summary>
+  /// Несостоятелен ли штаб: в нём больше <see cref="SolvencyCheckLeadersThreshold"/> лидеров,
+  /// и бездомных среди них больше, чем остальных персонажей. Штабы с меньшим числом лидеров не проверяются.
+  /// </summary>
+  public bool IsInsolvent
+  {
+    get
+    {
+      if (_members.Count <= SolvencyCheckLeadersThreshold)
+        return false;
+
+      var homeless = _members.Count(member => member.Card is HomelessCard);
+      return homeless > _members.Count - homeless;
+    }
+  }
 
   /// <summary>
   /// Ячейка карточки теории — нижней в стопке. На неё ставятся фигурки адептов.
@@ -96,6 +123,8 @@ public sealed class TheoryColumn
   internal void Add(TheoryMember member) => _members.Add(member);
 
   internal void AddAdepts(int count) => Adepts += count;
+
+  internal void Close() => IsClosed = true;
 
   public override string ToString() => Theory.Name;
 }

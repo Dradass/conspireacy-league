@@ -35,6 +35,16 @@ public partial class Board : Node2D
   private const float MarketDeckLayerOffset = 3f;
   private const double MarketOpenDuration = 0.35;
   private const double MarketOpenStagger = 0.12;
+  private const double MarketShiftDuration = 0.4;
+  private const double MarketDiscardDuration = 0.35;
+  private const float MarketDiscardRise = 60f;
+  private const int IncomeFontSize = 34;
+  private const int IncomeTitleFontSize = 26;
+  private const float IncomeRise = 70f;
+  private const double IncomeStagger = 0.25;
+  private const double IncomeFadeIn = 0.15;
+  private const double IncomeHold = 1.1;
+  private const double IncomeFadeOut = 0.35;
 
   private static readonly Color TableColor = new("26342c");
   private static readonly Color SlotColor = new("2c3d33");
@@ -46,6 +56,8 @@ public partial class Board : Node2D
   private static readonly Color PaidColor = new(1f, 0.85f, 0.3f, 0.4f);
   private static readonly Color DeniedColor = new(1f, 0.35f, 0.3f, 0.35f);
   private static readonly Color TotalsColor = new("d8e6dc");
+  private static readonly Color ClosedColor = new("f2c230");
+  private static readonly Color ClosedAdeptsTint = new(0.6f, 0.6f, 0.6f);
   private static readonly Color MarketZoneColor = new("3d3a2c");
   private static readonly Color MarketSlotColor = new("4a4634");
   private static readonly Color MarketBorderColor = new("b59a5a");
@@ -60,6 +72,7 @@ public partial class Board : Node2D
   private Label _highlightCost = null!;
   private Node2D _cardsLayer = null!;
   private Node2D _adeptsLayer = null!;
+  private Node2D _effectsLayer = null!;
 
   /// <summary>
   /// Сессия игры: поле, которое отображает стол, и игроки. Зона каждого игрока — его цвета,
@@ -109,18 +122,26 @@ public partial class Board : Node2D
     AddChild(_cardsLayer);
     _adeptsLayer = new Node2D { Name = "Adepts" };
     AddChild(_adeptsLayer);
+    _effectsLayer = new Node2D { Name = "Effects" };
+    AddChild(_effectsLayer);
 
     Field.AdeptsAdded += OnAdeptsAdded;
+    Field.TheoryClosed += OnTheoryClosed;
     Market.CardOpened += OnMarketCardOpened;
     Market.CardTaken += OnMarketCardTaken;
+    Market.CardDiscarded += OnMarketCardDiscarded;
+    Market.CardMoved += OnMarketCardMoved;
     Session.Turns.TurnChanged += OnTurnChanged;
   }
 
   public override void _ExitTree()
   {
     Field.AdeptsAdded -= OnAdeptsAdded;
+    Field.TheoryClosed -= OnTheoryClosed;
     Market.CardOpened -= OnMarketCardOpened;
     Market.CardTaken -= OnMarketCardTaken;
+    Market.CardDiscarded -= OnMarketCardDiscarded;
+    Market.CardMoved -= OnMarketCardMoved;
     Session.Turns.TurnChanged -= OnTurnChanged;
   }
 
@@ -278,7 +299,108 @@ public partial class Board : Node2D
     _highlightCost.Text = cost > 0 ? $"−{cost}$" : string.Empty;
   }
 
+  /// <summary>
+  /// Показать доход теории от адептов: над каждой карточкой стопки всплывает, сколько получил её владелец
+  /// (цветом владельца), над стопкой — сколько адептов принесли деньги.
+  /// </summary>
+  /// <returns>Задача, которая завершается, когда анимация закончилась.</returns>
+  public async Task ShowIncome(TheoryIncome income)
+  {
+    var column = income.Column;
+    var title = $"{column.Theory}: {column.Adepts} адептов → {income.Total}$";
+    SpawnFloatingText(title, TotalsColor, IncomeTitleFontSize, CellCenter(column.Top.Above.ToVector2I()), 0);
+
+    var delay = IncomeStagger;
+    foreach (var member in income.Members.Where(member => member.Amount > 0))
+    {
+      var color = PlayerPalette.MainOf(member.Member.Owner.Color);
+      SpawnFloatingText($"+{member.Amount}$", color, IncomeFontSize, CellCenter(member.Member.Cell.ToVector2I()), delay);
+      delay += IncomeStagger;
+    }
+
+    var duration = delay + IncomeFadeIn + IncomeHold + IncomeFadeOut;
+    await ToSignal(GetTree().CreateTimer(duration), SceneTreeTimer.SignalName.Timeout);
+  }
+
+  /// <summary>
+  /// Надпись над столом: появляется, поднимается вверх и тает.
+  /// </summary>
+  private void SpawnFloatingText(string text, Color color, int fontSize, Vector2 center, double delay)
+  {
+    var label = new Label
+    {
+      Text = text,
+      HorizontalAlignment = HorizontalAlignment.Center,
+      VerticalAlignment = VerticalAlignment.Center,
+      MouseFilter = Control.MouseFilterEnum.Ignore,
+      Modulate = Colors.Transparent,
+    };
+    label.AddThemeFontSizeOverride("font_size", fontSize);
+    label.AddThemeColorOverride("font_color", color);
+    label.AddThemeColorOverride("font_outline_color", Colors.Black);
+    label.AddThemeConstantOverride("outline_size", 8);
+    _effectsLayer.AddChild(label);
+    label.Size = label.GetMinimumSize();
+    label.Position = center - label.Size / 2;
+
+    var tween = label.CreateTween();
+    tween.TweenInterval(delay);
+    tween.TweenProperty(label, CanvasItem.PropertyName.Modulate.ToString(), Colors.White, IncomeFadeIn);
+    tween.Parallel()
+      .TweenProperty(label, Control.PropertyName.Position.ToString(), label.Position + Vector2.Up * IncomeRise, IncomeFadeIn + IncomeHold)
+      .SetTrans(Tween.TransitionType.Cubic)
+      .SetEase(Tween.EaseType.Out);
+    tween.TweenProperty(label, CanvasItem.PropertyName.Modulate.ToString(), Colors.Transparent, IncomeFadeOut);
+    tween.TweenCallback(Callable.From(label.QueueFree));
+  }
+
   private void OnTurnChanged(Player player) => QueueRedraw();
+
+  /// <summary>
+  /// Штаб теории закрыт: все его карточки сереют, на первой — лента «CLOSED».
+  /// </summary>
+  private void OnTheoryClosed(TheoryColumn column)
+  {
+    foreach (var cell in column.Cells)
+    {
+      if (_views.TryGetValue(cell.ToVector2I(), out var view))
+        view.MarkClosed(withRibbon: cell == column.TheoryCell);
+    }
+
+    if (_adepts.TryGetValue(column, out var adepts))
+      adepts.Modulate = ClosedAdeptsTint;
+    // Перерисовываем итоги теорий: под закрытой теорией это подписано.
+    QueueRedraw();
+  }
+
+  /// <summary>
+  /// Карточка ушла с рынка при обновлении: она поднимается и тает.
+  /// </summary>
+  private void OnMarketCardDiscarded(Cell cell, PersonCard card)
+  {
+    if (!_marketViews.Remove(cell.ToVector2I(), out var view))
+      return;
+
+    var tween = view.CreateTween();
+    tween.TweenProperty(view, CanvasItem.PropertyName.Modulate.ToString(), Colors.Transparent, MarketDiscardDuration);
+    tween.Parallel().TweenProperty(view, Node2D.PropertyName.Position.ToString(), view.Position + Vector2.Up * MarketDiscardRise, MarketDiscardDuration);
+    tween.TweenCallback(Callable.From(view.QueueFree));
+  }
+
+  /// <summary>
+  /// Карточка рынка сдвинулась при обновлении: она плавно переезжает в новую ячейку.
+  /// </summary>
+  private void OnMarketCardMoved(Cell from, Cell to, PersonCard card)
+  {
+    if (!_marketViews.Remove(from.ToVector2I(), out var view))
+      return;
+
+    _marketViews[to.ToVector2I()] = view;
+    view.CreateTween()
+      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CellCenter(to.ToVector2I()), MarketShiftDuration)
+      .SetTrans(Tween.TransitionType.Cubic)
+      .SetEase(Tween.EaseType.InOut);
+  }
 
   /// <summary>
   /// Карточка открыта с рынка: она выезжает из колоды рынка в свою ячейку. Если карточки открываются
@@ -354,6 +476,8 @@ public partial class Board : Node2D
       ("Адептов", TotalsFontSize, TotalsColor),
       (column.Adepts.ToString(), TotalsValueFontSize, TotalsColor),
     ];
+    if (column.IsClosed)
+      lines.Add(("Закрыт", TotalsFontSize, ClosedColor));
     if (column.IsHeadquarters)
     {
       var owner = column.Owner;

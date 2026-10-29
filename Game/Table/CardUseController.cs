@@ -81,6 +81,8 @@ public partial class CardUseController : Node
 
     if (@event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } click || _menu.Visible)
       return;
+    if (_session.Phase != GamePhase.PlayerTurns)
+      return;
     if (_board.CellAt(_board.GetGlobalMousePosition()) is not { } cell || !_board.Field.CanUse(cell.ToCell(), _session.CurrentPlayer))
       return;
     if (_board.ViewAt(cell) is not { } view)
@@ -131,11 +133,11 @@ public partial class CardUseController : Node
       return;
     }
 
-    var theories = _board.Field.TheoryColumns;
+    var theories = _board.Field.TheoryColumns.Where(theory => !theory.IsClosed).ToList();
     if (theories.Count == 0)
     {
       view.Lifted = false;
-      UseDenied?.Invoke($"На поле ещё нет ни одной теории — действие «{option.Description}» некуда применить.");
+      UseDenied?.Invoke($"На поле нет ни одной действующей теории — действие «{option.Description}» некуда применить.");
       return;
     }
 
@@ -164,6 +166,11 @@ public partial class CardUseController : Node
     if (theory is null)
     {
       UseDenied?.Invoke("Здесь нет теории. Выберите подсвеченную стопку теории или нажмите Esc.");
+      return;
+    }
+    if (theory.IsClosed)
+    {
+      UseDenied?.Invoke($"Штаб теории «{theory}» закрыт. Выберите подсвеченную стопку теории или нажмите Esc.");
       return;
     }
 

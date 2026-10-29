@@ -29,6 +29,9 @@ public static class CardPainter
   private static readonly Color HeadquartersColor = new("c9962b");
   private static readonly Color ShadowColor = new(0, 0, 0, 0.45f);
   private static readonly Color PlainBackColor = new("000000");
+  private static readonly Color ClosedOverlayColor = new(0.3f, 0.3f, 0.3f, 0.6f);
+  private static readonly Color HazardYellow = new("f2c230");
+  private static readonly Color HazardBlack = new("1a1a1a");
 
   /// <summary>
   /// Цвет карточки по её типу.
@@ -162,6 +165,56 @@ public static class CardPainter
     var back = new StyleBoxFlat { BgColor = PlainBackColor };
     back.SetCornerRadiusAll(CornerRadius(rect));
     canvas.DrawStyleBox(back, rect);
+  }
+
+  /// <summary>
+  /// Нарисовать серую пелену поверх карточки закрытого штаба теории.
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  public static void DrawClosedOverlay(CanvasItem canvas, Rect2 rect)
+  {
+    var overlay = new StyleBoxFlat { BgColor = ClosedOverlayColor };
+    overlay.SetCornerRadiusAll(CornerRadius(rect));
+    canvas.DrawStyleBox(overlay, rect);
+  }
+
+  /// <summary>
+  /// Нарисовать наклонную чёрно-жёлтую ленту «CLOSED» поперёк карточки закрытого штаба теории.
+  /// </summary>
+  /// <remarks>
+  /// Меняет преобразование рисования: рисуйте ленту последней.
+  /// </remarks>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  public static void DrawClosedRibbon(CanvasItem canvas, Rect2 rect)
+  {
+    var length = rect.Size.X * 1.2f;
+    var height = rect.Size.Y * 0.17f;
+    var stripe = height * 0.6f;
+    var skew = height * 0.6f;
+    var band = new Rect2(-length / 2, -height / 2, length, height);
+
+    canvas.DrawSetTransform(rect.GetCenter(), -Mathf.Pi / 6);
+    canvas.DrawRect(band, HazardYellow);
+    // Наклонные чёрные полосы; у краёв ленты обрезаем их по её концам.
+    for (var x = band.Position.X; x < band.End.X + skew; x += stripe * 2)
+    {
+      Vector2[] points =
+      [
+        new(x, band.Position.Y),
+        new(x + stripe, band.Position.Y),
+        new(x + stripe - skew, band.End.Y),
+        new(x - skew, band.End.Y),
+      ];
+      canvas.DrawColoredPolygon(points.Select(point => point with { X = Mathf.Clamp(point.X, band.Position.X, band.End.X) }).ToArray(), HazardBlack);
+    }
+
+    var plate = new Rect2(-length * 0.3f, -height * 0.36f, length * 0.6f, height * 0.72f);
+    canvas.DrawRect(plate, HazardYellow);
+    canvas.DrawRect(plate, HazardBlack, filled: false, width: 2);
+    DrawCenteredText(canvas, "CLOSED", plate, (int)(plate.Size.Y * 0.75f), HazardBlack);
+    canvas.DrawSetTransform(Vector2.Zero);
   }
 
   /// <summary>

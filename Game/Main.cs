@@ -6,7 +6,7 @@ using Godot;
 namespace ConspiracyLeague.Game;
 
 /// <summary>
-/// Главная сцена: стол с зонами игроков и рынком, камера, балансы и руки игроков, перетаскивание карточек, переход хода.
+/// Главная сцена: стол с зонами игроков и рынком, камера, балансы и руки игроков, перетаскивание карточек, ходы, пасы и конец раунда.
 /// </summary>
 public partial class Main : Node2D
 {
@@ -53,7 +53,13 @@ public partial class Main : Node2D
 	useController.UseDenied += hud.ShowMessage;
 	useController.Hint += hud.ShowMessage;
 
-	// Стол уже следит за рынком: стартовые карточки рынка выезжают из колоды на глазах у игроков.
+	var roundController = new RoundController { Name = "RoundController" };
+	AddChild(roundController);
+	roundController.Initialize(board, session, camera);
+	roundController.Hint += hud.ShowMessage;
+
+	// Подготовка: стол и рука уже следят за партией — стартовые карточки рынка выезжают из колоды
+	// на глазах у игроков, стартовые карточки появляются в руке.
 	session.Start();
   }
 

@@ -15,10 +15,13 @@ public partial class CardView : Node2D
   private const double OwnerMarkDropDuration = 0.4;
 
   private static readonly Vector2 LiftedScale = Vector2.One * 1.08f;
+  private static readonly Color ClosedTint = new(0.6f, 0.6f, 0.6f);
 
   private bool _lifted;
   private bool _isHeadquarters;
   private bool _faceDown;
+  private bool _closed;
+  private bool _closedRibbon;
   private Player? _owner;
   private MeepleView? _ownerMark;
 
@@ -81,6 +84,19 @@ public partial class CardView : Node2D
   public static CardView Create(Card card) => new() { Card = card, Name = card.GetType().Name };
 
   /// <summary>
+  /// Штаб теории, к которому относится карточка, закрыт: карточка сереет.
+  /// </summary>
+  /// <param name="withRibbon">Повесить ленту «CLOSED» — на первую карточку штаба.</param>
+  public void MarkClosed(bool withRibbon)
+  {
+    _closed = true;
+    _closedRibbon = withRibbon;
+    if (_ownerMark is not null)
+      _ownerMark.Modulate = ClosedTint;
+    QueueRedraw();
+  }
+
+  /// <summary>
   /// Перевернуть карточку рубашкой вверх.
   /// </summary>
   public void FlipFaceDown()
@@ -100,10 +116,17 @@ public partial class CardView : Node2D
     // При перевороте карточка сжимается по горизонтали до ребра и раскрывается другой стороной.
     DrawSetTransform(Vector2.Zero, 0, new Vector2(Mathf.Abs(Mathf.Cos(_flip * Mathf.Pi)), 1));
     var rect = new Rect2(-CardPainter.CardSize / 2, CardPainter.CardSize);
-    if (_flip < 0.5f)
-      CardPainter.DrawFace(this, rect, Card, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
-    else
+    if (_flip >= 0.5f)
+    {
       CardPainter.DrawPlainBack(this, rect);
+      return;
+    }
+
+    CardPainter.DrawFace(this, rect, Card, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
+    if (_closed)
+      CardPainter.DrawClosedOverlay(this, rect);
+    if (_closedRibbon)
+      CardPainter.DrawClosedRibbon(this, rect);
   }
 
   /// <summary>

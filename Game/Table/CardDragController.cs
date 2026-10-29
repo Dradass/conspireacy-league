@@ -84,7 +84,7 @@ public partial class CardDragController : Node
 
   public override void _UnhandledInput(InputEvent @event)
   {
-    if (_drag is not null || @event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+    if (_drag is not null || !CanAct || @event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
       return;
     if (_board.CellAt(MouseOnTable()) is not { } cell || _board.MarketViewAt(cell) is null)
       return;
@@ -115,7 +115,7 @@ public partial class CardDragController : Node
 
   private void OnHandCardDragStarted(HandCardView source)
   {
-    if (_drag is not null)
+    if (_drag is not null || !CanAct)
       return;
 
     // Карточка остаётся в руке, пока её не выложат; на время перетаскивания прячем её.
@@ -242,6 +242,11 @@ public partial class CardDragController : Node
   }
 
   private PlacementCheck Check(CardView view, Vector2I cell) => _board.Field.Check(view.Card, cell.ToCell(), _session.CurrentPlayer);
+
+  /// <summary>
+  /// Брать карточки можно только в фазе ходов игроков.
+  /// </summary>
+  private bool CanAct => _session.Phase == GamePhase.PlayerTurns;
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
 

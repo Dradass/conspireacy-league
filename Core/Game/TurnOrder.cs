@@ -3,9 +3,13 @@ namespace ConspiracyLeague.Core.Game;
 /// <summary>
 /// Игроки партии и очерёдность их ходов.
 /// </summary>
+/// <remarks>
+/// Игрок, сказавший «пас», до конца раунда больше не ходит: ход его пропускает.
+/// </remarks>
 public sealed class TurnOrder
 {
   private readonly List<Player> _players;
+  private readonly HashSet<Player> _passed = [];
   private int _currentIndex;
 
   /// <summary>
@@ -23,6 +27,16 @@ public sealed class TurnOrder
   /// </summary>
   public event Action<Player>? TurnChanged;
 
+  /// <summary>
+  /// Игрок спасовал; аргумент — этот игрок.
+  /// </summary>
+  public event Action<Player>? Passed;
+
+  /// <summary>
+  /// Спасовали все игроки — ходы в этом раунде закончились.
+  /// </summary>
+  public bool AllPassed => _passed.Count == _players.Count;
+
   /// <param name="players">Игроки в порядке хода; первый ходит первым.</param>
   public TurnOrder(IEnumerable<Player> players)
   {
@@ -37,11 +51,47 @@ public sealed class TurnOrder
   }
 
   /// <summary>
-  /// Передать ход следующему игроку.
+  /// Спасовал ли игрок в этом раунде.
   /// </summary>
+  public bool HasPassed(Player player) => _passed.Contains(player);
+
+  /// <summary>
+  /// Передать ход следующему игроку, который ещё не спасовал.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Все игроки спасовали.</exception>
   public void EndTurn()
   {
-    _currentIndex = (_currentIndex + 1) % _players.Count;
+    if (AllPassed)
+      throw new InvalidOperationException("Все игроки спасовали — ходы в этом раунде закончились.");
+
+    do
+      _currentIndex = (_currentIndex + 1) % _players.Count;
+    while (HasPassed(CurrentPlayer));
+    TurnChanged?.Invoke(CurrentPlayer);
+  }
+
+  /// <summary>
+  /// Игрок, который сейчас ходит, пасует: до конца раунда он больше не ходит. Ход переходит к следующему,
+  /// если ещё не все спасовали.
+  /// </summary>
+  public void Pass()
+  {
+    var player = CurrentPlayer;
+    if (!_passed.Add(player))
+      throw new InvalidOperationException($"Игрок {player} уже спасовал.");
+
+    Passed?.Invoke(player);
+    if (!AllPassed)
+      EndTurn();
+  }
+
+  /// <summary>
+  /// Начать новый раунд: пасы сбрасываются, первым ходит первый игрок.
+  /// </summary>
+  public void StartRound()
+  {
+    _passed.Clear();
+    _currentIndex = 0;
     TurnChanged?.Invoke(CurrentPlayer);
   }
 }

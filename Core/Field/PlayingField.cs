@@ -17,6 +17,7 @@ namespace ConspiracyLeague.Core.Field;
 /// <item>карточку уже выложенной теории — сверху её стопки;</item>
 /// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки.</item>
 /// </list>
+/// В закрытые штабы теорий карточки класть нельзя.
 /// Карточку из своей зоны (личного штаба) можно один раз использовать: выполнить её действие,
 /// после чего она лежит рубашкой вверх.
 /// </remarks>
@@ -56,6 +57,11 @@ public sealed class PlayingField
   /// В теорию пришли адепты; аргументы — теория и сколько адептов пришло.
   /// </summary>
   public event Action<TheoryColumn, int>? AdeptsAdded;
+
+  /// <summary>
+  /// Штаб теории закрыт как несостоятельный.
+  /// </summary>
+  public event Action<TheoryColumn>? TheoryClosed;
 
   /// <param name="columns">Количество столбцов.</param>
   /// <param name="rows">Количество строк.</param>
@@ -126,9 +132,28 @@ public sealed class PlayingField
     ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
     if (!_theoryColumns.Contains(column))
       throw new ArgumentException($"Теория «{column}» не выложена на это поле.", nameof(column));
+    if (column.IsClosed)
+      throw new InvalidOperationException($"Штаб теории «{column}» закрыт — адепты в него не приходят.");
 
     column.AddAdepts(count);
     AdeptsAdded?.Invoke(column, count);
+  }
+
+  /// <summary>
+  /// Закрыть несостоятельные штабы теорий (<see cref="TheoryColumn.IsInsolvent"/>) — те, где больше
+  /// <see cref="TheoryColumn.SolvencyCheckLeadersThreshold"/> лидеров и бездомных больше, чем остальных персонажей.
+  /// </summary>
+  /// <returns>Штабы, закрытые сейчас.</returns>
+  public IReadOnlyList<TheoryColumn> CloseInsolventTheories()
+  {
+    var closed = _theoryColumns.Where(column => !column.IsClosed && column.IsInsolvent).ToList();
+    foreach (var column in closed)
+    {
+      column.Close();
+      TheoryClosed?.Invoke(column);
+    }
+
+    return closed;
   }
 
   /// <summary>
@@ -221,6 +246,8 @@ public sealed class PlayingField
   {
     if (ColumnOf(theory) is { } column)
     {
+      if (column.IsClosed)
+        return PlacementCheck.Deny($"Штаб теории «{theory}» закрыт — в него больше нельзя класть карточки.");
       return cell == column.Top.Above
         ? PlacementCheck.Allow(column: column)
         : PlacementCheck.Deny($"Теория «{theory}» уже выложена: карточку можно положить только сверху её стопки.");
@@ -251,6 +278,8 @@ public sealed class PlayingField
     var column = _theoryColumns.FirstOrDefault(theoryColumn => theoryColumn.Top.Above == cell);
     if (column is null)
       return PlacementCheck.Deny("Карточку без теории можно положить только сверху стопки одной из теорий.");
+    if (column.IsClosed)
+      return PlacementCheck.Deny($"Штаб теории «{column.Theory}» закрыт — в него больше нельзя класть карточки.");
 
     var cost = column.Influence;
     return player.CanAfford(cost)

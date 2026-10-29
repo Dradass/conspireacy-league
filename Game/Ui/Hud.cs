@@ -4,7 +4,7 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Интерфейс поверх стола: игроки с балансами и кнопка перехода хода слева внизу, рука игрока справа внизу
+/// Интерфейс поверх стола: раунд и фаза, игроки с балансами, кнопки «Пас» и «Переход хода» слева внизу, рука игрока справа внизу
 /// и сообщения сверху.
 /// </summary>
 public partial class Hud : CanvasLayer
@@ -17,7 +17,10 @@ public partial class Hud : CanvasLayer
   private const float WaitingPlayerAlpha = 0.55f;
 
   private readonly Dictionary<Player, Label> _balances = new();
+  private Label _round = null!;
   private Label _turn = null!;
+  private Button _pass = null!;
+  private Button _endTurn = null!;
   private PanelContainer _messagePanel = null!;
   private Label _message = null!;
   private Tween? _messageTween;
@@ -51,7 +54,9 @@ public partial class Hud : CanvasLayer
     }
 
     Turns.TurnChanged += OnTurnChanged;
-    OnTurnChanged(Turns.CurrentPlayer);
+    Turns.Passed += OnPassed;
+    Session.PhaseChanged += OnPhaseChanged;
+    OnPhaseChanged(Session.Phase);
   }
 
   public override void _ExitTree()
@@ -59,6 +64,8 @@ public partial class Hud : CanvasLayer
     foreach (var player in Turns.Players)
       player.MoneyChanged -= OnMoneyChanged;
     Turns.TurnChanged -= OnTurnChanged;
+    Turns.Passed -= OnPassed;
+    Session.PhaseChanged -= OnPhaseChanged;
   }
 
   /// <summary>
@@ -90,6 +97,10 @@ public partial class Hud : CanvasLayer
     column.AddThemeConstantOverride("separation", 6);
     panel.AddChild(column);
 
+    _round = new Label();
+    _round.AddThemeFontSizeOverride("font_size", 18);
+    column.AddChild(_round);
+
     _turn = new Label();
     _turn.AddThemeFontSizeOverride("font_size", 22);
     column.AddChild(_turn);
@@ -103,10 +114,19 @@ public partial class Hud : CanvasLayer
       _balances[player] = balance;
     }
 
-    var endTurn = new Button { Name = "EndTurn", Text = "Переход хода", FocusMode = Control.FocusModeEnum.None };
-    endTurn.AddThemeFontSizeOverride("font_size", 20);
-    endTurn.Pressed += Turns.EndTurn;
-    column.AddChild(endTurn);
+    var buttons = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+    buttons.AddThemeConstantOverride("separation", 6);
+    column.AddChild(buttons);
+
+    _pass = new Button { Name = "Pass", Text = "Пас", FocusMode = Control.FocusModeEnum.None };
+    _pass.AddThemeFontSizeOverride("font_size", 20);
+    _pass.Pressed += Session.Pass;
+    buttons.AddChild(_pass);
+
+    _endTurn = new Button { Name = "EndTurn", Text = "Переход хода", FocusMode = Control.FocusModeEnum.None };
+    _endTurn.AddThemeFontSizeOverride("font_size", 20);
+    _endTurn.Pressed += Session.EndTurn;
+    buttons.AddChild(_endTurn);
     return panel;
   }
 
@@ -151,11 +171,35 @@ public partial class Hud : CanvasLayer
     return panel;
   }
 
-  private void OnMoneyChanged(Player player) => _balances[player].Text = $"{player.Name}: {player.Money}$";
+  private void OnMoneyChanged(Player player) =>
+    _balances[player].Text = $"{player.Name}: {player.Money}$" + (Turns.HasPassed(player) ? " — пас" : string.Empty);
+
+  private void OnPassed(Player player) => OnMoneyChanged(player);
+
+  private void OnPhaseChanged(GamePhase phase)
+  {
+    var playing = phase == GamePhase.PlayerTurns;
+    _pass.Disabled = !playing;
+    _endTurn.Disabled = !playing;
+    _round.Text = $"Раунд {Session.Round}: {NameOf(phase)}";
+    foreach (var player in Turns.Players)
+      OnMoneyChanged(player);
+    OnTurnChanged(Turns.CurrentPlayer);
+  }
+
+  private static string NameOf(GamePhase phase) => phase switch
+  {
+    GamePhase.Setup => "подготовка",
+    GamePhase.PlayerTurns => "ходы игроков",
+    GamePhase.HeadquartersCheck => "проверка штабов теорий",
+    GamePhase.AdeptIncome => "адепты приносят деньги",
+    GamePhase.MarketRefresh => "обновление рынка",
+    _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null),
+  };
 
   private void OnTurnChanged(Player current)
   {
-    _turn.Text = $"Ходит: {current.Name}";
+    _turn.Text = Session.Phase == GamePhase.PlayerTurns ? $"Ходит: {current.Name}" : "Конец раунда";
     _turn.AddThemeColorOverride("font_color", PlayerPalette.MainOf(current.Color));
     foreach (var (player, balance) in _balances)
       balance.Modulate = player == current ? Colors.White : Colors.White with { A = WaitingPlayerAlpha };

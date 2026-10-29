@@ -9,6 +9,7 @@ namespace ConspiracyLeague.Core.Field;
 /// <remarks>
 /// Колода лежит во втором столбце второй строки зоны рынка. Открытые карточки выкладываются в первую
 /// и третью строки, начиная с пятого столбца. Открытую карточку можно купить за её стоимость — она уходит в руку.
+/// В конце раунда рынок обновляется: нижняя строка уходит, верхняя сдвигается вниз, пустые места заполняются из колоды.
 /// </remarks>
 public sealed class Market
 {
@@ -16,6 +17,7 @@ public sealed class Market
 
   private readonly Stack<PersonCard> _deck;
   private readonly Dictionary<Cell, PersonCard> _openCards = new();
+  private int _slotsPerRow;
 
   /// <summary>
   /// Зона рынка.
@@ -47,6 +49,16 @@ public sealed class Market
   /// </summary>
   public event Action<Cell, PersonCard>? CardTaken;
 
+  /// <summary>
+  /// Карточка ушла с рынка при обновлении; аргументы — ячейка, где она лежала, и карточка.
+  /// </summary>
+  public event Action<Cell, PersonCard>? CardDiscarded;
+
+  /// <summary>
+  /// Карточка сдвинулась при обновлении; аргументы — откуда, куда и карточка.
+  /// </summary>
+  public event Action<Cell, Cell, PersonCard>? CardMoved;
+
   /// <param name="zone">Зона рынка.</param>
   /// <param name="deck">Колода рынка; первая карточка — верхняя.</param>
   public Market(Zone zone, IReadOnlyList<PersonCard> deck)
@@ -71,12 +83,46 @@ public sealed class Market
     ArgumentOutOfRangeException.ThrowIfNegative(perRow);
     ArgumentOutOfRangeException.ThrowIfGreaterThan(perRow, Zone.Width - FirstOpenColumn);
 
-    foreach (var row in new[] { Zone.Top, Zone.Top + 2 })
+    _slotsPerRow = perRow;
+    foreach (var cell in TopRow.Concat(BottomRow))
+      Open(cell);
+  }
+
+  /// <summary>
+  /// Обновить рынок: карточки нижней строки уходят, верхняя строка сдвигается вниз, пустые места
+  /// заполняются из колоды, пока она не кончится.
+  /// </summary>
+  public void Refresh()
+  {
+    foreach (var cell in BottomRow)
     {
-      for (var i = 0; i < perRow; i++)
-        Open(new Cell(Zone.Left + FirstOpenColumn + i, row));
+      if (_openCards.Remove(cell, out var card))
+        CardDiscarded?.Invoke(cell, card);
+    }
+
+    foreach (var from in TopRow)
+    {
+      if (!_openCards.Remove(from, out var card))
+        continue;
+
+      var to = from.Below.Below;
+      _openCards[to] = card;
+      CardMoved?.Invoke(from, to, card);
+    }
+
+    foreach (var cell in BottomRow.Concat(TopRow).Where(cell => !_openCards.ContainsKey(cell)).ToList())
+    {
+      if (DeckCount == 0)
+        break;
+      Open(cell);
     }
   }
+
+  /// <summary>
+  /// Взять верхнюю карточку колоды.
+  /// </summary>
+  /// <returns>Карточка или <c>null</c>, если колода кончилась.</returns>
+  internal PersonCard? Draw() => _deck.TryPop(out var card) ? card : null;
 
   /// <summary>
   /// Проверить, может ли игрок купить карточку из ячейки рынка.
@@ -110,6 +156,13 @@ public sealed class Market
     CardTaken?.Invoke(cell, card);
     return card;
   }
+
+  private IEnumerable<Cell> TopRow => Slots(Zone.Top);
+
+  private IEnumerable<Cell> BottomRow => Slots(Zone.Top + 2);
+
+  private IEnumerable<Cell> Slots(int row) =>
+    Enumerable.Range(Zone.Left + FirstOpenColumn, _slotsPerRow).Select(column => new Cell(column, row));
 
   private void Open(Cell cell)
   {
