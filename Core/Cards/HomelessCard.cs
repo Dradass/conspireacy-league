@@ -4,10 +4,15 @@ using ConspiracyLeague.Core.Theories;
 namespace ConspiracyLeague.Core.Cards;
 
 /// <summary>
-/// Бездомный.
+/// Бездомный. В личном штабе снижает вероятность успеха соседних персонажей (<see cref="NeighborSuccessPenalty"/>).
 /// </summary>
 public sealed class HomelessCard : PersonCard
 {
+  /// <summary>
+  /// На сколько процентов бездомный в личном штабе снижает вероятность успеха соседних персонажей.
+  /// </summary>
+  public const int NeighborSuccessPenalty = 5;
+
   /// <param name="theory">Теория, к которой относится карточка.</param>
   public HomelessCard(Theory? theory = null)
     : base(

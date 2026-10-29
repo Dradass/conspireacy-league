@@ -188,8 +188,7 @@ public sealed class GameSession
     if (!Field.CanUse(cell, CurrentPlayer))
       throw new InvalidOperationException("Эту карточку нельзя использовать.");
 
-    var chance = Field.CardAt(cell) is PersonCard person ? person.SuccessChancePercent : 0;
-    var check = SuccessCheck.Perform(cell, chance, _random);
+    var check = SuccessCheck.Perform(cell, Field.SuccessChanceAt(cell), _random);
     SetPendingCheck(check);
     return check;
   }

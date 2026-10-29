@@ -13,7 +13,7 @@ namespace ConspiracyLeague.Game.Table;
 /// Если у действия карточки один вариант, он выполняется сразу, если несколько — сначала появляется меню выбора.
 /// Если действию нужна теория (например, «Добавить адепта в теорию»), игрок выбирает её щелчком по стопке теории;
 /// Esc или правая кнопка мыши отменяют выбор. Затем проводится проверка успеха (<see cref="SuccessCheck"/>):
-/// слева от карточки наполняется шкала, на карточке появляется галка или крест, и через секунду карточка
+/// на карточку бросается двадцатигранный кубик, на нём появляется галка или крест, и через секунду карточка
 /// переворачивается рубашкой вверх. Действие выполняется, только если проверка успешна.
 /// Что можно использовать, решает <see cref="PlayingField"/>.
 /// </remarks>
@@ -211,8 +211,8 @@ public partial class CardUseController : Node
     var checkView = SuccessCheckView.Create(view, check);
     await checkView.Play();
     Hint?.Invoke(check.Succeeded
-      ? $"«{view.Card.Name}»: выпало {check.Roll}, нужно {check.Chance} — успех! {option.Description}."
-      : $"«{view.Card.Name}»: выпало {check.Roll}, нужно {check.Chance} — провал, действие не выполняется.");
+      ? $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — успех! {option.Description}."
+      : $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — провал, действие не выполняется.");
     await ToSignal(GetTree().CreateTimer(ResultPause), SceneTreeTimer.SignalName.Timeout);
 
     checkView.QueueFree();

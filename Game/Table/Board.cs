@@ -274,6 +274,16 @@ public partial class Board : Node2D
     // Перерисовываем итоги теорий под общей зоной.
     QueueRedraw();
     SnapTo(view, cell);
+    UpdateSuccessPenalties();
+  }
+
+  /// <summary>
+  /// Показать на карточках, насколько снижена вероятность успеха персонажей (соседние бездомные в личном штабе).
+  /// </summary>
+  private void UpdateSuccessPenalties()
+  {
+    foreach (var (cell, view) in _views)
+      view.SuccessPenalty = Field.SuccessPenaltyAt(cell.ToCell());
   }
 
   private void SnapTo(CardView view, Vector2I cell)

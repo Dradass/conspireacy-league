@@ -35,5 +35,10 @@ public readonly record struct Cell(int Column, int Row)
   /// </summary>
   public IEnumerable<Cell> Neighbors => [Above, Below, Left, Right];
 
+  /// <summary>
+  /// Соседние ячейки по горизонтали, вертикали и диагонали.
+  /// </summary>
+  public IEnumerable<Cell> Surrounding => [.. Neighbors, Above.Left, Above.Right, Below.Left, Below.Right];
+
   public override string ToString() => $"({Column}, {Row})";
 }

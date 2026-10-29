@@ -104,6 +104,27 @@ public sealed class PlayingField
   public bool IsUsed(Cell cell) => _usedCells.Contains(cell);
 
   /// <summary>
+  /// На сколько процентов снижена вероятность успеха персонажа в ячейке: каждый бездомный рядом с ним
+  /// (по горизонтали, вертикали или диагонали) в том же личном штабе снижает её на <see cref="HomelessCard.NeighborSuccessPenalty"/>.
+  /// Вне личных штабов вероятность успеха не снижается.
+  /// </summary>
+  public int SuccessPenaltyAt(Cell cell)
+  {
+    if (CardAt(cell) is not PersonCard || _playerZones.Values.FirstOrDefault(zone => zone.Contains(cell)) is not { } zone)
+      return 0;
+
+    return cell.Surrounding.Count(neighbor => zone.Contains(neighbor) && CardAt(neighbor) is HomelessCard)
+      * HomelessCard.NeighborSuccessPenalty;
+  }
+
+  /// <summary>
+  /// Итоговая вероятность успеха персонажа в ячейке с учётом снижения (<see cref="SuccessPenaltyAt"/>), не меньше нуля.
+  /// У карточки, которая не персонаж, — 0.
+  /// </summary>
+  public int SuccessChanceAt(Cell cell) =>
+    CardAt(cell) is PersonCard person ? Math.Max(0, person.SuccessChancePercent - SuccessPenaltyAt(cell)) : 0;
+
+  /// <summary>
   /// Может ли игрок использовать карточку в ячейке: только ещё не использованную карточку из своей зоны.
   /// </summary>
   public bool CanUse(Cell cell, Player player) =>

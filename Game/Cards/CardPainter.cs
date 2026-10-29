@@ -32,6 +32,7 @@ public static class CardPainter
   private static readonly Color ClosedOverlayColor = new(0.3f, 0.3f, 0.3f, 0.6f);
   private static readonly Color HazardYellow = new("f2c230");
   private static readonly Color HazardBlack = new("1a1a1a");
+  private static readonly Color PenaltyColor = new("d1423a");
 
   /// <summary>
   /// Цвет карточки по её типу.
@@ -127,6 +128,37 @@ public static class CardPainter
       canvas.DrawStyleBox(ribbon, ribbonRect);
       DrawCenteredText(canvas, "Штаб теории", ribbonRect, smallFont, InkColor);
     }
+  }
+
+  /// <summary>
+  /// Нарисовать снижение вероятности успеха персонажа: красная стрелка вниз и рядом, например, «-10%».
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  /// <param name="penalty">На сколько процентов снижена вероятность успеха.</param>
+  public static void DrawSuccessPenalty(CanvasItem canvas, Rect2 rect, int penalty)
+  {
+    // Свободное место между названием теории и влиянием.
+    var center = rect.Position + new Vector2(rect.Size.X / 2, rect.Size.Y * (HeaderShare + TheoryShare + 0.12f));
+    var arrowHeight = rect.Size.Y * 0.14f;
+    var arrowWidth = arrowHeight * 0.7f;
+    var text = $"-{penalty}%";
+    var fontSize = (int)(rect.Size.Y * 0.11f);
+    var textWidth = ThemeDB.FallbackFont.GetStringSize(text, HorizontalAlignment.Left, -1, fontSize).X;
+    var gap = rect.Size.X * 0.04f;
+    var left = center.X - (arrowWidth + gap + textWidth) / 2;
+
+    var arrowX = left + arrowWidth / 2;
+    var top = center.Y - arrowHeight / 2;
+    var headTop = top + arrowHeight * 0.45f;
+    canvas.DrawLine(new Vector2(arrowX, top), new Vector2(arrowX, headTop), PenaltyColor, arrowWidth * 0.35f);
+    canvas.DrawColoredPolygon(
+      [new Vector2(left, headTop), new Vector2(left + arrowWidth, headTop), new Vector2(arrowX, top + arrowHeight)],
+      PenaltyColor);
+
+    // Запас по ширине, чтобы надпись не переносилась из-за округления.
+    var textRect = new Rect2(left + arrowWidth + gap, center.Y - fontSize / 2f, textWidth + 2, fontSize);
+    DrawCenteredText(canvas, text, textRect, fontSize, PenaltyColor);
   }
 
   /// <summary>

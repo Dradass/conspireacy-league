@@ -22,6 +22,7 @@ public partial class CardView : Node2D
   private bool _faceDown;
   private bool _closed;
   private bool _closedRibbon;
+  private int _successPenalty;
   private Player? _owner;
   private MeepleView? _ownerMark;
 
@@ -74,6 +75,20 @@ public partial class CardView : Node2D
       _owner = value;
       _ownerMark?.QueueFree();
       _ownerMark = value is null ? null : CreateOwnerMark(value);
+      QueueRedraw();
+    }
+  }
+
+  /// <summary>
+  /// На сколько процентов снижена вероятность успеха персонажа: на карточке красная стрелка вниз и, например, «-10%».
+  /// 0 — не снижена.
+  /// </summary>
+  public int SuccessPenalty
+  {
+    get => _successPenalty;
+    set
+    {
+      _successPenalty = value;
       QueueRedraw();
     }
   }
@@ -138,6 +153,8 @@ public partial class CardView : Node2D
     }
 
     CardPainter.DrawFace(this, rect, Card, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
+    if (_successPenalty > 0)
+      CardPainter.DrawSuccessPenalty(this, rect, _successPenalty);
     if (_closed)
       CardPainter.DrawClosedOverlay(this, rect);
     if (_closedRibbon)
