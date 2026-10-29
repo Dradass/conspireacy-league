@@ -1,4 +1,6 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Game.Ui;
 using Godot;
 
 namespace ConspiracyLeague.Game.Cards;
@@ -9,12 +11,16 @@ namespace ConspiracyLeague.Game.Cards;
 public partial class CardView : Node2D
 {
   private const double FlipDuration = 0.3;
+  private const float OwnerMarkDropHeight = 40f;
+  private const double OwnerMarkDropDuration = 0.4;
 
   private static readonly Vector2 LiftedScale = Vector2.One * 1.08f;
 
   private bool _lifted;
   private bool _isHeadquarters;
   private bool _faceDown;
+  private Player? _owner;
+  private MeepleView? _ownerMark;
 
   /// <summary>
   /// Ход переворота: 0 — лицом вверх, 1 — рубашкой вверх, 0.5 — карточка повёрнута ребром.
@@ -54,6 +60,22 @@ public partial class CardView : Node2D
   }
 
   /// <summary>
+  /// Владелец карточки в теории: справа от названия теории стоит мипл его цвета.
+  /// <c>null</c> — карточка ничья (например, лежит в личном штабе).
+  /// </summary>
+  public Player? CardOwner
+  {
+    get => _owner;
+    set
+    {
+      _owner = value;
+      _ownerMark?.QueueFree();
+      _ownerMark = value is null ? null : CreateOwnerMark(value);
+      QueueRedraw();
+    }
+  }
+
+  /// <summary>
   /// Создать отображение карточки.
   /// </summary>
   public static CardView Create(Card card) => new() { Card = card, Name = card.GetType().Name };
@@ -79,9 +101,30 @@ public partial class CardView : Node2D
     DrawSetTransform(Vector2.Zero, 0, new Vector2(Mathf.Abs(Mathf.Cos(_flip * Mathf.Pi)), 1));
     var rect = new Rect2(-CardPainter.CardSize / 2, CardPainter.CardSize);
     if (_flip < 0.5f)
-      CardPainter.DrawFace(this, rect, Card, _lifted, _isHeadquarters);
+      CardPainter.DrawFace(this, rect, Card, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
     else
       CardPainter.DrawPlainBack(this, rect);
+  }
+
+  /// <summary>
+  /// Поставить мипл владельца: он падает на карточку сверху.
+  /// </summary>
+  private MeepleView CreateOwnerMark(Player owner)
+  {
+    var meeple = new MeepleView
+    {
+      Name = "OwnerMark",
+      Color = PlayerPalette.MainOf(owner.Color),
+      Position = CardPainter.OwnerMarkPosition(new Rect2(-CardPainter.CardSize / 2, CardPainter.CardSize)),
+      Scale = Vector2.One * CardPainter.OwnerMarkScale,
+      Height = OwnerMarkDropHeight,
+    };
+    AddChild(meeple);
+    meeple.CreateTween()
+      .TweenProperty(meeple, MeepleView.PropertyName.Height.ToString(), 0f, OwnerMarkDropDuration)
+      .SetTrans(Tween.TransitionType.Bounce)
+      .SetEase(Tween.EaseType.Out);
+    return meeple;
   }
 
   private void SetFlip(float flip)

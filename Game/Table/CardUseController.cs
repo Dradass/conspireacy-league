@@ -18,7 +18,7 @@ namespace ConspiracyLeague.Game.Table;
 public partial class CardUseController : Node
 {
   private Board _board = null!;
-  private GameContext _context = null!;
+  private GameSession _session = null!;
   private PopupMenu _menu = null!;
   private Selection? _selection;
   private Targeting? _targeting;
@@ -52,11 +52,12 @@ public partial class CardUseController : Node
   /// Настроить контроллер.
   /// </summary>
   /// <param name="board">Стол.</param>
-  /// <param name="context">Контекст партии: в нём выполняются действия карточек.</param>
-  public void Initialize(Board board, GameContext context)
+  /// <param name="session">Сессия игры: карточки использует игрок, который сейчас ходит.</param>
+  public void Initialize(Board board, GameSession session)
   {
     _board = board;
-    _context = context;
+    _session = session;
+    _session.Turns.TurnChanged += OnTurnChanged;
   }
 
   public override void _Ready()
@@ -68,6 +69,8 @@ public partial class CardUseController : Node
     AddChild(_menu);
   }
 
+  public override void _ExitTree() => _session.Turns.TurnChanged -= OnTurnChanged;
+
   public override void _UnhandledInput(InputEvent @event)
   {
     if (_targeting is not null)
@@ -78,7 +81,7 @@ public partial class CardUseController : Node
 
     if (@event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } click || _menu.Visible)
       return;
-    if (_board.CellAt(_board.GetGlobalMousePosition()) is not { } cell || !_board.Field.CanUse(cell.ToCell(), _context.CurrentPlayer))
+    if (_board.CellAt(_board.GetGlobalMousePosition()) is not { } cell || !_board.Field.CanUse(cell.ToCell(), _session.CurrentPlayer))
       return;
     if (_board.ViewAt(cell) is not { } view)
       return;
@@ -124,7 +127,7 @@ public partial class CardUseController : Node
     if (!option.RequiresTheory)
     {
       view.Lifted = false;
-      Use(view, cell, option, _context);
+      Use(view, cell, option, _session.CreateContext());
       return;
     }
 
@@ -165,7 +168,17 @@ public partial class CardUseController : Node
     }
 
     var targeting = EndTargeting();
-    Use(targeting.View, targeting.Cell, targeting.Option, _context.WithTargetTheory(theory));
+    Use(targeting.View, targeting.Cell, targeting.Option, _session.CreateContext().WithTargetTheory(theory));
+  }
+
+  /// <summary>
+  /// Ход перешёл к другому игроку: начатый выбор действия прежнего игрока отменяется.
+  /// </summary>
+  private void OnTurnChanged(Player player)
+  {
+    _menu.Hide();
+    if (_targeting is not null)
+      EndTargeting();
   }
 
   private Targeting EndTargeting()

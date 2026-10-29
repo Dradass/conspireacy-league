@@ -173,10 +173,11 @@ public sealed class PlayingField
     _cards[cell] = person;
     if (CommonZone.Contains(cell))
     {
+      var member = new TheoryMember(cell, person, player);
       if (check.Column is { } column)
-        column.Add(cell, person);
+        column.Add(member);
       else
-        _theoryColumns.Add(new TheoryColumn(person.Theory!, cell, person));
+        _theoryColumns.Add(new TheoryColumn(person.Theory!, member));
     }
 
     player.Spend(check.Cost);

@@ -11,6 +11,11 @@ public sealed class Player
   public string Name { get; }
 
   /// <summary>
+  /// Цвет игрока.
+  /// </summary>
+  public PlayerColor Color { get; }
+
+  /// <summary>
   /// Баланс в $.
   /// </summary>
   public int Money { get; private set; }
@@ -21,12 +26,14 @@ public sealed class Player
   public event Action<Player>? MoneyChanged;
 
   /// <param name="name">Имя.</param>
+  /// <param name="color">Цвет.</param>
   /// <param name="money">Начальный баланс в $.</param>
-  public Player(string name, int money)
+  public Player(string name, PlayerColor color, int money)
   {
     ArgumentException.ThrowIfNullOrWhiteSpace(name);
     ArgumentOutOfRangeException.ThrowIfNegative(money);
     Name = name;
+    Color = color;
     Money = money;
   }
 

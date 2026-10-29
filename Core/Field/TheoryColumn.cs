@@ -1,4 +1,5 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Core.Theories;
 
 namespace ConspiracyLeague.Core.Field;
@@ -8,8 +9,7 @@ namespace ConspiracyLeague.Core.Field;
 /// </summary>
 public sealed class TheoryColumn
 {
-  private readonly List<Cell> _cells = [];
-  private readonly List<PersonCard> _cards = [];
+  private readonly List<TheoryMember> _members = [];
 
   /// <summary>
   /// Теория.
@@ -22,24 +22,29 @@ public sealed class TheoryColumn
   public bool IsHeadquarters => !Theory.IsChild;
 
   /// <summary>
+  /// Карточки стопки снизу вверх: где лежат и кто их выложил.
+  /// </summary>
+  public IReadOnlyList<TheoryMember> Members => _members;
+
+  /// <summary>
   /// Ячейки стопки снизу вверх.
   /// </summary>
-  public IReadOnlyList<Cell> Cells => _cells;
+  public IReadOnlyList<Cell> Cells => _members.Select(member => member.Cell).ToList();
 
   /// <summary>
   /// Карточки стопки снизу вверх.
   /// </summary>
-  public IReadOnlyList<PersonCard> Cards => _cards;
+  public IReadOnlyList<PersonCard> Cards => _members.Select(member => member.Card).ToList();
 
   /// <summary>
   /// Ячейка последней (верхней) карточки.
   /// </summary>
-  public Cell Top => _cells[^1];
+  public Cell Top => _members[^1].Cell;
 
   /// <summary>
   /// Суммарное влияние персон в стопке.
   /// </summary>
-  public int Influence => _cards.Sum(card => card.Influence);
+  public int Influence => _members.Sum(member => member.Card.Influence);
 
   /// <summary>
   /// Количество адептов теории.
@@ -49,19 +54,31 @@ public sealed class TheoryColumn
   /// <summary>
   /// Ячейка карточки теории — нижней в стопке. На неё ставятся фигурки адептов.
   /// </summary>
-  public Cell TheoryCell => _cells[0];
+  public Cell TheoryCell => _members[0].Cell;
 
-  internal TheoryColumn(Theory theory, Cell cell, PersonCard card)
+  /// <summary>
+  /// Игрок, выложивший карточку теории (основателя теории).
+  /// </summary>
+  public Player Founder => _members[0].Owner;
+
+  internal TheoryColumn(Theory theory, TheoryMember founder)
   {
     Theory = theory;
-    Add(cell, card);
+    Add(founder);
   }
 
-  internal void Add(Cell cell, PersonCard card)
-  {
-    _cells.Add(cell);
-    _cards.Add(card);
-  }
+  /// <summary>
+  /// Владелец карточки в ячейке стопки.
+  /// </summary>
+  /// <returns>Игрок или <c>null</c>, если ячейка не относится к стопке.</returns>
+  public Player? OwnerAt(Cell cell) => _members.FirstOrDefault(member => member.Cell == cell)?.Owner;
+
+  /// <summary>
+  /// Карточки стопки, выложенные игроком.
+  /// </summary>
+  public IEnumerable<TheoryMember> MembersOf(Player player) => _members.Where(member => member.Owner == player);
+
+  internal void Add(TheoryMember member) => _members.Add(member);
 
   internal void AddAdepts(int count) => Adepts += count;
 

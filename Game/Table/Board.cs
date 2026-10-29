@@ -1,6 +1,7 @@
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Cards;
+using ConspiracyLeague.Game.Ui;
 using Godot;
 
 namespace ConspiracyLeague.Game.Table;
@@ -27,18 +28,14 @@ public partial class Board : Node2D
   private const float AvailableBorderWidth = 3f;
   private const int TotalsFontSize = 14;
   private const int TotalsValueFontSize = 28;
+  private const float WaitingBorderDarkening = 0.45f;
 
   private static readonly Color TableColor = new("26342c");
   private static readonly Color SlotColor = new("2c3d33");
   private static readonly Color CommonZoneColor = new("2f4a3a");
   private static readonly Color CommonSlotColor = new("37574a");
   private static readonly Color CommonBorderColor = new("6f9c80");
-  private static readonly Color OwnZoneColor = new("5a4a26");
-  private static readonly Color OwnSlotColor = new("6e5c33");
-  private static readonly Color OwnBorderColor = new("e0b84f");
-  private static readonly Color OtherZoneColor = new("3a3550");
-  private static readonly Color OtherSlotColor = new("48416a");
-  private static readonly Color OtherBorderColor = new("9a8fd0");
+  private static readonly Color MoneyColor = new("e0b84f");
   private static readonly Color AllowedColor = new(0.55f, 0.95f, 0.6f, 0.35f);
   private static readonly Color PaidColor = new(1f, 0.85f, 0.3f, 0.4f);
   private static readonly Color DeniedColor = new(1f, 0.35f, 0.3f, 0.35f);
@@ -53,14 +50,15 @@ public partial class Board : Node2D
   private Node2D _adeptsLayer = null!;
 
   /// <summary>
-  /// Поле, которое отображает стол.
+  /// Сессия игры: поле, которое отображает стол, и игроки. Зона каждого игрока — его цвета,
+  /// у ходящего игрока рамка ярче.
   /// </summary>
-  public PlayingField Field { get; init; } = null!;
+  public GameSession Session { get; init; } = null!;
 
   /// <summary>
-  /// Игрок, за которого играют на этом экране: его зона выделена своим цветом.
+  /// Поле, которое отображает стол.
   /// </summary>
-  public Player LocalPlayer { get; init; } = null!;
+  public PlayingField Field => Session.Field;
 
   /// <summary>
   /// Размер стола в пикселях.
@@ -84,7 +82,7 @@ public partial class Board : Node2D
       MouseFilter = Control.MouseFilterEnum.Ignore,
     };
     _highlightCost.AddThemeFontSizeOverride("font_size", 18);
-    _highlightCost.AddThemeColorOverride("font_color", OwnBorderColor);
+    _highlightCost.AddThemeColorOverride("font_color", MoneyColor);
     _highlightCost.AddThemeColorOverride("font_outline_color", Colors.Black);
     _highlightCost.AddThemeConstantOverride("outline_size", 6);
     _highlight.AddChild(_highlightCost);
@@ -96,9 +94,14 @@ public partial class Board : Node2D
     AddChild(_adeptsLayer);
 
     Field.AdeptsAdded += OnAdeptsAdded;
+    Session.Turns.TurnChanged += OnTurnChanged;
   }
 
-  public override void _ExitTree() => Field.AdeptsAdded -= OnAdeptsAdded;
+  public override void _ExitTree()
+  {
+    Field.AdeptsAdded -= OnAdeptsAdded;
+    Session.Turns.TurnChanged -= OnTurnChanged;
+  }
 
   public override void _Draw()
   {
@@ -106,8 +109,10 @@ public partial class Board : Node2D
     DrawZone(Field.CommonZone, CommonZoneColor, CommonBorderColor);
     foreach (var (player, zone) in Field.PlayerZones)
     {
-      var own = player == LocalPlayer;
-      DrawZone(zone, own ? OwnZoneColor : OtherZoneColor, own ? OwnBorderColor : OtherBorderColor);
+      var border = PlayerPalette.MainOf(player.Color);
+      if (player != Session.CurrentPlayer)
+        border = border.Darkened(WaitingBorderDarkening);
+      DrawZone(zone, PlayerPalette.ZoneOf(player.Color), border);
     }
 
     var slotSize = CellSize - new Vector2(SlotInset, SlotInset) * 2;
@@ -219,6 +224,8 @@ public partial class Board : Node2D
     _highlightCost.Text = cost > 0 ? $"−{cost}$" : string.Empty;
   }
 
+  private void OnTurnChanged(Player player) => QueueRedraw();
+
   private void OnAdeptsAdded(TheoryColumn column, int count)
   {
     if (!_adepts.TryGetValue(column, out var view))
@@ -295,7 +302,7 @@ public partial class Board : Node2D
     foreach (var (player, zone) in Field.PlayerZones)
     {
       if (zone.Contains(cell))
-        return player == LocalPlayer ? OwnSlotColor : OtherSlotColor;
+        return PlayerPalette.SlotOf(player.Color);
     }
 
     return SlotColor;

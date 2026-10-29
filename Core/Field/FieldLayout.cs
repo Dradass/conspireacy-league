@@ -19,6 +19,12 @@ public static class FieldLayout
   private const int CommonZoneBottomRowFromBottom = 5;
   private const int PlayerZoneWidth = 7;
   private const int PlayerZoneHeight = 3;
+  private const int PlayerZoneGap = 3;
+
+  /// <summary>
+  /// Сколько рабочих зон игроков помещается в ряд по ширине поля.
+  /// </summary>
+  public const int MaxPlayers = (Columns + PlayerZoneGap) / (PlayerZoneWidth + PlayerZoneGap);
 
   /// <summary>
   /// Общая зона всех игроков: на всю ширину, нижний ряд — 5-й снизу поля.
@@ -28,8 +34,20 @@ public static class FieldLayout
     new(0, Rows - CommonZoneBottomRowFromBottom - CommonZoneHeight + 1, Columns, CommonZoneHeight);
 
   /// <summary>
-  /// Рабочая зона игрока: в самом низу поля, по центру.
+  /// Рабочая зона (личный штаб) игрока: в самом низу поля. Зоны всех игроков стоят в ряд по центру,
+  /// между соседними зонами — пустые столбцы (<see cref="PlayerZoneGap"/>).
   /// </summary>
-  public static Zone PlayerZone { get; } =
-    new((Columns - PlayerZoneWidth) / 2, Rows - PlayerZoneHeight, PlayerZoneWidth, PlayerZoneHeight);
+  /// <param name="index">Номер игрока, с нуля, слева направо.</param>
+  /// <param name="playerCount">Количество игроков.</param>
+  public static Zone PlayerZone(int index, int playerCount)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(playerCount);
+    ArgumentOutOfRangeException.ThrowIfGreaterThan(playerCount, MaxPlayers);
+    ArgumentOutOfRangeException.ThrowIfNegative(index);
+    ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, playerCount);
+
+    var rowWidth = playerCount * PlayerZoneWidth + (playerCount - 1) * PlayerZoneGap;
+    var left = (Columns - rowWidth) / 2 + index * (PlayerZoneWidth + PlayerZoneGap);
+    return new Zone(left, Rows - PlayerZoneHeight, PlayerZoneWidth, PlayerZoneHeight);
+  }
 }

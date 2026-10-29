@@ -14,8 +14,14 @@ public static class CardPainter
   /// </summary>
   public static readonly Vector2 CardSize = new(120, 160);
 
+  /// <summary>
+  /// Масштаб мипла владельца карточки.
+  /// </summary>
+  public const float OwnerMarkScale = 0.8f;
+
   private const float HeaderShare = 0.18f;
   private const float RibbonShare = 0.14f;
+  private const float TheoryShare = 0.3f;
 
   private static readonly Color PaperColor = new("f3ecd9");
   private static readonly Color InkColor = new("fdfaf2");
@@ -37,6 +43,19 @@ public static class CardPainter
   };
 
   /// <summary>
+  /// Где стоит мипл владельца карточки: справа от названия теории. Точка — ступни фигурки,
+  /// относительно центра карточки.
+  /// </summary>
+  public static Vector2 OwnerMarkPosition(Rect2 rect)
+  {
+    var theoryRect = TheoryRect(rect, withOwnerMark: false);
+    var size = OwnerMarkSize;
+    return new Vector2(theoryRect.End.X - size.X / 2, theoryRect.GetCenter().Y + size.Y / 2) - rect.GetCenter();
+  }
+
+  private static Vector2 OwnerMarkSize => MeepleView.Size * OwnerMarkScale;
+
+  /// <summary>
   /// Нарисовать лицевую сторону: вверху — финальный класс карточки, под ним — теория и влияние.
   /// </summary>
   /// <param name="canvas">Где рисовать.</param>
@@ -44,7 +63,14 @@ public static class CardPainter
   /// <param name="card">Карточка.</param>
   /// <param name="withShadow">Рисовать тень (карточку подняли со стола).</param>
   /// <param name="isHeadquarters">Карточка — штаб теории.</param>
-  public static void DrawFace(CanvasItem canvas, Rect2 rect, Card card, bool withShadow = false, bool isHeadquarters = false)
+  /// <param name="withOwnerMark">Справа от названия теории стоит мипл владельца — название сдвигается левее.</param>
+  public static void DrawFace(
+    CanvasItem canvas,
+    Rect2 rect,
+    Card card,
+    bool withShadow = false,
+    bool isHeadquarters = false,
+    bool withOwnerMark = false)
   {
     var accent = AccentOf(card);
     var radius = CornerRadius(rect);
@@ -72,11 +98,10 @@ public static class CardPainter
     DrawCenteredText(canvas, card.Name, headerRect, (int)(headerRect.Size.Y * 0.5f), InkColor);
 
     var smallFont = (int)(rect.Size.Y * 0.075f);
-    var padding = rect.Size.X * 0.06f;
     if (card.Theory is { } theory)
     {
-      var theoryRect = new Rect2(rect.Position.X + padding, headerRect.End.Y, rect.Size.X - padding * 2, rect.Size.Y * 0.3f);
-      DrawCenteredText(canvas, theory.Name, theoryRect, smallFont, TextColor);
+      var theoryRect = TheoryRect(rect, withOwnerMark);
+      DrawCenteredText(canvas, theory.Name, theoryRect, FitFontSize(theory.Name, theoryRect.Size.X, smallFont), TextColor);
     }
 
     var ribbonHeight = rect.Size.Y * RibbonShare;
@@ -155,6 +180,29 @@ public static class CardPainter
       area.Size.X,
       fontSize,
       modulate: color);
+  }
+
+  /// <summary>
+  /// Размер шрифта, при котором самое длинное слово текста помещается по ширине, но не больше заданного.
+  /// </summary>
+  private static int FitFontSize(string text, float width, int fontSize)
+  {
+    var font = ThemeDB.FallbackFont;
+    var longest = text.Split(' ').MaxBy(word => font.GetStringSize(word, fontSize: fontSize).X)!;
+    while (fontSize > 1 && font.GetStringSize(longest, fontSize: fontSize).X > width)
+      fontSize--;
+    return fontSize;
+  }
+
+  /// <summary>
+  /// Область названия теории под заголовком. Если на карточке стоит мипл владельца, область заканчивается перед ним.
+  /// </summary>
+  private static Rect2 TheoryRect(Rect2 rect, bool withOwnerMark)
+  {
+    var padding = rect.Size.X * 0.06f;
+    var top = rect.Position.Y + rect.Size.Y * HeaderShare;
+    var width = rect.Size.X - padding * 2 - (withOwnerMark ? OwnerMarkSize.X + padding : 0);
+    return new Rect2(rect.Position.X + padding, top, width, rect.Size.Y * TheoryShare);
   }
 
   private static int CornerRadius(Rect2 rect) => (int)(rect.Size.X * 0.07f);

@@ -10,11 +10,26 @@ public partial class TableCamera : Camera2D
   private const float MinZoom = 0.15f;
   private const float MaxZoom = 2f;
   private const float ZoomStep = 1.1f;
+  private const double FocusDuration = 0.4;
+
+  private Tween? _focusTween;
 
   /// <summary>
   /// Область, за которую не выходит центр камеры.
   /// </summary>
   public Rect2 Bounds { get; set; }
+
+  /// <summary>
+  /// Плавно перевести камеру на точку стола.
+  /// </summary>
+  public void FocusOn(Vector2 position)
+  {
+    _focusTween?.Kill();
+    _focusTween = CreateTween();
+    _focusTween.TweenProperty(this, Node2D.PropertyName.Position.ToString(), position.Clamp(Bounds.Position, Bounds.End), FocusDuration)
+      .SetTrans(Tween.TransitionType.Cubic)
+      .SetEase(Tween.EaseType.Out);
+  }
 
   public override void _UnhandledInput(InputEvent @event)
   {
@@ -46,5 +61,10 @@ public partial class TableCamera : Camera2D
     MoveTo(worldPoint - offsetFromCenter / Zoom);
   }
 
-  private void MoveTo(Vector2 position) => Position = position.Clamp(Bounds.Position, Bounds.End);
+  private void MoveTo(Vector2 position)
+  {
+    // Игрок сам двигает камеру — плавный переход больше не нужен.
+    _focusTween?.Kill();
+    Position = position.Clamp(Bounds.Position, Bounds.End);
+  }
 }

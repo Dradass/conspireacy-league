@@ -4,7 +4,8 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Интерфейс поверх стола: баланс игрока слева внизу, колоды справа внизу и сообщения сверху.
+/// Интерфейс поверх стола: игроки с балансами и кнопка перехода хода слева внизу, колоды справа внизу
+/// и сообщения сверху.
 /// </summary>
 public partial class Hud : CanvasLayer
 {
@@ -13,17 +14,20 @@ public partial class Hud : CanvasLayer
   private const double MessageFade = 0.4;
 
   private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.85f);
-  private static readonly Color MoneyColor = new("e0b84f");
+  private const float WaitingPlayerAlpha = 0.55f;
 
-  private Label _balance = null!;
+  private readonly Dictionary<Player, Label> _balances = new();
+  private Label _turn = null!;
   private PanelContainer _messagePanel = null!;
   private Label _message = null!;
   private Tween? _messageTween;
 
   /// <summary>
-  /// Игрок, чей баланс показывается.
+  /// Сессия игры: игроки, чьи балансы показываются, и очерёдность ходов.
   /// </summary>
-  public Player Player { get; init; } = null!;
+  public GameSession Session { get; init; } = null!;
+
+  private TurnOrder Turns => Session.Turns;
 
   /// <summary>
   /// Колоды, из которых тянут карточки.
@@ -36,15 +40,26 @@ public partial class Hud : CanvasLayer
     root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
     AddChild(root);
 
-    root.AddChild(CreateBalance());
+    root.AddChild(CreatePlayers());
     root.AddChild(CreateDecks());
     root.AddChild(CreateMessage());
 
-    Player.MoneyChanged += OnMoneyChanged;
-    OnMoneyChanged(Player);
+    foreach (var player in Turns.Players)
+    {
+      player.MoneyChanged += OnMoneyChanged;
+      OnMoneyChanged(player);
+    }
+
+    Turns.TurnChanged += OnTurnChanged;
+    OnTurnChanged(Turns.CurrentPlayer);
   }
 
-  public override void _ExitTree() => Player.MoneyChanged -= OnMoneyChanged;
+  public override void _ExitTree()
+  {
+    foreach (var player in Turns.Players)
+      player.MoneyChanged -= OnMoneyChanged;
+    Turns.TurnChanged -= OnTurnChanged;
+  }
 
   /// <summary>
   /// Показать сообщение игроку.
@@ -61,9 +76,9 @@ public partial class Hud : CanvasLayer
     _messageTween.TweenCallback(Callable.From(() => _messagePanel.Visible = false));
   }
 
-  private Control CreateBalance()
+  private Control CreatePlayers()
   {
-    var panel = CreatePanel("Balance");
+    var panel = CreatePanel("Players");
     panel.AnchorTop = 1;
     panel.AnchorBottom = 1;
     panel.OffsetLeft = Margin;
@@ -71,10 +86,27 @@ public partial class Hud : CanvasLayer
     panel.OffsetBottom = -Margin;
     panel.GrowVertical = Control.GrowDirection.Begin;
 
-    _balance = new Label();
-    _balance.AddThemeFontSizeOverride("font_size", 28);
-    _balance.AddThemeColorOverride("font_color", MoneyColor);
-    panel.AddChild(_balance);
+    var column = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+    column.AddThemeConstantOverride("separation", 6);
+    panel.AddChild(column);
+
+    _turn = new Label();
+    _turn.AddThemeFontSizeOverride("font_size", 22);
+    column.AddChild(_turn);
+
+    foreach (var player in Turns.Players)
+    {
+      var balance = new Label { Name = $"Balance{player.Color}" };
+      balance.AddThemeFontSizeOverride("font_size", 24);
+      balance.AddThemeColorOverride("font_color", PlayerPalette.MainOf(player.Color));
+      column.AddChild(balance);
+      _balances[player] = balance;
+    }
+
+    var endTurn = new Button { Name = "EndTurn", Text = "Переход хода", FocusMode = Control.FocusModeEnum.None };
+    endTurn.AddThemeFontSizeOverride("font_size", 20);
+    endTurn.Pressed += Turns.EndTurn;
+    column.AddChild(endTurn);
     return panel;
   }
 
@@ -128,5 +160,13 @@ public partial class Hud : CanvasLayer
     return panel;
   }
 
-  private void OnMoneyChanged(Player player) => _balance.Text = $"Баланс: {player.Money}$";
+  private void OnMoneyChanged(Player player) => _balances[player].Text = $"{player.Name}: {player.Money}$";
+
+  private void OnTurnChanged(Player current)
+  {
+    _turn.Text = $"Ходит: {current.Name}";
+    _turn.AddThemeColorOverride("font_color", PlayerPalette.MainOf(current.Color));
+    foreach (var (player, balance) in _balances)
+      balance.Modulate = player == current ? Colors.White : Colors.White with { A = WaitingPlayerAlpha };
+  }
 }

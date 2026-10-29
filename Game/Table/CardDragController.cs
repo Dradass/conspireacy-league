@@ -19,7 +19,7 @@ public partial class CardDragController : Node
   private const double ReturnDuration = 0.2;
 
   private Board _board = null!;
-  private Player _player = null!;
+  private GameSession _session = null!;
   private CanvasLayer _dragLayer = null!;
   private Drag? _drag;
 
@@ -39,13 +39,13 @@ public partial class CardDragController : Node
   /// Настроить контроллер.
   /// </summary>
   /// <param name="board">Стол.</param>
-  /// <param name="player">Игрок, который выкладывает карточки.</param>
+  /// <param name="session">Сессия игры: карточки выкладывает игрок, который сейчас ходит.</param>
   /// <param name="dragLayer">Слой поверх интерфейса, следующий за камерой: в нём летит карточка.</param>
   /// <param name="decks">Колоды, из которых можно тянуть карточки.</param>
-  public void Initialize(Board board, Player player, CanvasLayer dragLayer, IEnumerable<DeckView> decks)
+  public void Initialize(Board board, GameSession session, CanvasLayer dragLayer, IEnumerable<DeckView> decks)
   {
     _board = board;
-    _player = player;
+    _session = session;
     _dragLayer = dragLayer;
     foreach (var deck in decks)
       deck.CardDragStarted += OnDeckCardDragStarted;
@@ -90,7 +90,7 @@ public partial class CardDragController : Node
     view.Lifted = true;
     _dragLayer.AddChild(view);
     _drag = new Drag(view, deck);
-    _board.ShowAvailable(_board.Field.AvailableCells(card, _player));
+    _board.ShowAvailable(_board.Field.AvailableCells(card, _session.CurrentPlayer));
     Input.SetDefaultCursorShape(Input.CursorShape.Drag);
   }
 
@@ -113,7 +113,12 @@ public partial class CardDragController : Node
       return;
     }
 
-    drag.View.IsHeadquarters = _board.Field.Place(drag.View.Card, cell.ToCell(), _player).CreatesHeadquarters;
+    var player = _session.CurrentPlayer;
+    var placed = _board.Field.Place(drag.View.Card, cell.ToCell(), player);
+    drag.View.IsHeadquarters = placed.CreatesHeadquarters;
+    // Карточка в теории отмечается миплом цвета владельца.
+    if (_board.Field.CommonZone.Contains(cell.ToCell()))
+      drag.View.CardOwner = player;
     _dragLayer.RemoveChild(drag.View);
     _board.Place(drag.View, cell);
   }
@@ -151,7 +156,7 @@ public partial class CardDragController : Node
     }));
   }
 
-  private PlacementCheck Check(Card card, Vector2I cell) => _board.Field.Check(card, cell.ToCell(), _player);
+  private PlacementCheck Check(Card card, Vector2I cell) => _board.Field.Check(card, cell.ToCell(), _session.CurrentPlayer);
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
 }
