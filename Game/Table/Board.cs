@@ -127,6 +127,7 @@ public partial class Board : Node2D
 
     Field.AdeptsAdded += OnAdeptsAdded;
     Field.TheoryClosed += OnTheoryClosed;
+    Field.UsedCardsRefreshed += OnUsedCardsRefreshed;
     Market.CardOpened += OnMarketCardOpened;
     Market.CardTaken += OnMarketCardTaken;
     Market.CardDiscarded += OnMarketCardDiscarded;
@@ -138,6 +139,7 @@ public partial class Board : Node2D
   {
     Field.AdeptsAdded -= OnAdeptsAdded;
     Field.TheoryClosed -= OnTheoryClosed;
+    Field.UsedCardsRefreshed -= OnUsedCardsRefreshed;
     Market.CardOpened -= OnMarketCardOpened;
     Market.CardTaken -= OnMarketCardTaken;
     Market.CardDiscarded -= OnMarketCardDiscarded;
@@ -371,6 +373,15 @@ public partial class Board : Node2D
       adepts.Modulate = ClosedAdeptsTint;
     // Перерисовываем итоги теорий: под закрытой теорией это подписано.
     QueueRedraw();
+  }
+
+  /// <summary>
+  /// Сыгранные карточки личных штабов переворачиваются лицевой стороной вверх.
+  /// </summary>
+  private void OnUsedCardsRefreshed(IReadOnlyList<Cell> cells)
+  {
+    foreach (var cell in cells)
+      ViewAt(cell.ToVector2I())?.FlipFaceUp();
   }
 
   /// <summary>

@@ -13,7 +13,7 @@ public enum AdeptDestination
   Theory,
 
   /// <summary>
-  /// В штаб теории.
+  /// В штаб теории, куда выложена карточка.
   /// </summary>
   TheoryHeadquarters
 }
@@ -51,15 +51,11 @@ public sealed class AddAdeptsEffect : Effect
 
   public override void Execute(GameContext context)
   {
-    if (Destination == AdeptDestination.Theory)
-    {
-      var theory = context.TargetTheory ?? throw new InvalidOperationException("Не выбрана теория, в которую добавить адептов.");
-      context.Field.AddAdepts(theory, Count);
-      return;
-    }
-
-    // TODO: привести Count адептов в штаб теории текущего игрока.
-    throw new NotImplementedException();
+    // Для «в теорию» теорию выбирает игрок, для «в штаб теории» — это штаб, куда выложена карточка.
+    var theory = context.TargetTheory ?? throw new InvalidOperationException(Destination == AdeptDestination.Theory
+      ? "Не выбрана теория, в которую добавить адептов."
+      : "Не указан штаб теории, в который выложена карточка.");
+    context.Field.AddAdepts(theory, Count);
   }
 
   private string Adepts => Count == 1 ? "адепта" : $"{Count} адептов";

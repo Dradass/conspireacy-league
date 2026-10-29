@@ -19,7 +19,9 @@ namespace ConspiracyLeague.Core.Field;
 /// </list>
 /// В закрытые штабы теорий карточки класть нельзя.
 /// Карточку из своей зоны (личного штаба) можно один раз использовать: выполнить её действие,
-/// после чего она лежит рубашкой вверх.
+/// после чего она лежит рубашкой вверх до конца раунда (<see cref="RefreshUsedCards"/>).
+/// Персона, выложенная в штаб теории, выполняет своё действие при выкладывании в штаб
+/// (<see cref="PersonCard.OnPlacedInHeadquarters"/>) для этой теории.
 /// </remarks>
 public sealed class PlayingField
 {
@@ -62,6 +64,11 @@ public sealed class PlayingField
   /// Штаб теории закрыт как несостоятельный.
   /// </summary>
   public event Action<TheoryColumn>? TheoryClosed;
+
+  /// <summary>
+  /// Сыгранные карточки перевернулись лицевой стороной вверх; аргумент — их ячейки.
+  /// </summary>
+  public event Action<IReadOnlyList<Cell>>? UsedCardsRefreshed;
 
   /// <param name="columns">Количество столбцов.</param>
   /// <param name="rows">Количество строк.</param>
@@ -140,6 +147,23 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Сыгранные карточки личных штабов переворачиваются лицевой стороной вверх — их снова можно сыграть.
+  /// </summary>
+  public void RefreshUsedCards()
+  {
+    var cells = _usedCells.ToList();
+    _usedCells.Clear();
+    if (cells.Count > 0)
+      UsedCardsRefreshed?.Invoke(cells);
+  }
+
+  /// <summary>
+  /// Есть ли у игрока в личном штабе карточки, которые ещё не сыграны.
+  /// </summary>
+  public bool HasUnusedCards(Player player) =>
+    _playerZones.TryGetValue(player, out var zone) && _cards.Keys.Any(cell => zone.Contains(cell) && !IsUsed(cell));
+
+  /// <summary>
   /// Закрыть несостоятельные штабы теорий (<see cref="TheoryColumn.IsInsolvent"/>) — те, где больше
   /// <see cref="TheoryColumn.SolvencyCheckLeadersThreshold"/> лидеров и бездомных больше, чем остальных персонажей.
   /// </summary>
@@ -196,16 +220,26 @@ public sealed class PlayingField
 
     var person = (PersonCard)card;
     _cards[cell] = person;
+    TheoryColumn? joined = null;
     if (CommonZone.Contains(cell))
     {
       var member = new TheoryMember(cell, person, player);
       if (check.Column is { } column)
+      {
         column.Add(member);
+        joined = column;
+      }
       else
-        _theoryColumns.Add(new TheoryColumn(person.Theory!, member));
+      {
+        joined = new TheoryColumn(person.Theory!, member);
+        _theoryColumns.Add(joined);
+      }
     }
 
     player.Spend(check.Cost);
+    // Персона пришла в штаб теории — выполняется её действие при выкладывании в штаб.
+    if (joined is not null)
+      person.PlaceInHeadquarters(new GameContext(player, this).WithTargetTheory(joined));
     return check;
   }
 
@@ -261,13 +295,20 @@ public sealed class PlayingField
     }
 
     if (ColumnOf(parentTheory) is not { } parent)
-      return PlacementCheck.Deny($"Сначала нужно выложить родительскую теорию «{parentTheory}».");
-    if (cell.Row != CommonZone.BottomRow - 1)
-      return PlacementCheck.Deny($"Дочернюю теорию «{theory}» можно выложить только во второй ряд общей зоны.");
+    {
+      return PlacementCheck.Deny(
+        $"«{theory}» — дочерняя теория: её можно выложить, только когда на поле есть родительская теория «{parentTheory}».");
+    }
+    if (parent.IsClosed)
+    {
+      return PlacementCheck.Deny(
+        $"«{theory}» — дочерняя теория, а штаб её родительской теории «{parentTheory}» закрыт — выложить её нельзя.");
+    }
 
-    return parent.Cells.Contains(cell.Left)
+    return cell.Row == CommonZone.BottomRow - 1 && parent.Cells.Contains(cell.Left)
       ? PlacementCheck.Allow()
-      : PlacementCheck.Deny($"Дочернюю теорию «{theory}» можно выложить только вплотную справа от карточки теории «{parentTheory}».");
+      : PlacementCheck.Deny(
+        $"Дочернюю теорию «{theory}» можно выложить только во второй ряд общей зоны, вплотную справа от карточки родительской теории «{parentTheory}».");
   }
 
   private PlacementCheck CheckJoining(Cell cell, Player player)

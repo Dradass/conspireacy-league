@@ -19,6 +19,7 @@ public partial class Hud : CanvasLayer
   private readonly Dictionary<Player, Label> _balances = new();
   private Label _round = null!;
   private Label _turn = null!;
+  private Label _actions = null!;
   private Button _pass = null!;
   private Button _endTurn = null!;
   private PanelContainer _messagePanel = null!;
@@ -56,6 +57,8 @@ public partial class Hud : CanvasLayer
     Turns.TurnChanged += OnTurnChanged;
     Turns.Passed += OnPassed;
     Session.PhaseChanged += OnPhaseChanged;
+    Session.ActionsLeftChanged += OnActionsLeftChanged;
+    Session.AutoPassed += OnAutoPassed;
     OnPhaseChanged(Session.Phase);
   }
 
@@ -66,6 +69,8 @@ public partial class Hud : CanvasLayer
     Turns.TurnChanged -= OnTurnChanged;
     Turns.Passed -= OnPassed;
     Session.PhaseChanged -= OnPhaseChanged;
+    Session.ActionsLeftChanged -= OnActionsLeftChanged;
+    Session.AutoPassed -= OnAutoPassed;
   }
 
   /// <summary>
@@ -104,6 +109,10 @@ public partial class Hud : CanvasLayer
     _turn = new Label();
     _turn.AddThemeFontSizeOverride("font_size", 22);
     column.AddChild(_turn);
+
+    _actions = new Label();
+    _actions.AddThemeFontSizeOverride("font_size", 18);
+    column.AddChild(_actions);
 
     foreach (var player in Turns.Players)
     {
@@ -176,12 +185,22 @@ public partial class Hud : CanvasLayer
 
   private void OnPassed(Player player) => OnMoneyChanged(player);
 
+  private void OnAutoPassed(Player player) =>
+    ShowMessage($"{player.Name} пасует автоматически: рука пуста, карточки личного штаба сыграны, на рынке нет карточек.");
+
+  private void OnActionsLeftChanged(int actionsLeft)
+  {
+    _actions.Visible = Session.Phase == GamePhase.PlayerTurns;
+    _actions.Text = $"Действий: {actionsLeft} из {GameSession.ActionsPerTurn}";
+  }
+
   private void OnPhaseChanged(GamePhase phase)
   {
     var playing = phase == GamePhase.PlayerTurns;
     _pass.Disabled = !playing;
     _endTurn.Disabled = !playing;
     _round.Text = $"Раунд {Session.Round}: {NameOf(phase)}";
+    OnActionsLeftChanged(Session.ActionsLeft);
     foreach (var player in Turns.Players)
       OnMoneyChanged(player);
     OnTurnChanged(Turns.CurrentPlayer);
@@ -193,6 +212,7 @@ public partial class Hud : CanvasLayer
     GamePhase.PlayerTurns => "ходы игроков",
     GamePhase.HeadquartersCheck => "проверка штабов теорий",
     GamePhase.AdeptIncome => "адепты приносят деньги",
+    GamePhase.CardsRefresh => "обновление карточек",
     GamePhase.MarketRefresh => "обновление рынка",
     _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null),
   };

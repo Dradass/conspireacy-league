@@ -111,6 +111,21 @@ public partial class CardView : Node2D
       .SetEase(Tween.EaseType.InOut);
   }
 
+  /// <summary>
+  /// Перевернуть карточку лицевой стороной вверх.
+  /// </summary>
+  public void FlipFaceUp()
+  {
+    if (!_faceDown)
+      return;
+
+    _faceDown = false;
+    CreateTween()
+      .TweenMethod(Callable.From<float>(SetFlip), 1f, 0f, FlipDuration)
+      .SetTrans(Tween.TransitionType.Sine)
+      .SetEase(Tween.EaseType.InOut);
+  }
+
   public override void _Draw()
   {
     // При перевороте карточка сжимается по горизонтали до ребра и раскрывается другой стороной.

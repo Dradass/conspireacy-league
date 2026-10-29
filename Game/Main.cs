@@ -10,7 +10,6 @@ namespace ConspiracyLeague.Game;
 /// </summary>
 public partial class Main : Node2D
 {
-  private const int StartingMoney = 10;
   private const int PlayerCount = 4;
   private const float StartZoom = 0.6f;
   private const float StartCameraShift = 80f;
@@ -19,7 +18,7 @@ public partial class Main : Node2D
   {
 	var session = new GameSession(Enum.GetValues<PlayerColor>()
 	  .Take(PlayerCount)
-	  .Select((color, index) => new Player($"Игрок {index + 1}", color, StartingMoney)));
+	  .Select((color, index) => new Player($"Игрок {index + 1}", color, GameSession.StartingMoney)));
 
 	var board = new Board { Name = "Board", Session = session };
 	AddChild(board);

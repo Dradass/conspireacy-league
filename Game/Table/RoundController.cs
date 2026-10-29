@@ -8,7 +8,8 @@ namespace ConspiracyLeague.Game.Table;
 /// </summary>
 /// <remarks>
 /// Проверка штабов теорий (несостоятельные закрываются), доход от адептов — по одной теории, с анимацией,
-/// обновление рынка, затем начинается следующий раунд. Камера переезжает туда, где что-то происходит.
+/// обновление карточек личных штабов, обновление рынка, затем начинается следующий раунд.
+/// Камера переезжает туда, где что-то происходит.
 /// Сами правила — в <see cref="GameSession"/>.
 /// </remarks>
 public partial class RoundController : Node
@@ -66,6 +67,13 @@ public partial class RoundController : Node
       Hint?.Invoke($"Адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
       await _board.ShowIncome(income);
     }
+
+    var zones = _session.Field.PlayerZones.Values.ToList();
+    _camera.FocusOn((Board.ZoneCenter(zones[0]) + Board.ZoneCenter(zones[^1])) / 2);
+    Hint?.Invoke("Обновление карточек: сыгранные карточки личных штабов переворачиваются.");
+    await Pause(CameraPause);
+    _session.RefreshPlayedCards();
+    await Pause(StepPause);
 
     _camera.FocusOn(Board.ZoneCenter(_session.Market.Zone));
     Hint?.Invoke("Обновление рынка.");

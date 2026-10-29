@@ -21,7 +21,8 @@ public sealed class GameContext
   public PlayingField Field { get; }
 
   /// <summary>
-  /// Теория, которую игрок выбрал для действия (например, куда добавить адептов).
+  /// Теория, которую игрок выбрал для действия (например, куда добавить адептов),
+  /// или штаб теории, в который выложена карточка.
   /// </summary>
   public TheoryColumn? TargetTheory { get; private init; }
 

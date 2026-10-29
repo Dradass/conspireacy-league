@@ -201,9 +201,9 @@ public partial class CardUseController : Node
   {
     try
     {
-      _board.Field.Use(cell.ToCell(), option, context);
+      _session.UseCard(cell.ToCell(), option, context);
     }
-    // TODO: убрать, когда будут реализованы все действия (сейчас — адепты в штабе теории).
+    // TODO: убрать, когда у всех действий будет реализовано выполнение.
     catch (NotImplementedException)
     {
       UseDenied?.Invoke($"Действие «{option.Description}» пока не реализовано.");

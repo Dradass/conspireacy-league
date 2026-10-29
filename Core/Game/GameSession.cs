@@ -1,5 +1,6 @@
 using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Decks;
+using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Field;
 
 namespace ConspiracyLeague.Core.Game;
@@ -10,9 +11,11 @@ namespace ConspiracyLeague.Core.Game;
 /// </summary>
 /// <remarks>
 /// Партия идёт по фазам (<see cref="GamePhase"/>): подготовка (<see cref="Start"/>), затем раунды.
-/// Раунд: игроки ходят, пока все не спасуют (<see cref="Pass"/>); затем закрываются несостоятельные штабы
+/// Раунд: игроки ходят, пока все не спасуют (<see cref="Pass"/>). За ход можно сделать <see cref="ActionsPerTurn"/>
+/// действия — купить карточку, выложить её на поле, сыграть карточку; после последнего ход сам переходит
+/// к следующему игроку. Игрок, которому нечем ходить (<see cref="HasMoves"/>), пасует автоматически. Затем закрываются несостоятельные штабы
 /// (<see cref="CloseInsolventTheories"/>), адепты приносят деньги (<see cref="PayNextTheoryIncome"/>),
-/// обновляется рынок (<see cref="RefreshMarket"/>), и начинается следующий раунд (<see cref="StartNextRound"/>).
+/// сыгранные карточки переворачиваются лицом вверх (<see cref="RefreshPlayedCards"/>), обновляется рынок (<see cref="RefreshMarket"/>), и начинается следующий раунд (<see cref="StartNextRound"/>).
 /// Шаги конца раунда вызываются по одному, чтобы между ними можно было показать, что произошло.
 /// </remarks>
 public sealed class GameSession
@@ -21,6 +24,16 @@ public sealed class GameSession
   /// Сколько карточек из общей колоды получает каждый игрок при подготовке.
   /// </summary>
   public const int StartingHandSize = 3;
+
+  /// <summary>
+  /// Сколько $ у каждого игрока в начале партии.
+  /// </summary>
+  public const int StartingMoney = 10;
+
+  /// <summary>
+  /// Сколько действий можно сделать за ход: купить карточку, выложить её на поле, сыграть карточку.
+  /// </summary>
+  public const int ActionsPerTurn = 2;
 
   private readonly Queue<TheoryColumn> _unpaidTheories = new();
 
@@ -65,6 +78,21 @@ public sealed class GameSession
   public int Round { get; private set; }
 
   /// <summary>
+  /// Сколько действий осталось у игрока, который сейчас ходит.
+  /// </summary>
+  public int ActionsLeft { get; private set; }
+
+  /// <summary>
+  /// Изменилось количество оставшихся действий; аргумент — сколько осталось.
+  /// </summary>
+  public event Action<int>? ActionsLeftChanged;
+
+  /// <summary>
+  /// Игрок спасовал автоматически — ходить ему нечем; аргумент — этот игрок.
+  /// </summary>
+  public event Action<Player>? AutoPassed;
+
+  /// <summary>
   /// Фаза партии сменилась; аргумент — новая фаза.
   /// </summary>
   public event Action<GamePhase>? PhaseChanged;
@@ -82,6 +110,8 @@ public sealed class GameSession
     for (var i = 0; i < Players.Count; i++)
       Field.AddPlayer(Players[i], FieldLayout.PlayerZone(i, Players.Count));
     Market = new Market(FieldLayout.MarketZone, MarketDeck.Create(Players.Count, random ?? Random.Shared));
+    // Подписываемся первыми: к моменту, когда о новом ходе узнают остальные, действия уже восстановлены.
+    Turns.TurnChanged += _ => SetActionsLeft(ActionsPerTurn);
   }
 
   /// <summary>
@@ -102,31 +132,47 @@ public sealed class GameSession
   }
 
   /// <summary>
-  /// Игрок, который сейчас ходит, покупает карточку с рынка в руку.
+  /// Игрок, который сейчас ходит, покупает карточку с рынка в руку. Это действие.
   /// </summary>
   /// <param name="cell">Ячейка рынка.</param>
   /// <returns>Купленная карточка.</returns>
   public PersonCard BuyFromMarket(Cell cell)
   {
-    RequirePhase(GamePhase.PlayerTurns);
-    return Market.Buy(cell, CurrentPlayer);
+    RequireAction();
+    var card = Market.Buy(cell, CurrentPlayer);
+    CompleteAction();
+    return card;
   }
 
   /// <summary>
-  /// Игрок, который сейчас ходит, выкладывает карточку с руки на поле — в личный штаб или в общую зону.
+  /// Игрок, который сейчас ходит, выкладывает карточку с руки на поле — в личный штаб или в общую зону. Это действие.
   /// </summary>
   /// <returns>Условия, на которых карточка положена.</returns>
   /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
   public PlacementCheck PlaceFromHand(Card card, Cell cell)
   {
-    RequirePhase(GamePhase.PlayerTurns);
+    RequireAction();
     var hand = CurrentPlayer.Hand;
     if (!hand.Contains(card))
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
 
     var check = Field.Place(card, cell, CurrentPlayer);
     hand.Remove(card);
+    CompleteAction();
     return check;
+  }
+
+  /// <summary>
+  /// Игрок, который сейчас ходит, играет карточку из своего личного штаба (<see cref="PlayingField.Use"/>). Это действие.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="option">Выбранный вариант действия карточки.</param>
+  /// <param name="context">Контекст партии.</param>
+  public void UseCard(Cell cell, Effect option, GameContext context)
+  {
+    RequireAction();
+    Field.Use(cell, option, context);
+    CompleteAction();
   }
 
   /// <summary>
@@ -136,6 +182,7 @@ public sealed class GameSession
   {
     RequirePhase(GamePhase.PlayerTurns);
     Turns.EndTurn();
+    AutoPass();
   }
 
   /// <summary>
@@ -145,10 +192,16 @@ public sealed class GameSession
   public void Pass()
   {
     RequirePhase(GamePhase.PlayerTurns);
-    Turns.Pass();
-    if (Turns.AllPassed)
-      SetPhase(GamePhase.HeadquartersCheck);
+    PassCurrent();
+    AutoPass();
   }
+
+  /// <summary>
+  /// Может ли игрок ещё что-то сделать: у него есть карточки в руке, несыгранные карточки в личном штабе
+  /// или на рынке есть карточки.
+  /// </summary>
+  public bool HasMoves(Player player) =>
+    player.Hand.Cards.Count > 0 || Field.HasUnusedCards(player) || Market.OpenCards.Count > 0;
 
   /// <summary>
   /// Проверка штабов теорий: закрыть несостоятельные (<see cref="TheoryColumn.IsInsolvent"/>) — те, где больше
@@ -170,7 +223,7 @@ public sealed class GameSession
 
   /// <summary>
   /// Адепты следующей действующей теории приносят деньги её лидерам (<see cref="TheoryIncome"/>).
-  /// Когда все теории получили доход, начинается обновление рынка.
+  /// Когда все теории получили доход, начинается обновление карточек.
   /// </summary>
   /// <returns>Доход теории или <c>null</c>, если все теории уже получили доход.</returns>
   public TheoryIncome? PayNextTheoryIncome()
@@ -178,7 +231,7 @@ public sealed class GameSession
     RequirePhase(GamePhase.AdeptIncome);
     if (!_unpaidTheories.TryDequeue(out var column))
     {
-      SetPhase(GamePhase.MarketRefresh);
+      SetPhase(GamePhase.CardsRefresh);
       return null;
     }
 
@@ -186,6 +239,17 @@ public sealed class GameSession
     foreach (var (player, amount) in income.ByPlayer)
       player.Earn(amount);
     return income;
+  }
+
+  /// <summary>
+  /// Обновление карточек: сыгранные карточки личных штабов переворачиваются лицевой стороной вверх.
+  /// После этого обновляется рынок.
+  /// </summary>
+  public void RefreshPlayedCards()
+  {
+    RequirePhase(GamePhase.CardsRefresh);
+    Field.RefreshUsedCards();
+    SetPhase(GamePhase.MarketRefresh);
   }
 
   /// <summary>
@@ -208,12 +272,60 @@ public sealed class GameSession
     Round++;
     SetPhase(GamePhase.PlayerTurns);
     Turns.StartRound();
+    AutoPass();
   }
 
   /// <summary>
   /// Контекст для действий игрока, который сейчас ходит.
   /// </summary>
   public GameContext CreateContext() => new(CurrentPlayer, Field);
+
+  private void RequireAction()
+  {
+    RequirePhase(GamePhase.PlayerTurns);
+    if (ActionsLeft == 0)
+      throw new InvalidOperationException($"У игрока {CurrentPlayer} не осталось действий в этом ходу.");
+  }
+
+  /// <summary>
+  /// Действие сделано: если действий больше не осталось, ход переходит к следующему игроку.
+  /// </summary>
+  private void CompleteAction()
+  {
+    SetActionsLeft(ActionsLeft - 1);
+    if (ActionsLeft == 0)
+      Turns.EndTurn();
+    AutoPass();
+  }
+
+  /// <summary>
+  /// Пока игроку, который сейчас ходит, нечем ходить, он пасует автоматически.
+  /// </summary>
+  /// <remarks>
+  /// Вызывается после смены хода, а не из события смены хода: иначе подписчики получили бы события
+  /// о ходах вперемешку.
+  /// </remarks>
+  private void AutoPass()
+  {
+    while (Phase == GamePhase.PlayerTurns && !HasMoves(CurrentPlayer))
+    {
+      AutoPassed?.Invoke(CurrentPlayer);
+      PassCurrent();
+    }
+  }
+
+  private void PassCurrent()
+  {
+    Turns.Pass();
+    if (Turns.AllPassed)
+      SetPhase(GamePhase.HeadquartersCheck);
+  }
+
+  private void SetActionsLeft(int actionsLeft)
+  {
+    ActionsLeft = actionsLeft;
+    ActionsLeftChanged?.Invoke(actionsLeft);
+  }
 
   private void RequirePhase(GamePhase phase)
   {
