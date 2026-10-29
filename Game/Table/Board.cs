@@ -29,6 +29,7 @@ public partial class Board : Node2D
   private const float AvailableBorderWidth = 3f;
   private const int TotalsFontSize = 14;
   private const int TotalsValueFontSize = 28;
+  private const int TotalsOwnerFontSize = 20;
   private const float WaitingBorderDarkening = 0.45f;
   private const int MarketDeckLayers = 3;
   private const float MarketDeckLayerOffset = 3f;
@@ -316,7 +317,8 @@ public partial class Board : Node2D
   }
 
   /// <summary>
-  /// Под каждым столбцом теории, в ряду под общей зоной, — суммарное влияние, количество человек и адептов.
+  /// Под каждым столбцом теории, в ряду под общей зоной, — суммарное влияние, количество человек и адептов,
+  /// а под штабом теории — ещё и его владелец с его влиянием.
   /// </summary>
   private void DrawTheoryTotals()
   {
@@ -335,29 +337,36 @@ public partial class Board : Node2D
       }
 
       var text = string.Join("\n", group.Select(column =>
-        $"{column.Theory}:\nвлияние {column.Influence}, человек {column.Cards.Count}, адептов {column.Adepts}"));
+        $"{column.Theory}:\nвлияние {column.Influence}, человек {column.Cards.Count}, адептов {column.Adepts}"
+        + (column.IsHeadquarters ? $", владелец {column.Owner}" : string.Empty)));
       CardPainter.DrawCenteredText(this, text, area, TotalsFontSize, TotalsColor);
     }
   }
 
   private void DrawTotals(TheoryColumn column, Rect2 area)
   {
-    (string Text, int FontSize)[] lines =
+    List<(string Text, int FontSize, Color Color)> lines =
     [
-      ("Влияние", TotalsFontSize),
-      (column.Influence.ToString(), TotalsValueFontSize),
-      ("Человек", TotalsFontSize),
-      (column.Cards.Count.ToString(), TotalsValueFontSize),
-      ("Адептов", TotalsFontSize),
-      (column.Adepts.ToString(), TotalsValueFontSize),
+      ("Влияние", TotalsFontSize, TotalsColor),
+      (column.Influence.ToString(), TotalsValueFontSize, TotalsColor),
+      ("Человек", TotalsFontSize, TotalsColor),
+      (column.Cards.Count.ToString(), TotalsValueFontSize, TotalsColor),
+      ("Адептов", TotalsFontSize, TotalsColor),
+      (column.Adepts.ToString(), TotalsValueFontSize, TotalsColor),
     ];
+    if (column.IsHeadquarters)
+    {
+      var owner = column.Owner;
+      lines.Add(("Владелец", TotalsFontSize, TotalsColor));
+      lines.Add(($"{owner.Name} ({column.InfluenceOf(owner)})", TotalsOwnerFontSize, PlayerPalette.MainOf(owner.Color)));
+    }
     // Высота строки пропорциональна размеру шрифта.
     var scale = area.Size.Y / lines.Sum(line => line.FontSize);
     var top = area.Position.Y;
-    foreach (var (text, fontSize) in lines)
+    foreach (var (text, fontSize, color) in lines)
     {
       var lineArea = new Rect2(area.Position.X, top, area.Size.X, fontSize * scale);
-      CardPainter.DrawCenteredText(this, text, lineArea, fontSize, TotalsColor);
+      CardPainter.DrawCenteredText(this, text, lineArea, fontSize, color);
       top = lineArea.End.Y;
     }
   }

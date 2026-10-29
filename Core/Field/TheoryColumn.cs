@@ -61,6 +61,16 @@ public sealed class TheoryColumn
   /// </summary>
   public Player Founder => _members[0].Owner;
 
+  /// <summary>
+  /// Владелец теории — игрок с наибольшим влиянием в стопке (<see cref="InfluenceOf"/>).
+  /// При равенстве влияния — тот, кто выложил свою первую карточку раньше; основатель теории выложил её первым.
+  /// </summary>
+  public Player Owner => _members
+    .Select(member => member.Owner)
+    // Distinct сохраняет порядок первых карточек игроков, а MaxBy при равенстве возвращает первого.
+    .Distinct()
+    .MaxBy(InfluenceOf)!;
+
   internal TheoryColumn(Theory theory, TheoryMember founder)
   {
     Theory = theory;
@@ -77,6 +87,11 @@ public sealed class TheoryColumn
   /// Карточки стопки, выложенные игроком.
   /// </summary>
   public IEnumerable<TheoryMember> MembersOf(Player player) => _members.Where(member => member.Owner == player);
+
+  /// <summary>
+  /// Влияние игрока в стопке — сумма очков влияния выложенных им карточек.
+  /// </summary>
+  public int InfluenceOf(Player player) => MembersOf(player).Sum(member => member.Card.Influence);
 
   internal void Add(TheoryMember member) => _members.Add(member);
 
