@@ -13,7 +13,8 @@ namespace ConspiracyLeague.Core.Field;
 /// <list type="bullet">
 /// <item>в свою зону: первую карточку — куда угодно, остальные — вплотную к уже лежащим;</item>
 /// <item>новую родительскую теорию — в нижний ряд общей зоны, появляется штаб теории;</item>
-/// <item>новую дочернюю теорию — во второй ряд общей зоны, вплотную справа от карточки родительской теории;</item>
+/// <item>новую дочернюю теорию — во второй ряд общей зоны, вплотную слева или справа от карточки родительской теории
+/// или уже выложенной дочерней теории того же родителя;</item>
 /// <item>карточку уже выложенной теории — сверху её стопки;</item>
 /// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки.</item>
 /// </list>
@@ -345,10 +346,15 @@ public sealed class PlayingField
         $"«{theory}» — дочерняя теория, а штаб её родительской теории «{parentTheory}» закрыт — выложить её нельзя.");
     }
 
-    return cell.Row == CommonZone.BottomRow - 1 && parent.Cells.Contains(cell.Left)
+    // Дочерние теории выстраиваются в ряд по обе стороны от родительской: новую можно положить вплотную
+    // к стопке родительской теории или к стопке любой уже выложенной дочерней теории того же родителя.
+    var family = _theoryColumns.Where(column => column == parent || column.Theory.Parent == parentTheory);
+    var isNextToFamily = family.Any(column => column.Cells.Contains(cell.Left) || column.Cells.Contains(cell.Right));
+    return cell.Row == CommonZone.BottomRow - 1 && isNextToFamily
       ? PlacementCheck.Allow()
       : PlacementCheck.Deny(
-        $"Дочернюю теорию «{theory}» можно выложить только во второй ряд общей зоны, вплотную справа от карточки родительской теории «{parentTheory}».");
+        $"Дочернюю теорию «{theory}» можно выложить только во второй ряд общей зоны, вплотную слева или справа "
+        + $"от карточки родительской теории «{parentTheory}» или уже выложенной дочерней теории «{parentTheory}».");
   }
 
   private PlacementCheck CheckJoining(Cell cell, Player player)
