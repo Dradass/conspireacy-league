@@ -136,6 +136,20 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Карточка из личного штаба игрока сыграна неудачно: она переворачивается рубашкой вверх, а действие не выполняется.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="player">Игрок, который играл карточку.</param>
+  /// <exception cref="InvalidOperationException">Карточку нельзя использовать.</exception>
+  public void Waste(Cell cell, Player player)
+  {
+    if (!CanUse(cell, player))
+      throw new InvalidOperationException("Эту карточку нельзя использовать.");
+
+    _usedCells.Add(cell);
+  }
+
+  /// <summary>
   /// Добавить адептов в выложенную теорию.
   /// </summary>
   /// <param name="column">Теория.</param>

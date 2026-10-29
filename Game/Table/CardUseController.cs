@@ -12,11 +12,15 @@ namespace ConspiracyLeague.Game.Table;
 /// <remarks>
 /// Если у действия карточки один вариант, он выполняется сразу, если несколько — сначала появляется меню выбора.
 /// Если действию нужна теория (например, «Добавить адепта в теорию»), игрок выбирает её щелчком по стопке теории;
-/// Esc или правая кнопка мыши отменяют выбор. Использованная карточка переворачивается рубашкой вверх.
+/// Esc или правая кнопка мыши отменяют выбор. Затем проводится проверка успеха (<see cref="SuccessCheck"/>):
+/// слева от карточки наполняется шкала, на карточке появляется галка или крест, и через секунду карточка
+/// переворачивается рубашкой вверх. Действие выполняется, только если проверка успешна.
 /// Что можно использовать, решает <see cref="PlayingField"/>.
 /// </remarks>
 public partial class CardUseController : Node
 {
+  private const double ResultPause = 1.0;
+
   private Board _board = null!;
   private GameSession _session = null!;
   private PopupMenu _menu = null!;
@@ -81,7 +85,7 @@ public partial class CardUseController : Node
 
     if (@event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } click || _menu.Visible)
       return;
-    if (_session.Phase != GamePhase.PlayerTurns)
+    if (_session.Phase != GamePhase.PlayerTurns || _session.PendingCheck is not null)
       return;
     if (_board.CellAt(_board.GetGlobalMousePosition()) is not { } cell || !_board.Field.CanUse(cell.ToCell(), _session.CurrentPlayer))
       return;
@@ -197,11 +201,25 @@ public partial class CardUseController : Node
     return targeting;
   }
 
-  private void Use(CardView view, Vector2I cell, Effect option, GameContext context)
+  /// <summary>
+  /// Провести проверку успеха с анимацией, затем выполнить действие (если проверка успешна) и перевернуть карточку.
+  /// </summary>
+  private async void Use(CardView view, Vector2I cell, Effect option, GameContext context)
   {
+    var check = _session.CheckSuccess(cell.ToCell());
+    view.Lifted = true;
+    var checkView = SuccessCheckView.Create(view, check);
+    await checkView.Play();
+    Hint?.Invoke(check.Succeeded
+      ? $"«{view.Card.Name}»: выпало {check.Roll}, нужно {check.Chance} — успех! {option.Description}."
+      : $"«{view.Card.Name}»: выпало {check.Roll}, нужно {check.Chance} — провал, действие не выполняется.");
+    await ToSignal(GetTree().CreateTimer(ResultPause), SceneTreeTimer.SignalName.Timeout);
+
+    checkView.QueueFree();
+    view.Lifted = false;
     try
     {
-      _session.UseCard(cell.ToCell(), option, context);
+      _session.UseCard(option, context);
     }
     // TODO: убрать, когда у всех действий будет реализовано выполнение.
     catch (NotImplementedException)

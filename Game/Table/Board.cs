@@ -41,10 +41,10 @@ public partial class Board : Node2D
   private const int IncomeFontSize = 34;
   private const int IncomeTitleFontSize = 26;
   private const float IncomeRise = 70f;
-  private const double IncomeStagger = 0.25;
-  private const double IncomeFadeIn = 0.15;
-  private const double IncomeHold = 1.1;
-  private const double IncomeFadeOut = 0.35;
+  private const double IncomeStagger = 0.5;
+  private const double IncomeFadeIn = 0.3;
+  private const double IncomeHold = 2.2;
+  private const double IncomeFadeOut = 0.7;
 
   private static readonly Color TableColor = new("26342c");
   private static readonly Color SlotColor = new("2c3d33");

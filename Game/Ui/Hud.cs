@@ -59,6 +59,7 @@ public partial class Hud : CanvasLayer
     Session.PhaseChanged += OnPhaseChanged;
     Session.ActionsLeftChanged += OnActionsLeftChanged;
     Session.AutoPassed += OnAutoPassed;
+    Session.PendingCheckChanged += OnPendingCheckChanged;
     OnPhaseChanged(Session.Phase);
   }
 
@@ -71,6 +72,7 @@ public partial class Hud : CanvasLayer
     Session.PhaseChanged -= OnPhaseChanged;
     Session.ActionsLeftChanged -= OnActionsLeftChanged;
     Session.AutoPassed -= OnAutoPassed;
+    Session.PendingCheckChanged -= OnPendingCheckChanged;
   }
 
   /// <summary>
@@ -194,11 +196,21 @@ public partial class Hud : CanvasLayer
     _actions.Text = $"Действий: {actionsLeft} из {GameSession.ActionsPerTurn}";
   }
 
+  private void OnPendingCheckChanged(SuccessCheck? check) => UpdateButtons();
+
+  /// <summary>
+  /// Пасовать и передавать ход можно только во время ходов игроков и не посреди проверки успеха.
+  /// </summary>
+  private void UpdateButtons()
+  {
+    var canAct = Session.Phase == GamePhase.PlayerTurns && Session.PendingCheck is null;
+    _pass.Disabled = !canAct;
+    _endTurn.Disabled = !canAct;
+  }
+
   private void OnPhaseChanged(GamePhase phase)
   {
-    var playing = phase == GamePhase.PlayerTurns;
-    _pass.Disabled = !playing;
-    _endTurn.Disabled = !playing;
+    UpdateButtons();
     _round.Text = $"Раунд {Session.Round}: {NameOf(phase)}";
     OnActionsLeftChanged(Session.ActionsLeft);
     foreach (var player in Turns.Players)

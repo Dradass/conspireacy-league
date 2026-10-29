@@ -246,7 +246,7 @@ public partial class CardDragController : Node
   /// <summary>
   /// Брать карточки можно только в фазе ходов игроков.
   /// </summary>
-  private bool CanAct => _session.Phase == GamePhase.PlayerTurns;
+  private bool CanAct => _session.Phase == GamePhase.PlayerTurns && _session.PendingCheck is null;
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
 

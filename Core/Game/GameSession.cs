@@ -36,6 +36,7 @@ public sealed class GameSession
   public const int ActionsPerTurn = 2;
 
   private readonly Queue<TheoryColumn> _unpaidTheories = new();
+  private readonly Random _random;
 
   /// <summary>
   /// Игроки и очерёдность их ходов.
@@ -83,6 +84,17 @@ public sealed class GameSession
   public int ActionsLeft { get; private set; }
 
   /// <summary>
+  /// Проверка успеха карточки, которую сейчас играют (<see cref="CheckSuccess"/>), или <c>null</c>.
+  /// Пока она не завершена (<see cref="UseCard"/>), других действий сделать нельзя.
+  /// </summary>
+  public SuccessCheck? PendingCheck { get; private set; }
+
+  /// <summary>
+  /// Началась или завершилась проверка успеха; аргумент — <see cref="PendingCheck"/>.
+  /// </summary>
+  public event Action<SuccessCheck?>? PendingCheckChanged;
+
+  /// <summary>
   /// Изменилось количество оставшихся действий; аргумент — сколько осталось.
   /// </summary>
   public event Action<int>? ActionsLeftChanged;
@@ -109,7 +121,8 @@ public sealed class GameSession
     Field = new PlayingField(FieldLayout.Columns, FieldLayout.Rows, FieldLayout.CommonZone(Players.Count));
     for (var i = 0; i < Players.Count; i++)
       Field.AddPlayer(Players[i], FieldLayout.PlayerZone(i, Players.Count));
-    Market = new Market(FieldLayout.MarketZone, MarketDeck.Create(Players.Count, random ?? Random.Shared));
+    _random = random ?? Random.Shared;
+    Market = new Market(FieldLayout.MarketZone, MarketDeck.Create(Players.Count, _random));
     // Подписываемся первыми: к моменту, когда о новом ходе узнают остальные, действия уже восстановлены.
     Turns.TurnChanged += _ => SetActionsLeft(ActionsPerTurn);
   }
@@ -163,16 +176,44 @@ public sealed class GameSession
   }
 
   /// <summary>
-  /// Игрок, который сейчас ходит, играет карточку из своего личного штаба (<see cref="PlayingField.Use"/>). Это действие.
+  /// Игрок, который сейчас ходит, начинает играть карточку из своего личного штаба: проводится проверка успеха
+  /// (<see cref="SuccessCheck"/>). Розыгрыш завершается вызовом <see cref="UseCard"/>.
   /// </summary>
   /// <param name="cell">Ячейка карточки.</param>
-  /// <param name="option">Выбранный вариант действия карточки.</param>
-  /// <param name="context">Контекст партии.</param>
-  public void UseCard(Cell cell, Effect option, GameContext context)
+  /// <returns>Проверка успеха.</returns>
+  /// <exception cref="InvalidOperationException">Карточку нельзя использовать.</exception>
+  public SuccessCheck CheckSuccess(Cell cell)
   {
     RequireAction();
-    Field.Use(cell, option, context);
+    if (!Field.CanUse(cell, CurrentPlayer))
+      throw new InvalidOperationException("Эту карточку нельзя использовать.");
+
+    var chance = Field.CardAt(cell) is PersonCard person ? person.SuccessChancePercent : 0;
+    var check = SuccessCheck.Perform(cell, chance, _random);
+    SetPendingCheck(check);
+    return check;
+  }
+
+  /// <summary>
+  /// Завершить розыгрыш карточки после проверки успеха (<see cref="CheckSuccess"/>). Это действие.
+  /// Если проверка успешна, выполняется выбранный вариант действия карточки (<see cref="PlayingField.Use"/>),
+  /// иначе действие не выполняется (<see cref="PlayingField.Waste"/>). В обоих случаях карточка переворачивается.
+  /// </summary>
+  /// <param name="option">Выбранный вариант действия карточки.</param>
+  /// <param name="context">Контекст партии.</param>
+  /// <returns>Проверка успеха.</returns>
+  /// <exception cref="InvalidOperationException">Проверка успеха не проводилась.</exception>
+  public SuccessCheck UseCard(Effect option, GameContext context)
+  {
+    var check = PendingCheck ?? throw new InvalidOperationException("Сначала нужно провести проверку успеха.");
+    SetPendingCheck(null);
+    RequireAction();
+    if (check.Succeeded)
+      Field.Use(check.Cell, option, context);
+    else
+      Field.Waste(check.Cell, CurrentPlayer);
     CompleteAction();
+    return check;
   }
 
   /// <summary>
@@ -180,6 +221,7 @@ public sealed class GameSession
   /// </summary>
   public void EndTurn()
   {
+    RequireNoPendingCheck();
     RequirePhase(GamePhase.PlayerTurns);
     Turns.EndTurn();
     AutoPass();
@@ -191,6 +233,7 @@ public sealed class GameSession
   /// </summary>
   public void Pass()
   {
+    RequireNoPendingCheck();
     RequirePhase(GamePhase.PlayerTurns);
     PassCurrent();
     AutoPass();
@@ -282,6 +325,7 @@ public sealed class GameSession
 
   private void RequireAction()
   {
+    RequireNoPendingCheck();
     RequirePhase(GamePhase.PlayerTurns);
     if (ActionsLeft == 0)
       throw new InvalidOperationException($"У игрока {CurrentPlayer} не осталось действий в этом ходу.");
@@ -319,6 +363,18 @@ public sealed class GameSession
     Turns.Pass();
     if (Turns.AllPassed)
       SetPhase(GamePhase.HeadquartersCheck);
+  }
+
+  private void RequireNoPendingCheck()
+  {
+    if (PendingCheck is not null)
+      throw new InvalidOperationException("Идёт проверка успеха карточки — дождитесь её окончания.");
+  }
+
+  private void SetPendingCheck(SuccessCheck? check)
+  {
+    PendingCheck = check;
+    PendingCheckChanged?.Invoke(check);
   }
 
   private void SetActionsLeft(int actionsLeft)
