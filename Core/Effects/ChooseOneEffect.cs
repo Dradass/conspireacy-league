@@ -10,7 +10,7 @@ public sealed class ChooseOneEffect : Effect
   /// <summary>
   /// Варианты на выбор.
   /// </summary>
-  public IReadOnlyList<Effect> Options { get; }
+  public override IReadOnlyList<Effect> Options { get; }
 
   public ChooseOneEffect(params Effect[] options)
   {

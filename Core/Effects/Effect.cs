@@ -23,6 +23,11 @@ public abstract class Effect
   public abstract string Description { get; }
 
   /// <summary>
+  /// Варианты, из которых игрок выбирает одно действие. У обычного действия вариант один — оно само.
+  /// </summary>
+  public virtual IReadOnlyList<Effect> Options => [this];
+
+  /// <summary>
   /// Выполнить действие.
   /// </summary>
   /// <param name="context">Контекст партии.</param>

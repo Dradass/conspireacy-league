@@ -9,4 +9,15 @@ namespace ConspiracyLeague.Core.Game;
 /// </remarks>
 public sealed class GameContext
 {
+  /// <summary>
+  /// Игрок, для которого выполняются эффекты.
+  /// </summary>
+  public Player CurrentPlayer { get; }
+
+  /// <param name="currentPlayer">Игрок, для которого выполняются эффекты.</param>
+  public GameContext(Player currentPlayer)
+  {
+    ArgumentNullException.ThrowIfNull(currentPlayer);
+    CurrentPlayer = currentPlayer;
+  }
 }

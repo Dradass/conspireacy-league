@@ -41,9 +41,9 @@ public partial class Main : Node2D
     [
       DeckView.Create("Бездомные", CreateCards(() => new HomelessCard())),
       DeckView.Create("Граждане", CreateCards(() => new CitizenCard())),
+      DeckView.Create(TheoryCatalog.SecretGovernment.Name, CreateCards(() => new CitizenCard(TheoryCatalog.SecretGovernment))),
       DeckView.Create(TheoryCatalog.Reptilians.Name, CreateCards(() => new CitizenCard(TheoryCatalog.Reptilians))),
-      DeckView.Create(TheoryCatalog.ReptiliansInGovernment.Name, CreateCards(() => new CitizenCard(TheoryCatalog.ReptiliansInGovernment))),
-      DeckView.Create(TheoryCatalog.FlatEarth.Name, CreateCards(() => new HomelessCard(TheoryCatalog.FlatEarth))),
+      DeckView.Create(TheoryCatalog.TinFoilHat.Name, CreateCards(() => new HomelessCard(TheoryCatalog.TinFoilHat))),
     ];
     var hud = new Hud { Name = "Hud", Layer = 1, Player = player, Decks = decks };
     AddChild(hud);
@@ -56,6 +56,11 @@ public partial class Main : Node2D
     AddChild(dragController);
     dragController.Initialize(board, player, dragLayer, decks);
     dragController.PlacementDenied += hud.ShowMessage;
+
+    var useController = new CardUseController { Name = "CardUseController" };
+    AddChild(useController);
+    useController.Initialize(board, new GameContext(player));
+    useController.UseDenied += hud.ShowMessage;
   }
 
   private static List<Card> CreateCards(Func<Card> create) => Enumerable.Range(0, CardsPerDeck).Select(_ => create()).ToList();

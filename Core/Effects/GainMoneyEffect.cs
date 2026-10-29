@@ -20,9 +20,5 @@ public sealed class GainMoneyEffect : Effect
 
   public override string Description => $"Получить {Amount}$";
 
-  public override void Execute(GameContext context)
-  {
-    // TODO: добавить Amount к деньгам текущего игрока.
-    throw new NotImplementedException();
-  }
+  public override void Execute(GameContext context) => context.CurrentPlayer.Earn(Amount);
 }

@@ -45,6 +45,7 @@ public partial class Board : Node2D
   private static readonly Color TotalsColor = new("d8e6dc");
 
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
+  private readonly Dictionary<Vector2I, CardView> _views = new();
   private ColorRect _highlight = null!;
   private Label _highlightCost = null!;
   private Node2D _cardsLayer = null!;
@@ -155,6 +156,11 @@ public partial class Board : Node2D
   }
 
   /// <summary>
+  /// Карточка, лежащая в ячейке.
+  /// </summary>
+  public CardView? ViewAt(Vector2I cell) => _views.GetValueOrDefault(cell);
+
+  /// <summary>
   /// Центр ячейки.
   /// </summary>
   public static Vector2 CellCenter(Vector2I cell) => CellOrigin(cell) + CellSize / 2;
@@ -174,6 +180,7 @@ public partial class Board : Node2D
   {
     view.Lifted = false;
     _cardsLayer.AddChild(view);
+    _views[cell] = view;
     // Перерисовываем итоги теорий под общей зоной.
     QueueRedraw();
     view.CreateTween()

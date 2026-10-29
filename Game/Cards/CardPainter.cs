@@ -22,6 +22,7 @@ public static class CardPainter
   private static readonly Color TextColor = new("3b3328");
   private static readonly Color HeadquartersColor = new("c9962b");
   private static readonly Color ShadowColor = new(0, 0, 0, 0.45f);
+  private static readonly Color PlainBackColor = new("000000");
 
   /// <summary>
   /// Цвет карточки по её типу.
@@ -124,6 +125,18 @@ public static class CardPainter
 
     if (title is not null)
       DrawCenteredText(canvas, title, innerRect.Grow(-rect.Size.X * 0.02f), (int)(rect.Size.Y * 0.075f), InkColor);
+  }
+
+  /// <summary>
+  /// Нарисовать однотонную чёрную рубашку — так лежат использованные карточки.
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  public static void DrawPlainBack(CanvasItem canvas, Rect2 rect)
+  {
+    var back = new StyleBoxFlat { BgColor = PlainBackColor };
+    back.SetCornerRadiusAll(CornerRadius(rect));
+    canvas.DrawStyleBox(back, rect);
   }
 
   /// <summary>

@@ -1,4 +1,5 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Core.Theories;
 
@@ -16,10 +17,13 @@ namespace ConspiracyLeague.Core.Field;
 /// <item>карточку уже выложенной теории — сверху её стопки;</item>
 /// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки.</item>
 /// </list>
+/// Карточку из своей зоны (личного штаба) можно один раз использовать: выполнить её действие,
+/// после чего она лежит рубашкой вверх.
 /// </remarks>
 public sealed class PlayingField
 {
   private readonly Dictionary<Cell, Card> _cards = new();
+  private readonly HashSet<Cell> _usedCells = [];
   private readonly Dictionary<Player, Zone> _playerZones = new();
   private readonly List<TheoryColumn> _theoryColumns = [];
 
@@ -69,6 +73,41 @@ public sealed class PlayingField
   /// Карточка в ячейке.
   /// </summary>
   public Card? CardAt(Cell cell) => _cards.GetValueOrDefault(cell);
+
+  /// <summary>
+  /// Использована ли карточка в ячейке (лежит рубашкой вверх).
+  /// </summary>
+  public bool IsUsed(Cell cell) => _usedCells.Contains(cell);
+
+  /// <summary>
+  /// Может ли игрок использовать карточку в ячейке: только ещё не использованную карточку из своей зоны.
+  /// </summary>
+  public bool CanUse(Cell cell, Player player) =>
+    _cards.ContainsKey(cell)
+    && !IsUsed(cell)
+    && _playerZones.TryGetValue(player, out var zone)
+    && zone.Contains(cell);
+
+  /// <summary>
+  /// Использовать карточку из личного штаба текущего игрока: выполнить выбранный вариант её действия
+  /// и перевернуть карточку рубашкой вверх.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="option">Вариант из <see cref="Effect.Options"/> действия карточки при розыгрыше.</param>
+  /// <param name="context">Контекст партии.</param>
+  /// <exception cref="InvalidOperationException">Карточку нельзя использовать.</exception>
+  public void Use(Cell cell, Effect option, GameContext context)
+  {
+    if (!CanUse(cell, context.CurrentPlayer))
+      throw new InvalidOperationException("Эту карточку нельзя использовать.");
+
+    var card = _cards[cell];
+    if (!card.OnPlayFromHand.Options.Contains(option))
+      throw new ArgumentException($"У карточки «{card}» нет действия «{option}».", nameof(option));
+
+    option.Execute(context);
+    _usedCells.Add(cell);
+  }
 
   /// <summary>
   /// Проверить, может ли игрок положить карточку в ячейку.
