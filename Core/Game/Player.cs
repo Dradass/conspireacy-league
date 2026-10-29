@@ -21,6 +21,11 @@ public sealed class Player
   public int Money { get; private set; }
 
   /// <summary>
+  /// Карточки в руке.
+  /// </summary>
+  public Hand Hand { get; } = new();
+
+  /// <summary>
   /// Баланс изменился.
   /// </summary>
   public event Action<Player>? MoneyChanged;

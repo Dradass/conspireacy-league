@@ -4,7 +4,7 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Интерфейс поверх стола: игроки с балансами и кнопка перехода хода слева внизу, колоды справа внизу
+/// Интерфейс поверх стола: игроки с балансами и кнопка перехода хода слева внизу, рука игрока справа внизу
 /// и сообщения сверху.
 /// </summary>
 public partial class Hud : CanvasLayer
@@ -30,9 +30,9 @@ public partial class Hud : CanvasLayer
   private TurnOrder Turns => Session.Turns;
 
   /// <summary>
-  /// Колоды, из которых тянут карточки.
+  /// Рука игрока, который сейчас ходит.
   /// </summary>
-  public IReadOnlyList<DeckView> Decks { get; init; } = [];
+  public HandView Hand { get; init; } = null!;
 
   public override void _Ready()
   {
@@ -41,7 +41,7 @@ public partial class Hud : CanvasLayer
     AddChild(root);
 
     root.AddChild(CreatePlayers());
-    root.AddChild(CreateDecks());
+    root.AddChild(CreateHand());
     root.AddChild(CreateMessage());
 
     foreach (var player in Turns.Players)
@@ -110,28 +110,19 @@ public partial class Hud : CanvasLayer
     return panel;
   }
 
-  private Control CreateDecks()
+  private Control CreateHand()
   {
-    var row = new HBoxContainer
-    {
-      Name = "Decks",
-      MouseFilter = Control.MouseFilterEnum.Ignore,
-      AnchorLeft = 1,
-      AnchorRight = 1,
-      AnchorTop = 1,
-      AnchorBottom = 1,
-      OffsetLeft = -Margin,
-      OffsetRight = -Margin,
-      OffsetTop = -Margin,
-      OffsetBottom = -Margin,
-      GrowHorizontal = Control.GrowDirection.Begin,
-      GrowVertical = Control.GrowDirection.Begin,
-    };
-    row.AddThemeConstantOverride("separation", (int)(Margin / 2));
-    foreach (var deck in Decks)
-      row.AddChild(deck);
-
-    return row;
+    Hand.AnchorLeft = 1;
+    Hand.AnchorRight = 1;
+    Hand.AnchorTop = 1;
+    Hand.AnchorBottom = 1;
+    Hand.OffsetLeft = -Margin;
+    Hand.OffsetRight = -Margin;
+    Hand.OffsetTop = -Margin;
+    Hand.OffsetBottom = -Margin;
+    Hand.GrowHorizontal = Control.GrowDirection.Begin;
+    Hand.GrowVertical = Control.GrowDirection.Begin;
+    return Hand;
   }
 
   private Control CreateMessage()

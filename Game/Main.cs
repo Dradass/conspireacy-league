@@ -1,6 +1,4 @@
-using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Game;
-using ConspiracyLeague.Core.Theories;
 using ConspiracyLeague.Game.Table;
 using ConspiracyLeague.Game.Ui;
 using Godot;
@@ -8,11 +6,10 @@ using Godot;
 namespace ConspiracyLeague.Game;
 
 /// <summary>
-/// Главная сцена: стол с зонами игроков, камера, балансы игроков и колоды, перетаскивание карточек, переход хода.
+/// Главная сцена: стол с зонами игроков и рынком, камера, балансы и руки игроков, перетаскивание карточек, переход хода.
 /// </summary>
 public partial class Main : Node2D
 {
-  private const int CardsPerDeck = 10;
   private const int StartingMoney = 10;
   private const int PlayerCount = 4;
   private const float StartZoom = 0.6f;
@@ -37,25 +34,17 @@ public partial class Main : Node2D
 	AddChild(camera);
 	session.Turns.TurnChanged += player => camera.FocusOn(CameraTarget(session, player));
 
-	// TODO: колоды с теориями — тестовые, пока в игре нет настоящих карточек персон с теориями.
-	DeckView[] decks =
-	[
-	  DeckView.Create("Бездомные", CreateCards(() => new HomelessCard())),
-	  DeckView.Create("Граждане", CreateCards(() => new CitizenCard())),
-	  DeckView.Create(TheoryCatalog.SecretGovernment.Name, CreateCards(() => new CitizenCard(TheoryCatalog.SecretGovernment))),
-	  DeckView.Create(TheoryCatalog.Reptilians.Name, CreateCards(() => new CitizenCard(TheoryCatalog.Reptilians))),
-	  DeckView.Create(TheoryCatalog.TinFoilHat.Name, CreateCards(() => new HomelessCard(TheoryCatalog.TinFoilHat))),
-	];
-	var hud = new Hud { Name = "Hud", Layer = 1, Session = session, Decks = decks };
+	var hand = new HandView { Name = "Hand", Session = session };
+	var hud = new Hud { Name = "Hud", Layer = 1, Session = session, Hand = hand };
 	AddChild(hud);
 
-	// Слой выше интерфейса, но в координатах стола: карточка летит поверх колод и масштабируется вместе со столом.
+	// Слой выше интерфейса, но в координатах стола: карточка летит поверх руки и масштабируется вместе со столом.
 	var dragLayer = new CanvasLayer { Name = "DragLayer", Layer = 2, FollowViewportEnabled = true };
 	AddChild(dragLayer);
 
 	var dragController = new CardDragController { Name = "CardDragController" };
 	AddChild(dragController);
-	dragController.Initialize(board, session, dragLayer, decks);
+	dragController.Initialize(board, session, dragLayer, hand);
 	dragController.PlacementDenied += hud.ShowMessage;
 
 	var useController = new CardUseController { Name = "CardUseController" };
@@ -63,13 +52,14 @@ public partial class Main : Node2D
 	useController.Initialize(board, session);
 	useController.UseDenied += hud.ShowMessage;
 	useController.Hint += hud.ShowMessage;
+
+	// Стол уже следит за рынком: стартовые карточки рынка выезжают из колоды на глазах у игроков.
+	session.Start();
   }
 
   /// <summary>
-  /// Куда смотрит камера, когда ходит игрок: чуть ниже центра его зоны, чтобы её не закрывали колоды.
+  /// Куда смотрит камера, когда ходит игрок: чуть ниже центра его зоны, чтобы её не закрывала рука.
   /// </summary>
   private static Vector2 CameraTarget(GameSession session, Player player) =>
 	Board.ZoneCenter(session.Field.PlayerZones[player]) + new Vector2(0, StartCameraShift);
-
-  private static List<Card> CreateCards(Func<Card> create) => Enumerable.Range(0, CardsPerDeck).Select(_ => create()).ToList();
 }

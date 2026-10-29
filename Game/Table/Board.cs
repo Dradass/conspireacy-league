@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Cards;
@@ -7,7 +8,7 @@ using Godot;
 namespace ConspiracyLeague.Game.Table;
 
 /// <summary>
-/// Рабочая поверхность: сетка ячеек с зонами игроков и общей зоной.
+/// Рабочая поверхность: сетка ячеек с зонами игроков, общей зоной и рынком.
 /// Правила выкладывания — в <see cref="PlayingField"/>, стол их только отображает.
 /// </summary>
 /// <remarks>
@@ -29,6 +30,10 @@ public partial class Board : Node2D
   private const int TotalsFontSize = 14;
   private const int TotalsValueFontSize = 28;
   private const float WaitingBorderDarkening = 0.45f;
+  private const int MarketDeckLayers = 3;
+  private const float MarketDeckLayerOffset = 3f;
+  private const double MarketOpenDuration = 0.35;
+  private const double MarketOpenStagger = 0.12;
 
   private static readonly Color TableColor = new("26342c");
   private static readonly Color SlotColor = new("2c3d33");
@@ -40,10 +45,16 @@ public partial class Board : Node2D
   private static readonly Color PaidColor = new(1f, 0.85f, 0.3f, 0.4f);
   private static readonly Color DeniedColor = new(1f, 0.35f, 0.3f, 0.35f);
   private static readonly Color TotalsColor = new("d8e6dc");
+  private static readonly Color MarketZoneColor = new("3d3a2c");
+  private static readonly Color MarketSlotColor = new("4a4634");
+  private static readonly Color MarketBorderColor = new("b59a5a");
+  private static readonly Color MarketDeckColor = new("5a4a7a");
 
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
   private readonly Dictionary<Vector2I, CardView> _views = new();
   private readonly Dictionary<TheoryColumn, AdeptsView> _adepts = new();
+  private readonly Dictionary<Vector2I, CardView> _marketViews = new();
+  private int _marketCardsInFlight;
   private ColorRect _highlight = null!;
   private Label _highlightCost = null!;
   private Node2D _cardsLayer = null!;
@@ -59,6 +70,11 @@ public partial class Board : Node2D
   /// Поле, которое отображает стол.
   /// </summary>
   public PlayingField Field => Session.Field;
+
+  /// <summary>
+  /// Рынок, который отображает стол.
+  /// </summary>
+  public Market Market => Session.Market;
 
   /// <summary>
   /// Размер стола в пикселях.
@@ -94,12 +110,16 @@ public partial class Board : Node2D
     AddChild(_adeptsLayer);
 
     Field.AdeptsAdded += OnAdeptsAdded;
+    Market.CardOpened += OnMarketCardOpened;
+    Market.CardTaken += OnMarketCardTaken;
     Session.Turns.TurnChanged += OnTurnChanged;
   }
 
   public override void _ExitTree()
   {
     Field.AdeptsAdded -= OnAdeptsAdded;
+    Market.CardOpened -= OnMarketCardOpened;
+    Market.CardTaken -= OnMarketCardTaken;
     Session.Turns.TurnChanged -= OnTurnChanged;
   }
 
@@ -107,6 +127,7 @@ public partial class Board : Node2D
   {
     DrawRect(new Rect2(Vector2.Zero, Size), TableColor);
     DrawZone(Field.CommonZone, CommonZoneColor, CommonBorderColor);
+    DrawZone(Market.Zone, MarketZoneColor, MarketBorderColor);
     foreach (var (player, zone) in Field.PlayerZones)
     {
       var border = PlayerPalette.MainOf(player.Color);
@@ -126,6 +147,7 @@ public partial class Board : Node2D
     }
 
     DrawTheoryTotals();
+    DrawMarketDeck();
 
     foreach (var (cell, check) in _available)
     {
@@ -179,6 +201,32 @@ public partial class Board : Node2D
   public CardView? ViewAt(Vector2I cell) => _views.GetValueOrDefault(cell);
 
   /// <summary>
+  /// Открытая карточка рынка, лежащая в ячейке.
+  /// </summary>
+  public CardView? MarketViewAt(Vector2I cell) => _marketViews.GetValueOrDefault(cell);
+
+  /// <summary>
+  /// Снять открытую карточку рынка со стола, чтобы её перетаскивать. Карточка остаётся на рынке,
+  /// пока её не купят.
+  /// </summary>
+  public CardView TakeMarketView(Vector2I cell)
+  {
+    var view = _marketViews[cell];
+    _marketViews.Remove(cell);
+    _cardsLayer.RemoveChild(view);
+    return view;
+  }
+
+  /// <summary>
+  /// Вернуть карточку рынка в её ячейку. Карточка плавно доезжает до центра ячейки.
+  /// </summary>
+  public void ReturnMarketView(CardView view, Vector2I cell)
+  {
+    _marketViews[cell] = view;
+    SnapTo(view, cell);
+  }
+
+  /// <summary>
   /// Центр ячейки.
   /// </summary>
   public static Vector2 CellCenter(Vector2I cell) => CellOrigin(cell) + CellSize / 2;
@@ -196,11 +244,16 @@ public partial class Board : Node2D
   /// </remarks>
   public void Place(CardView view, Vector2I cell)
   {
-    view.Lifted = false;
-    _cardsLayer.AddChild(view);
     _views[cell] = view;
     // Перерисовываем итоги теорий под общей зоной.
     QueueRedraw();
+    SnapTo(view, cell);
+  }
+
+  private void SnapTo(CardView view, Vector2I cell)
+  {
+    view.Lifted = false;
+    _cardsLayer.AddChild(view);
     view.CreateTween()
       .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CellCenter(cell), SnapDuration)
       .SetTrans(Tween.TransitionType.Cubic)
@@ -225,6 +278,28 @@ public partial class Board : Node2D
   }
 
   private void OnTurnChanged(Player player) => QueueRedraw();
+
+  /// <summary>
+  /// Карточка открыта с рынка: она выезжает из колоды рынка в свою ячейку. Если карточки открываются
+  /// одна за другой, они выезжают по очереди.
+  /// </summary>
+  private void OnMarketCardOpened(Cell cell, PersonCard card)
+  {
+    var target = cell.ToVector2I();
+    var view = CardView.Create(card);
+    view.Position = CellCenter(Market.DeckCell.ToVector2I());
+    _cardsLayer.AddChild(view);
+    _marketViews[target] = view;
+    // Перерисовываем колоду рынка: в ней стало меньше карточек.
+    QueueRedraw();
+
+    var tween = view.CreateTween();
+    tween.TweenInterval(MarketOpenStagger * _marketCardsInFlight++);
+    tween.TweenProperty(view, Node2D.PropertyName.Position.ToString(), CellCenter(target), MarketOpenDuration)
+      .SetTrans(Tween.TransitionType.Cubic)
+      .SetEase(Tween.EaseType.Out);
+    tween.TweenCallback(Callable.From(() => _marketCardsInFlight--));
+  }
 
   private void OnAdeptsAdded(TheoryColumn column, int count)
   {
@@ -287,6 +362,30 @@ public partial class Board : Node2D
     }
   }
 
+  /// <summary>
+  /// Карточку купили с рынка: убираем её со стола, если она ещё там (её не унесли перетаскиванием).
+  /// </summary>
+  private void OnMarketCardTaken(Cell cell, PersonCard card)
+  {
+    if (_marketViews.Remove(cell.ToVector2I(), out var view))
+      view.QueueFree();
+  }
+
+  /// <summary>
+  /// Колода рынка: стопка карточек рубашкой вверх с количеством оставшихся карточек.
+  /// </summary>
+  private void DrawMarketDeck()
+  {
+    var center = CellCenter(Market.DeckCell.ToVector2I());
+    var layers = Mathf.Min(Market.DeckCount, MarketDeckLayers);
+    for (var i = 0; i < layers; i++)
+    {
+      var offset = new Vector2(MarketDeckLayerOffset, -MarketDeckLayerOffset) * (i - (layers - 1) / 2f);
+      var title = i == layers - 1 ? $"Рынок\n{Market.DeckCount}" : null;
+      CardPainter.DrawBack(this, new Rect2(center - CardPainter.CardSize / 2 + offset, CardPainter.CardSize), MarketDeckColor, title);
+    }
+  }
+
   private void DrawZone(Zone zone, Color fill, Color border)
   {
     var rect = ZoneRect(zone);
@@ -298,6 +397,8 @@ public partial class Board : Node2D
   {
     if (Field.CommonZone.Contains(cell))
       return CommonSlotColor;
+    if (Market.Contains(cell))
+      return MarketSlotColor;
 
     foreach (var (player, zone) in Field.PlayerZones)
     {

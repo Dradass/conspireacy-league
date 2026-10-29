@@ -1,4 +1,3 @@
-using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Cards;
@@ -8,11 +7,12 @@ using Godot;
 namespace ConspiracyLeague.Game.Table;
 
 /// <summary>
-/// Перетаскивание карточек из колоды на стол.
+/// Перетаскивание карточек: с рынка в руку и из руки на стол.
 /// </summary>
 /// <remarks>
-/// Куда можно положить карточку, решает <see cref="PlayingField"/>. Если туда нельзя (или нажат Esc),
-/// карточка возвращается в колоду. Выложенные карточки больше не перемещаются.
+/// Карточку рынка можно перетащить в руку, если на неё хватает денег. Карточку из руки можно положить
+/// в свою рабочую зону (личный штаб) или в общую зону — куда именно, решает <see cref="PlayingField"/>.
+/// Если туда нельзя (или нажат Esc), карточка возвращается, откуда её взяли. Выложенные карточки больше не перемещаются.
 /// </remarks>
 public partial class CardDragController : Node
 {
@@ -21,6 +21,7 @@ public partial class CardDragController : Node
   private Board _board = null!;
   private GameSession _session = null!;
   private CanvasLayer _dragLayer = null!;
+  private HandView _hand = null!;
   private Drag? _drag;
 
   /// <summary>
@@ -29,27 +30,42 @@ public partial class CardDragController : Node
   public event Action<string>? PlacementDenied;
 
   /// <summary>
-  /// Перетаскиваемая карточка и откуда её взяли.
+  /// Перетаскиваемая карточка.
   /// </summary>
   /// <param name="View">Карточка.</param>
-  /// <param name="SourceDeck">Колода, из которой взяли карточку.</param>
-  private sealed record Drag(CardView View, DeckView SourceDeck);
+  private abstract record Drag(CardView View);
+
+  /// <summary>
+  /// Карточка, взятая из руки.
+  /// </summary>
+  /// <param name="View">Карточка.</param>
+  /// <param name="Source">Карточка в руке; пока её тащат, она скрыта.</param>
+  private sealed record HandDrag(CardView View, HandCardView Source) : Drag(View);
+
+  /// <summary>
+  /// Карточка, взятая с рынка.
+  /// </summary>
+  /// <param name="View">Карточка.</param>
+  /// <param name="Cell">Ячейка рынка, где она лежала.</param>
+  private sealed record MarketDrag(CardView View, Vector2I Cell) : Drag(View);
 
   /// <summary>
   /// Настроить контроллер.
   /// </summary>
   /// <param name="board">Стол.</param>
-  /// <param name="session">Сессия игры: карточки выкладывает игрок, который сейчас ходит.</param>
+  /// <param name="session">Сессия игры: карточки покупает и выкладывает игрок, который сейчас ходит.</param>
   /// <param name="dragLayer">Слой поверх интерфейса, следующий за камерой: в нём летит карточка.</param>
-  /// <param name="decks">Колоды, из которых можно тянуть карточки.</param>
-  public void Initialize(Board board, GameSession session, CanvasLayer dragLayer, IEnumerable<DeckView> decks)
+  /// <param name="hand">Рука игрока, который сейчас ходит.</param>
+  public void Initialize(Board board, GameSession session, CanvasLayer dragLayer, HandView hand)
   {
     _board = board;
     _session = session;
     _dragLayer = dragLayer;
-    foreach (var deck in decks)
-      deck.CardDragStarted += OnDeckCardDragStarted;
+    _hand = hand;
+    _hand.CardDragStarted += OnHandCardDragStarted;
   }
+
+  public override void _ExitTree() => _hand.CardDragStarted -= OnHandCardDragStarted;
 
   public override void _Input(InputEvent @event)
   {
@@ -66,6 +82,18 @@ public partial class CardDragController : Node
     }
   }
 
+  public override void _UnhandledInput(InputEvent @event)
+  {
+    if (_drag is not null || @event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+      return;
+    if (_board.CellAt(MouseOnTable()) is not { } cell || _board.MarketViewAt(cell) is null)
+      return;
+
+    GetViewport().SetInputAsHandled();
+    StartDrag(new MarketDrag(_board.TakeMarketView(cell), cell));
+    _hand.DropState = HandDropState.Target;
+  }
+
   public override void _Process(double delta)
   {
     // Обновляем каждый кадр, а не только при движении мыши: камера может сдвинуться под карточкой.
@@ -73,48 +101,69 @@ public partial class CardDragController : Node
       return;
 
     _drag.View.Position = MouseOnTable();
-    var cell = _board.CellAt(_drag.View.Position);
-    _board.Highlight(cell, cell is { } target ? Check(_drag.View.Card, target) : null);
+    switch (_drag)
+    {
+      case HandDrag:
+        var cell = _board.CellAt(_drag.View.Position);
+        _board.Highlight(cell, cell is { } target ? Check(_drag.View, target) : null);
+        break;
+      case MarketDrag:
+        _hand.DropState = _hand.ContainsScreenPoint(MouseOnScreen()) ? HandDropState.Hover : HandDropState.Target;
+        break;
+    }
   }
 
-  private void OnDeckCardDragStarted(DeckView deck, Card card)
+  private void OnHandCardDragStarted(HandCardView source)
   {
     if (_drag is not null)
-    {
-      deck.Push(card);
       return;
-    }
 
-    var view = CardView.Create(card);
-    view.Position = MouseOnTable();
-    view.Lifted = true;
-    _dragLayer.AddChild(view);
-    _drag = new Drag(view, deck);
-    _board.ShowAvailable(_board.Field.AvailableCells(card, _session.CurrentPlayer));
+    // Карточка остаётся в руке, пока её не выложат; на время перетаскивания прячем её.
+    source.Modulate = Colors.Transparent;
+    StartDrag(new HandDrag(CardView.Create(source.Card), source));
+    _board.ShowAvailable(_board.Field.AvailableCells(source.Card, _session.CurrentPlayer));
+  }
+
+  private void StartDrag(Drag drag)
+  {
+    drag.View.Position = MouseOnTable();
+    drag.View.Lifted = true;
+    _dragLayer.AddChild(drag.View);
+    _drag = drag;
     Input.SetDefaultCursorShape(Input.CursorShape.Drag);
   }
 
   private void Drop()
   {
-    if (End() is not { } drag)
-      return;
+    switch (End())
+    {
+      case HandDrag drag:
+        DropFromHand(drag);
+        break;
+      case MarketDrag drag:
+        DropFromMarket(drag);
+        break;
+    }
+  }
 
+  private void DropFromHand(HandDrag drag)
+  {
     if (_board.CellAt(drag.View.Position) is not { } cell)
     {
-      ReturnToDeck(drag);
+      ReturnToHand(drag);
       return;
     }
 
-    var check = Check(drag.View.Card, cell);
+    var check = Check(drag.View, cell);
     if (!check.IsAllowed)
     {
       PlacementDenied?.Invoke(check.Reason!);
-      ReturnToDeck(drag);
+      ReturnToHand(drag);
       return;
     }
 
     var player = _session.CurrentPlayer;
-    var placed = _board.Field.Place(drag.View.Card, cell.ToCell(), player);
+    var placed = _session.PlaceFromHand(drag.View.Card, cell.ToCell());
     drag.View.IsHeadquarters = placed.CreatesHeadquarters;
     // Карточка в теории отмечается миплом цвета владельца.
     if (_board.Field.CommonZone.Contains(cell.ToCell()))
@@ -123,10 +172,38 @@ public partial class CardDragController : Node
     _board.Place(drag.View, cell);
   }
 
+  private void DropFromMarket(MarketDrag drag)
+  {
+    if (!_hand.ContainsScreenPoint(MouseOnScreen()))
+    {
+      ReturnToMarket(drag);
+      return;
+    }
+
+    var check = _session.Market.CheckBuy(drag.Cell.ToCell(), _session.CurrentPlayer);
+    if (!check.IsAllowed)
+    {
+      PlacementDenied?.Invoke(check.Reason!);
+      ReturnToMarket(drag);
+      return;
+    }
+
+    // Купленная карточка появляется в руке, летящая карточка больше не нужна.
+    _session.BuyFromMarket(drag.Cell.ToCell());
+    drag.View.QueueFree();
+  }
+
   private void Cancel()
   {
-    if (End() is { } drag)
-      ReturnToDeck(drag);
+    switch (End())
+    {
+      case HandDrag drag:
+        ReturnToHand(drag);
+        break;
+      case MarketDrag drag:
+        ReturnToMarket(drag);
+        break;
+    }
   }
 
   private Drag? End()
@@ -135,28 +212,38 @@ public partial class CardDragController : Node
     _drag = null;
     _board.Highlight(null);
     _board.HideAvailable();
+    _hand.DropState = HandDropState.None;
     Input.SetDefaultCursorShape();
     return drag;
   }
 
-  private void ReturnToDeck(Drag drag)
+  private void ReturnToHand(HandDrag drag)
   {
     var view = drag.View;
-    var deck = drag.SourceDeck;
-    // Колода живёт в координатах экрана, карточка — в координатах стола.
-    var target = GetViewport().GetCanvasTransform().AffineInverse() * deck.TopCardCenter;
+    var source = drag.Source;
+    // Рука живёт в координатах экрана, карточка — в координатах стола.
+    var target = GetViewport().GetCanvasTransform().AffineInverse() * source.Center;
     var tween = view.CreateTween();
-    tween.TweenProperty(view, "position", target, ReturnDuration)
+    tween.TweenProperty(view, Node2D.PropertyName.Position.ToString(), target, ReturnDuration)
       .SetTrans(Tween.TransitionType.Cubic)
       .SetEase(Tween.EaseType.Out);
     tween.TweenCallback(Callable.From(() =>
     {
       view.QueueFree();
-      deck.Push(view.Card);
+      if (IsInstanceValid(source))
+        source.Modulate = Colors.White;
     }));
   }
 
-  private PlacementCheck Check(Card card, Vector2I cell) => _board.Field.Check(card, cell.ToCell(), _session.CurrentPlayer);
+  private void ReturnToMarket(MarketDrag drag)
+  {
+    _dragLayer.RemoveChild(drag.View);
+    _board.ReturnMarketView(drag.View, drag.Cell);
+  }
+
+  private PlacementCheck Check(CardView view, Vector2I cell) => _board.Field.Check(view.Card, cell.ToCell(), _session.CurrentPlayer);
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
+
+  private Vector2 MouseOnScreen() => GetViewport().GetMousePosition();
 }

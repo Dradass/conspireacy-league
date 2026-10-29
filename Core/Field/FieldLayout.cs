@@ -20,6 +20,8 @@ public static class FieldLayout
   private const int PlayerZoneWidth = 7;
   private const int PlayerZoneHeight = 3;
   private const int PlayerZoneGap = 3;
+  private const int MarketZoneWidth = 8 + 5;
+  private const int MarketZoneHeight = 3;
 
   /// <summary>
   /// Сколько рабочих зон игроков помещается в ряд по ширине поля.
@@ -32,6 +34,12 @@ public static class FieldLayout
   /// </summary>
   public static Zone CommonZone { get; } =
     new(0, Rows - CommonZoneBottomRowFromBottom - CommonZoneHeight + 1, Columns, CommonZoneHeight);
+
+  /// <summary>
+  /// Зона рынка: по центру над общей зоной, через один пустой ряд от неё.
+  /// </summary>
+  public static Zone MarketZone { get; } =
+    new((Columns - MarketZoneWidth) / 2, CommonZone.Top - 1 - MarketZoneHeight, MarketZoneWidth, MarketZoneHeight);
 
   /// <summary>
   /// Рабочая зона (личный штаб) игрока: в самом низу поля. Зоны всех игроков стоят в ряд по центру,
