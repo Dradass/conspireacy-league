@@ -119,12 +119,6 @@ public sealed class Market
   }
 
   /// <summary>
-  /// Взять верхнюю карточку колоды.
-  /// </summary>
-  /// <returns>Карточка или <c>null</c>, если колода кончилась.</returns>
-  internal PersonCard? Draw() => _deck.TryPop(out var card) ? card : null;
-
-  /// <summary>
   /// Проверить, может ли игрок купить карточку из ячейки рынка.
   /// </summary>
   /// <returns>Можно ли купить и сколько $ это стоит.</returns>

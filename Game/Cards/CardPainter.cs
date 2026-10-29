@@ -1,5 +1,6 @@
 using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Cards.Professionals;
+using ConspiracyLeague.Core.Theories;
 using Godot;
 
 namespace ConspiracyLeague.Game.Cards;
@@ -22,13 +23,16 @@ public static class CardPainter
   private const float HeaderShare = 0.18f;
   private const float RibbonShare = 0.14f;
   private const float TheoryShare = 0.3f;
+  private const float ParentTheoryFontShare = 0.8f;
 
   private static readonly Color PaperColor = new("f3ecd9");
   private static readonly Color InkColor = new("fdfaf2");
   private static readonly Color TextColor = new("3b3328");
+  private static readonly Color ParentTheoryColor = TextColor with { A = 0.55f };
   private static readonly Color HeadquartersColor = new("c9962b");
   private static readonly Color ShadowColor = new(0, 0, 0, 0.45f);
   private static readonly Color PlainBackColor = new("000000");
+  private static readonly Color HiddenBackColor = new("2e3a4f");
   private static readonly Color ClosedOverlayColor = new(0.3f, 0.3f, 0.3f, 0.6f);
   private static readonly Color HazardYellow = new("f2c230");
   private static readonly Color HazardBlack = new("1a1a1a");
@@ -103,10 +107,7 @@ public static class CardPainter
 
     var smallFont = (int)(rect.Size.Y * 0.075f);
     if (card.Theory is { } theory)
-    {
-      var theoryRect = TheoryRect(rect, withOwnerMark);
-      DrawCenteredText(canvas, theory.Name, theoryRect, FitFontSize(theory.Name, theoryRect.Size.X, smallFont), TextColor);
-    }
+      DrawTheoryName(canvas, TheoryRect(rect, withOwnerMark), theory, smallFont);
 
     var ribbonHeight = rect.Size.Y * RibbonShare;
     if (card is PersonCard person)
@@ -129,6 +130,36 @@ public static class CardPainter
       DrawCenteredText(canvas, "Штаб теории", ribbonRect, smallFont, InkColor);
     }
   }
+
+  /// <summary>
+  /// Нарисовать название теории, а у дочерней теории под ним — название родительской в скобках,
+  /// мельче и бледнее. Обе надписи вместе стоят по центру области.
+  /// </summary>
+  private static void DrawTheoryName(CanvasItem canvas, Rect2 area, Theory theory, int fontSize)
+  {
+    var nameFontSize = FitFontSize(theory.Name, area.Size.X, fontSize);
+    if (theory.Parent is not { } parent)
+    {
+      DrawCenteredText(canvas, theory.Name, area, nameFontSize, TextColor);
+      return;
+    }
+
+    var parentText = $"({parent.Name})";
+    var parentFontSize = FitFontSize(parentText, area.Size.X, (int)(fontSize * ParentTheoryFontShare));
+    var nameHeight = TextHeight(theory.Name, area.Size.X, nameFontSize);
+    var parentHeight = TextHeight(parentText, area.Size.X, parentFontSize);
+    var top = area.Position.Y + (area.Size.Y - nameHeight - parentHeight) / 2;
+    DrawCenteredText(canvas, theory.Name, new Rect2(area.Position.X, top, area.Size.X, nameHeight), nameFontSize, TextColor);
+    DrawCenteredText(
+      canvas,
+      parentText,
+      new Rect2(area.Position.X, top + nameHeight, area.Size.X, parentHeight),
+      parentFontSize,
+      ParentTheoryColor);
+  }
+
+  private static float TextHeight(string text, float width, int fontSize) =>
+    ThemeDB.FallbackFont.GetMultilineStringSize(text, HorizontalAlignment.Center, width, fontSize).Y;
 
   /// <summary>
   /// Нарисовать снижение вероятности успеха персонажа: красная стрелка вниз и рядом, например, «-10%».
@@ -186,6 +217,16 @@ public static class CardPainter
     if (title is not null)
       DrawCenteredText(canvas, title, innerRect.Grow(-rect.Size.X * 0.02f), (int)(rect.Size.Y * 0.075f), InkColor);
   }
+
+  /// <summary>
+  /// Нарисовать закрытую карточку: рубашку с подписью и влиянием — по ним видно, что это гражданин без теории,
+  /// но не видно, какая карточка лежит на самом деле.
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  /// <param name="card">Закрытая карточка.</param>
+  public static void DrawHiddenBack(CanvasItem canvas, Rect2 rect, HiddenCard card) =>
+    DrawBack(canvas, rect, HiddenBackColor, $"{card.Name}\n\nВлияние: {card.Influence}");
 
   /// <summary>
   /// Нарисовать однотонную чёрную рубашку — так лежат использованные карточки.

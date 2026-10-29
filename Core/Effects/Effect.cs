@@ -33,6 +33,16 @@ public abstract class Effect
   public virtual bool RequiresTheory => false;
 
   /// <summary>
+  /// Нужно ли перед выполнением выбрать карточку в руке (<see cref="GameContext.HandCard"/>).
+  /// </summary>
+  public virtual bool RequiresHandCard => false;
+
+  /// <summary>
+  /// Нужно ли перед выполнением выбрать карточку в личном штабе другого игрока (<see cref="GameContext.TargetCell"/>).
+  /// </summary>
+  public virtual bool RequiresRivalCard => false;
+
+  /// <summary>
   /// Выполнить действие.
   /// </summary>
   /// <param name="context">Контекст партии.</param>

@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Game;
 using Godot;
 
@@ -24,6 +25,8 @@ public partial class HandView : PanelContainer
   private Label _empty = null!;
   private Hand? _hand;
   private HandDropState _dropState;
+  private bool _picking;
+  private Card? _selectedCard;
 
   /// <summary>
   /// Сессия игры: показывается рука игрока, который сейчас ходит.
@@ -34,6 +37,39 @@ public partial class HandView : PanelContainer
   /// Игрок начал тянуть карточку из руки.
   /// </summary>
   public event Action<HandCardView>? CardDragStarted;
+
+  /// <summary>
+  /// Игрок выбрал карточку в руке, пока идёт выбор (<see cref="Picking"/>).
+  /// </summary>
+  public event Action<Card>? CardPicked;
+
+  /// <summary>
+  /// Игрок выбирает карточку в руке для действия: щелчок по карточке выбирает её, а не начинает перетаскивание.
+  /// Рука подсвечена.
+  /// </summary>
+  public bool Picking
+  {
+    get => _picking;
+    set
+    {
+      _picking = value;
+      DropState = value ? HandDropState.Target : HandDropState.None;
+    }
+  }
+
+  /// <summary>
+  /// Выбранная карточка: она выделена рамкой. <c>null</c> — ничего не выбрано.
+  /// </summary>
+  public Card? SelectedCard
+  {
+    get => _selectedCard;
+    set
+    {
+      _selectedCard = value;
+      foreach (var view in _cards.GetChildren().OfType<HandCardView>())
+        view.Selected = view.Card == value;
+    }
+  }
 
   /// <summary>
   /// Подсветка руки как места, куда можно положить карточку.
@@ -118,11 +154,20 @@ public partial class HandView : PanelContainer
     foreach (var card in _hand!.Cards)
     {
       var view = HandCardView.Create(card);
-      view.DragStarted += source => CardDragStarted?.Invoke(source);
+      view.Selected = card == _selectedCard;
+      view.DragStarted += OnCardPressed;
       _cards.AddChild(view);
     }
 
     _empty.Visible = _hand.Cards.Count == 0;
+  }
+
+  private void OnCardPressed(HandCardView source)
+  {
+    if (_picking)
+      CardPicked?.Invoke(source.Card);
+    else
+      CardDragStarted?.Invoke(source);
   }
 }
 

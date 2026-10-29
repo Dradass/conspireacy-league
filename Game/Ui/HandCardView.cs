@@ -14,6 +14,12 @@ public partial class HandCardView : Control
   /// </summary>
   public static readonly Vector2 CardSize = CardPainter.CardSize * 0.75f;
 
+  private const float SelectedBorderWidth = 4f;
+
+  private static readonly Color SelectedColor = new(0.55f, 0.95f, 0.6f);
+
+  private bool _selected;
+
   /// <summary>
   /// Отображаемая карточка.
   /// </summary>
@@ -23,6 +29,19 @@ public partial class HandCardView : Control
   /// Центр карточки в координатах слоя интерфейса.
   /// </summary>
   public Vector2 Center => GetGlobalRect().GetCenter();
+
+  /// <summary>
+  /// Карточка выбрана для действия: она обведена рамкой.
+  /// </summary>
+  public bool Selected
+  {
+    get => _selected;
+    set
+    {
+      _selected = value;
+      QueueRedraw();
+    }
+  }
 
   /// <summary>
   /// Игрок начал тянуть карточку.
@@ -50,5 +69,11 @@ public partial class HandCardView : Control
     DragStarted?.Invoke(this);
   }
 
-  public override void _Draw() => CardPainter.DrawFace(this, new Rect2(Vector2.Zero, CardSize), Card);
+  public override void _Draw()
+  {
+    var rect = new Rect2(Vector2.Zero, CardSize);
+    CardPainter.DrawFace(this, rect, Card);
+    if (_selected)
+      DrawRect(rect.Grow(-SelectedBorderWidth / 2), SelectedColor, filled: false, width: SelectedBorderWidth);
+  }
 }

@@ -21,11 +21,6 @@ namespace ConspiracyLeague.Core.Game;
 public sealed class GameSession
 {
   /// <summary>
-  /// Сколько карточек из общей колоды получает каждый игрок при подготовке.
-  /// </summary>
-  public const int StartingHandSize = 3;
-
-  /// <summary>
   /// Сколько $ у каждого игрока в начале партии.
   /// </summary>
   public const int StartingMoney = 10;
@@ -128,16 +123,16 @@ public sealed class GameSession
   }
 
   /// <summary>
-  /// Подготовка и начало первого раунда: каждый игрок получает <see cref="StartingHandSize"/> случайных карточек
-  /// из общей колоды, на рынке открывается по карточке на игрока в первую и третью строки.
+  /// Подготовка и начало первого раунда: каждый игрок получает стартовую руку (<see cref="StartingHand"/>) —
+  /// новых бездомных и граждан со случайными теориями, на рынке открывается по карточке на игрока в первую и третью строки.
   /// </summary>
   public void Start()
   {
     RequirePhase(GamePhase.Setup);
-    for (var i = 0; i < StartingHandSize; i++)
+    foreach (var player in Players)
     {
-      foreach (var player in Players)
-        player.Hand.Add(Market.Draw() ?? throw new InvalidOperationException("Общая колода закончилась при раздаче."));
+      foreach (var card in StartingHand.Create(_random))
+        player.Hand.Add(card);
     }
 
     Market.OpenStartingCards(Players.Count);

@@ -19,4 +19,10 @@ public sealed record Zone(int Left, int Top, int Width, int Height)
   /// </summary>
   public bool Contains(Cell cell) =>
     cell.Column >= Left && cell.Column < Left + Width && cell.Row >= Top && cell.Row <= BottomRow;
+
+  /// <summary>
+  /// Ячейки зоны.
+  /// </summary>
+  public IEnumerable<Cell> Cells =>
+    Enumerable.Range(Left, Width).SelectMany(column => Enumerable.Range(Top, Height).Select(row => new Cell(column, row)));
 }

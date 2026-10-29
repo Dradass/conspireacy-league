@@ -48,7 +48,7 @@ public partial class Main : Node2D
 
 	var useController = new CardUseController { Name = "CardUseController" };
 	AddChild(useController);
-	useController.Initialize(board, session);
+	useController.Initialize(board, session, hand);
 	useController.UseDenied += hud.ShowMessage;
 	useController.Hint += hud.ShowMessage;
 

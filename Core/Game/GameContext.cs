@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 
 namespace ConspiracyLeague.Core.Game;
@@ -24,7 +25,17 @@ public sealed class GameContext
   /// Теория, которую игрок выбрал для действия (например, куда добавить адептов),
   /// или штаб теории, в который выложена карточка.
   /// </summary>
-  public TheoryColumn? TargetTheory { get; private init; }
+  public TheoryColumn? TargetTheory { get; private set; }
+
+  /// <summary>
+  /// Карточка в руке, которую игрок выбрал для действия (например, чтобы выложить её взакрытую).
+  /// </summary>
+  public Card? HandCard { get; private set; }
+
+  /// <summary>
+  /// Ячейка поля, которую игрок выбрал для действия (например, карточку другого игрока, чтобы её перевернуть).
+  /// </summary>
+  public Cell? TargetCell { get; private set; }
 
   /// <param name="currentPlayer">Игрок, для которого выполняются эффекты.</param>
   /// <param name="field">Игровое поле.</param>
@@ -40,5 +51,24 @@ public sealed class GameContext
   /// Тот же контекст с выбранной игроком теорией.
   /// </summary>
   /// <param name="theory">Выбранная теория.</param>
-  public GameContext WithTargetTheory(TheoryColumn theory) => new(CurrentPlayer, Field) { TargetTheory = theory };
+  public GameContext WithTargetTheory(TheoryColumn theory) => With(context => context.TargetTheory = theory);
+
+  /// <summary>
+  /// Тот же контекст с выбранной игроком карточкой в руке.
+  /// </summary>
+  /// <param name="card">Выбранная карточка.</param>
+  public GameContext WithHandCard(Card card) => With(context => context.HandCard = card);
+
+  /// <summary>
+  /// Тот же контекст с выбранной игроком ячейкой поля.
+  /// </summary>
+  /// <param name="cell">Выбранная ячейка.</param>
+  public GameContext WithTargetCell(Cell cell) => With(context => context.TargetCell = cell);
+
+  private GameContext With(Action<GameContext> change)
+  {
+    var copy = (GameContext)MemberwiseClone();
+    change(copy);
+    return copy;
+  }
 }

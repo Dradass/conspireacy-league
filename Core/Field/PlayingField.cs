@@ -16,7 +16,8 @@ namespace ConspiracyLeague.Core.Field;
 /// <item>новую дочернюю теорию — во второй ряд общей зоны, вплотную слева или справа от карточки родительской теории
 /// или уже выложенной дочерней теории того же родителя;</item>
 /// <item>карточку уже выложенной теории — сверху её стопки;</item>
-/// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки.</item>
+/// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки;</item>
+/// <item>закрытую карточку (<see cref="HiddenCard"/>) — как карточку без теории: она считается гражданином без теории.</item>
 /// </list>
 /// В закрытые штабы теорий карточки класть нельзя.
 /// Карточку из своей зоны (личного штаба) можно один раз использовать: выполнить её действие,
@@ -151,6 +152,10 @@ public sealed class PlayingField
       throw new ArgumentException($"У карточки «{card}» нет действия «{option}».", nameof(option));
     if (option.RequiresTheory && context.TargetTheory is null)
       throw new ArgumentException($"Для действия «{option}» нужно выбрать теорию.", nameof(context));
+    if (option.RequiresHandCard && (context.HandCard is not { } handCard || !context.CurrentPlayer.Hand.Contains(handCard)))
+      throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку в руке.", nameof(context));
+    if (option.RequiresRivalCard && context.TargetCell is null)
+      throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку другого игрока.", nameof(context));
 
     option.Execute(context);
     _usedCells.Add(cell);
@@ -284,6 +289,62 @@ public sealed class PlayingField
     if (joined is not null)
       person.PlaceInHeadquarters(new GameContext(player, this).WithTargetTheory(joined));
     return check;
+  }
+
+  /// <summary>
+  /// Проверить, может ли игрок выложить карточку взакрытую (<see cref="HiddenCard"/>) сверху стопки теории.
+  /// Закрытая карточка — гражданин без теории: за неё платят суммарное влияние стопки.
+  /// </summary>
+  public PlacementCheck CheckHidden(Card card, TheoryColumn column, Player player) =>
+    Check(new HiddenCard(card), column.Top.Above, player);
+
+  /// <summary>
+  /// Выложить карточку взакрытую (<see cref="HiddenCard"/>) сверху стопки теории, заплатив за это.
+  /// </summary>
+  /// <returns>Условия, на которых карточка положена.</returns>
+  /// <exception cref="InvalidOperationException">Карточку сюда класть нельзя.</exception>
+  public PlacementCheck PlaceHidden(Card card, TheoryColumn column, Player player) =>
+    Place(new HiddenCard(card), column.Top.Above, player);
+
+  /// <summary>
+  /// Закрытые персонажи (<see cref="HiddenCard"/>) игрока на поле — во всех стопках теорий, включая закрытые штабы.
+  /// </summary>
+  public IEnumerable<TheoryMember> HiddenCardsOf(Player player) =>
+    _theoryColumns.SelectMany(column => column.MembersOf(player)).Where(member => member.Card is HiddenCard);
+
+  /// <summary>
+  /// Проверить, может ли игрок перевернуть карточку другого игрока в его личном штабе, как будто она уже сыграна.
+  /// Платят в банк влияние переворачиваемого персонажа (<see cref="PlacementCheck.Cost"/>).
+  /// </summary>
+  public PlacementCheck CheckFlipRival(Cell cell, Player player)
+  {
+    var owner = _playerZones.Keys.FirstOrDefault(zonePlayer => _playerZones[zonePlayer].Contains(cell));
+    if (CardAt(cell) is not PersonCard person || owner is null)
+      return PlacementCheck.Deny("Здесь нет карточки из личного штаба.");
+    if (owner == player)
+      return PlacementCheck.Deny("Это ваша карточка — перевернуть можно только карточку другого игрока.");
+    if (IsUsed(cell))
+      return PlacementCheck.Deny("Эта карточка уже перевёрнута.");
+
+    var cost = person.Influence;
+    return player.CanAfford(cost)
+      ? PlacementCheck.Allow(cost)
+      : PlacementCheck.Deny($"Недостаточно денег: чтобы перевернуть «{person}», нужно {cost}$, а у вас {player.Money}$.");
+  }
+
+  /// <summary>
+  /// Перевернуть карточку другого игрока в его личном штабе рубашкой вверх, как будто она уже сыграна,
+  /// заплатив в банк её влияние.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Карточку перевернуть нельзя.</exception>
+  public void FlipRival(Cell cell, Player player)
+  {
+    var check = CheckFlipRival(cell, player);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    player.Spend(check.Cost);
+    _usedCells.Add(cell);
   }
 
   /// <summary>

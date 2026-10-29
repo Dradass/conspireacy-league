@@ -22,6 +22,7 @@ public partial class CardView : Node2D
   private bool _faceDown;
   private bool _closed;
   private bool _closedRibbon;
+  private bool _peeked;
   private int _successPenalty;
   private Player? _owner;
   private MeepleView? _ownerMark;
@@ -94,6 +95,20 @@ public partial class CardView : Node2D
   }
 
   /// <summary>
+  /// Владелец подглядывает в закрытую карточку (<see cref="HiddenCard"/>): видна её настоящая лицевая сторона.
+  /// Остальные карточки это не меняет.
+  /// </summary>
+  public bool Peeked
+  {
+    get => _peeked;
+    set
+    {
+      _peeked = value;
+      QueueRedraw();
+    }
+  }
+
+  /// <summary>
   /// Создать отображение карточки.
   /// </summary>
   public static CardView Create(Card card) => new() { Card = card, Name = card.GetType().Name };
@@ -152,9 +167,16 @@ public partial class CardView : Node2D
       return;
     }
 
-    CardPainter.DrawFace(this, rect, Card, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
-    if (_successPenalty > 0)
-      CardPainter.DrawSuccessPenalty(this, rect, _successPenalty);
+    if (Card is HiddenCard hidden && !_peeked)
+      CardPainter.DrawHiddenBack(this, rect, hidden);
+    else
+    {
+      var face = Card is HiddenCard peeked ? peeked.Face : Card;
+      CardPainter.DrawFace(this, rect, face, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
+      if (_successPenalty > 0)
+        CardPainter.DrawSuccessPenalty(this, rect, _successPenalty);
+    }
+
     if (_closed)
       CardPainter.DrawClosedOverlay(this, rect);
     if (_closedRibbon)

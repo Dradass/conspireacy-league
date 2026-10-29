@@ -68,6 +68,7 @@ public partial class Board : Node2D
   private readonly Dictionary<TheoryColumn, AdeptsView> _adepts = new();
   private readonly Dictionary<Vector2I, CardView> _marketViews = new();
   private int _marketCardsInFlight;
+  private CardView? _peeked;
   private ColorRect _highlight = null!;
   private Label _highlightCost = null!;
   private Node2D _cardsLayer = null!;
@@ -147,6 +148,21 @@ public partial class Board : Node2D
     Market.CardDiscarded -= OnMarketCardDiscarded;
     Market.CardMoved -= OnMarketCardMoved;
     Session.Turns.TurnChanged -= OnTurnChanged;
+  }
+
+  public override void _Process(double delta)
+  {
+    // Игрок, который сейчас ходит, видит свою закрытую карточку, пока держит над ней мышь.
+    var hovered = CellAt(GetGlobalMousePosition()) is { } cell ? ViewAt(cell) : null;
+    var peeked = hovered is { Card: HiddenCard } && hovered.CardOwner == Session.CurrentPlayer ? hovered : null;
+    if (peeked == _peeked)
+      return;
+
+    if (_peeked is not null)
+      _peeked.Peeked = false;
+    _peeked = peeked;
+    if (peeked is not null)
+      peeked.Peeked = true;
   }
 
   public override void _Draw()

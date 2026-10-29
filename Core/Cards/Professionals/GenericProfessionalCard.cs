@@ -24,12 +24,18 @@ public sealed class GenericProfessionalCard : ProfessionalCard
       name: NameOf(profession),
       successChancePercent: 60,
       cost: 6,
-      onPlayFromHand: new GainMoneyEffect(4),
+      onPlayFromHand: ActionOf(profession),
       onPlacedInHeadquarters: Effect.None,
       theory: theory)
   {
     Profession = profession;
   }
+
+  private static Effect ActionOf(Profession profession) => profession switch
+  {
+    Profession.SpecialAgent => new ChooseOneEffect(new PlaceHiddenCardEffect(), new FlipRivalCardEffect()),
+    _ => new GainMoneyEffect(4),
+  };
 
   private static string NameOf(Profession profession) => profession switch
   {

@@ -23,6 +23,10 @@ public sealed class AllOfEffect : Effect
 
   public override bool RequiresTheory => Effects.Any(e => e.RequiresTheory);
 
+  public override bool RequiresHandCard => Effects.Any(e => e.RequiresHandCard);
+
+  public override bool RequiresRivalCard => Effects.Any(e => e.RequiresRivalCard);
+
   public override void Execute(GameContext context)
   {
     foreach (var effect in Effects)
