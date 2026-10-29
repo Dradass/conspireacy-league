@@ -41,6 +41,16 @@ public sealed class TheoryColumn
   /// </summary>
   public int Influence => _cards.Sum(card => card.Influence);
 
+  /// <summary>
+  /// Количество адептов теории.
+  /// </summary>
+  public int Adepts { get; private set; }
+
+  /// <summary>
+  /// Ячейка карточки теории — нижней в стопке. На неё ставятся фигурки адептов.
+  /// </summary>
+  public Cell TheoryCell => _cells[0];
+
   internal TheoryColumn(Theory theory, Cell cell, PersonCard card)
   {
     Theory = theory;
@@ -52,6 +62,8 @@ public sealed class TheoryColumn
     _cells.Add(cell);
     _cards.Add(card);
   }
+
+  internal void AddAdepts(int count) => Adepts += count;
 
   public override string ToString() => Theory.Name;
 }

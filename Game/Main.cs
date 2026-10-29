@@ -20,47 +20,48 @@ public partial class Main : Node2D
 
   public override void _Ready()
   {
-    var player = new Player("Игрок", StartingMoney);
-    var field = new PlayingField(FieldLayout.Columns, FieldLayout.Rows, FieldLayout.CommonZone);
-    field.AddPlayer(player, FieldLayout.PlayerZone);
+	var player = new Player("Игрок", StartingMoney);
+	var field = new PlayingField(FieldLayout.Columns, FieldLayout.Rows, FieldLayout.CommonZone);
+	field.AddPlayer(player, FieldLayout.PlayerZone);
 
-    var board = new Board { Name = "Board", Field = field, LocalPlayer = player };
-    AddChild(board);
+	var board = new Board { Name = "Board", Field = field, LocalPlayer = player };
+	AddChild(board);
 
-    AddChild(new TableCamera
-    {
-      Name = "Camera",
-      Bounds = new Rect2(Vector2.Zero, board.Size),
-      // Чуть ниже центра зоны игрока, чтобы её не закрывали колоды.
-      Position = Board.ZoneCenter(FieldLayout.PlayerZone) + new Vector2(0, StartCameraShift),
-      Zoom = Vector2.One * StartZoom,
-    });
+	AddChild(new TableCamera
+	{
+	  Name = "Camera",
+	  Bounds = new Rect2(Vector2.Zero, board.Size),
+	  // Чуть ниже центра зоны игрока, чтобы её не закрывали колоды.
+	  Position = Board.ZoneCenter(FieldLayout.PlayerZone) + new Vector2(0, StartCameraShift),
+	  Zoom = Vector2.One * StartZoom,
+	});
 
-    // TODO: колоды с теориями — тестовые, пока в игре нет настоящих карточек персон с теориями.
-    DeckView[] decks =
-    [
-      DeckView.Create("Бездомные", CreateCards(() => new HomelessCard())),
-      DeckView.Create("Граждане", CreateCards(() => new CitizenCard())),
-      DeckView.Create(TheoryCatalog.SecretGovernment.Name, CreateCards(() => new CitizenCard(TheoryCatalog.SecretGovernment))),
-      DeckView.Create(TheoryCatalog.Reptilians.Name, CreateCards(() => new CitizenCard(TheoryCatalog.Reptilians))),
-      DeckView.Create(TheoryCatalog.TinFoilHat.Name, CreateCards(() => new HomelessCard(TheoryCatalog.TinFoilHat))),
-    ];
-    var hud = new Hud { Name = "Hud", Layer = 1, Player = player, Decks = decks };
-    AddChild(hud);
+	// TODO: колоды с теориями — тестовые, пока в игре нет настоящих карточек персон с теориями.
+	DeckView[] decks =
+	[
+	  DeckView.Create("Бездомные", CreateCards(() => new HomelessCard())),
+	  DeckView.Create("Граждане", CreateCards(() => new CitizenCard())),
+	  DeckView.Create(TheoryCatalog.SecretGovernment.Name, CreateCards(() => new CitizenCard(TheoryCatalog.SecretGovernment))),
+	  DeckView.Create(TheoryCatalog.Reptilians.Name, CreateCards(() => new CitizenCard(TheoryCatalog.Reptilians))),
+	  DeckView.Create(TheoryCatalog.TinFoilHat.Name, CreateCards(() => new HomelessCard(TheoryCatalog.TinFoilHat))),
+	];
+	var hud = new Hud { Name = "Hud", Layer = 1, Player = player, Decks = decks };
+	AddChild(hud);
 
-    // Слой выше интерфейса, но в координатах стола: карточка летит поверх колод и масштабируется вместе со столом.
-    var dragLayer = new CanvasLayer { Name = "DragLayer", Layer = 2, FollowViewportEnabled = true };
-    AddChild(dragLayer);
+	// Слой выше интерфейса, но в координатах стола: карточка летит поверх колод и масштабируется вместе со столом.
+	var dragLayer = new CanvasLayer { Name = "DragLayer", Layer = 2, FollowViewportEnabled = true };
+	AddChild(dragLayer);
 
-    var dragController = new CardDragController { Name = "CardDragController" };
-    AddChild(dragController);
-    dragController.Initialize(board, player, dragLayer, decks);
-    dragController.PlacementDenied += hud.ShowMessage;
+	var dragController = new CardDragController { Name = "CardDragController" };
+	AddChild(dragController);
+	dragController.Initialize(board, player, dragLayer, decks);
+	dragController.PlacementDenied += hud.ShowMessage;
 
-    var useController = new CardUseController { Name = "CardUseController" };
-    AddChild(useController);
-    useController.Initialize(board, new GameContext(player));
-    useController.UseDenied += hud.ShowMessage;
+	var useController = new CardUseController { Name = "CardUseController" };
+	AddChild(useController);
+	useController.Initialize(board, new GameContext(player, field));
+	useController.UseDenied += hud.ShowMessage;
+	useController.Hint += hud.ShowMessage;
   }
 
   private static List<Card> CreateCards(Func<Card> create) => Enumerable.Range(0, CardsPerDeck).Select(_ => create()).ToList();

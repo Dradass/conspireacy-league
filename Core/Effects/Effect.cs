@@ -28,6 +28,11 @@ public abstract class Effect
   public virtual IReadOnlyList<Effect> Options => [this];
 
   /// <summary>
+  /// Нужно ли перед выполнением выбрать теорию (<see cref="GameContext.TargetTheory"/>).
+  /// </summary>
+  public virtual bool RequiresTheory => false;
+
+  /// <summary>
   /// Выполнить действие.
   /// </summary>
   /// <param name="context">Контекст партии.</param>

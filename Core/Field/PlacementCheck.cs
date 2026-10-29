@@ -31,6 +31,11 @@ public sealed record PlacementCheck
   /// </summary>
   public bool CreatesHeadquarters { get; private init; }
 
+  /// <summary>
+  /// Можно без условий.
+  /// </summary>
+  public static PlacementCheck Allowed { get; } = Allow();
+
   internal static PlacementCheck Allow(int cost = 0, TheoryColumn? column = null, bool createsHeadquarters = false) =>
     new() { IsAllowed = true, Cost = cost, Column = column, CreatesHeadquarters = createsHeadquarters };
 

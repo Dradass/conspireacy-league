@@ -21,6 +21,8 @@ public sealed class AllOfEffect : Effect
 
   public override string Description => string.Join(" и ", Effects.Select(e => e.Description));
 
+  public override bool RequiresTheory => Effects.Any(e => e.RequiresTheory);
+
   public override void Execute(GameContext context)
   {
     foreach (var effect in Effects)

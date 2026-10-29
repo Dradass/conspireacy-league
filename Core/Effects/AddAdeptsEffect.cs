@@ -42,14 +42,25 @@ public sealed class AddAdeptsEffect : Effect
 
   public override string Description => Destination switch
   {
-    AdeptDestination.Theory => $"Добавить {Count} адепта в теорию",
-    AdeptDestination.TheoryHeadquarters => $"Приводит {Count} адепта в штаб теории",
+    AdeptDestination.Theory => $"Добавить {Adepts} в теорию",
+    AdeptDestination.TheoryHeadquarters => $"Приводит {Adepts} в штаб теории",
     _ => throw new ArgumentOutOfRangeException(nameof(Destination))
   };
 
+  public override bool RequiresTheory => Destination == AdeptDestination.Theory;
+
   public override void Execute(GameContext context)
   {
-    // TODO: добавить Count адептов в Destination текущего игрока.
+    if (Destination == AdeptDestination.Theory)
+    {
+      var theory = context.TargetTheory ?? throw new InvalidOperationException("Не выбрана теория, в которую добавить адептов.");
+      context.Field.AddAdepts(theory, Count);
+      return;
+    }
+
+    // TODO: привести Count адептов в штаб теории текущего игрока.
     throw new NotImplementedException();
   }
+
+  private string Adepts => Count == 1 ? "адепта" : $"{Count} адептов";
 }

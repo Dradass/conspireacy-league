@@ -46,9 +46,11 @@ public partial class Board : Node2D
 
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
   private readonly Dictionary<Vector2I, CardView> _views = new();
+  private readonly Dictionary<TheoryColumn, AdeptsView> _adepts = new();
   private ColorRect _highlight = null!;
   private Label _highlightCost = null!;
   private Node2D _cardsLayer = null!;
+  private Node2D _adeptsLayer = null!;
 
   /// <summary>
   /// Поле, которое отображает стол.
@@ -90,7 +92,13 @@ public partial class Board : Node2D
 
     _cardsLayer = new Node2D { Name = "Cards" };
     AddChild(_cardsLayer);
+    _adeptsLayer = new Node2D { Name = "Adepts" };
+    AddChild(_adeptsLayer);
+
+    Field.AdeptsAdded += OnAdeptsAdded;
   }
+
+  public override void _ExitTree() => Field.AdeptsAdded -= OnAdeptsAdded;
 
   public override void _Draw()
   {
@@ -133,6 +141,11 @@ public partial class Board : Node2D
       _available[new Vector2I(cell.Column, cell.Row)] = check;
     QueueRedraw();
   }
+
+  /// <summary>
+  /// Подсветить ячейки, которые можно выбрать целью действия.
+  /// </summary>
+  public void ShowTargets(IEnumerable<Cell> cells) => ShowAvailable(cells.Select(cell => (cell, PlacementCheck.Allowed)));
 
   /// <summary>
   /// Убрать подсветку доступных ячеек.
@@ -206,8 +219,22 @@ public partial class Board : Node2D
     _highlightCost.Text = cost > 0 ? $"−{cost}$" : string.Empty;
   }
 
+  private void OnAdeptsAdded(TheoryColumn column, int count)
+  {
+    if (!_adepts.TryGetValue(column, out var view))
+    {
+      view = new AdeptsView { Name = $"Adepts{column.Theory.Name}", Position = CellCenter(column.TheoryCell.ToVector2I()) };
+      _adeptsLayer.AddChild(view);
+      _adepts[column] = view;
+    }
+
+    view.Add(count);
+    // Перерисовываем итоги теорий: под теорией подписано количество адептов.
+    QueueRedraw();
+  }
+
   /// <summary>
-  /// Под каждым столбцом теории, в ряду под общей зоной, — суммарное влияние и количество человек.
+  /// Под каждым столбцом теории, в ряду под общей зоной, — суммарное влияние, количество человек и адептов.
   /// </summary>
   private void DrawTheoryTotals()
   {
@@ -226,7 +253,7 @@ public partial class Board : Node2D
       }
 
       var text = string.Join("\n", group.Select(column =>
-        $"{column.Theory}:\nвлияние {column.Influence}, человек {column.Cards.Count}"));
+        $"{column.Theory}:\nвлияние {column.Influence}, человек {column.Cards.Count}, адептов {column.Adepts}"));
       CardPainter.DrawCenteredText(this, text, area, TotalsFontSize, TotalsColor);
     }
   }
@@ -235,16 +262,21 @@ public partial class Board : Node2D
   {
     (string Text, int FontSize)[] lines =
     [
-      ("Суммарное влияние", TotalsFontSize),
+      ("Влияние", TotalsFontSize),
       (column.Influence.ToString(), TotalsValueFontSize),
-      ("Количество человек", TotalsFontSize),
+      ("Человек", TotalsFontSize),
       (column.Cards.Count.ToString(), TotalsValueFontSize),
+      ("Адептов", TotalsFontSize),
+      (column.Adepts.ToString(), TotalsValueFontSize),
     ];
-    var lineHeight = area.Size.Y / lines.Length;
-    for (var i = 0; i < lines.Length; i++)
+    // Высота строки пропорциональна размеру шрифта.
+    var scale = area.Size.Y / lines.Sum(line => line.FontSize);
+    var top = area.Position.Y;
+    foreach (var (text, fontSize) in lines)
     {
-      var lineArea = new Rect2(area.Position.X, area.Position.Y + lineHeight * i, area.Size.X, lineHeight);
-      CardPainter.DrawCenteredText(this, lines[i].Text, lineArea, lines[i].FontSize, TotalsColor);
+      var lineArea = new Rect2(area.Position.X, top, area.Size.X, fontSize * scale);
+      CardPainter.DrawCenteredText(this, text, lineArea, fontSize, TotalsColor);
+      top = lineArea.End.Y;
     }
   }
 
@@ -284,4 +316,9 @@ public static class CellExtensions
   /// Ячейка поля из ячейки стола.
   /// </summary>
   public static Cell ToCell(this Vector2I cell) => new(cell.X, cell.Y);
+
+  /// <summary>
+  /// Ячейка стола из ячейки поля.
+  /// </summary>
+  public static Vector2I ToVector2I(this Cell cell) => new(cell.Column, cell.Row);
 }

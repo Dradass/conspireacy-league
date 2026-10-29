@@ -52,6 +52,11 @@ public sealed class PlayingField
   /// </summary>
   public IReadOnlyList<TheoryColumn> TheoryColumns => _theoryColumns;
 
+  /// <summary>
+  /// В теорию пришли адепты; аргументы — теория и сколько адептов пришло.
+  /// </summary>
+  public event Action<TheoryColumn, int>? AdeptsAdded;
+
   /// <param name="columns">Количество столбцов.</param>
   /// <param name="rows">Количество строк.</param>
   /// <param name="commonZone">Общая зона.</param>
@@ -104,10 +109,32 @@ public sealed class PlayingField
     var card = _cards[cell];
     if (!card.OnPlayFromHand.Options.Contains(option))
       throw new ArgumentException($"У карточки «{card}» нет действия «{option}».", nameof(option));
+    if (option.RequiresTheory && context.TargetTheory is null)
+      throw new ArgumentException($"Для действия «{option}» нужно выбрать теорию.", nameof(context));
 
     option.Execute(context);
     _usedCells.Add(cell);
   }
+
+  /// <summary>
+  /// Добавить адептов в выложенную теорию.
+  /// </summary>
+  /// <param name="column">Теория.</param>
+  /// <param name="count">Количество адептов.</param>
+  public void AddAdepts(TheoryColumn column, int count)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
+    if (!_theoryColumns.Contains(column))
+      throw new ArgumentException($"Теория «{column}» не выложена на это поле.", nameof(column));
+
+    column.AddAdepts(count);
+    AdeptsAdded?.Invoke(column, count);
+  }
+
+  /// <summary>
+  /// Теория, к стопке которой относится ячейка.
+  /// </summary>
+  public TheoryColumn? ColumnAt(Cell cell) => _theoryColumns.FirstOrDefault(column => column.Cells.Contains(cell));
 
   /// <summary>
   /// Проверить, может ли игрок положить карточку в ячейку.
