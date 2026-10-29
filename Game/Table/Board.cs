@@ -127,6 +127,7 @@ public partial class Board : Node2D
 
     Field.AdeptsAdded += OnAdeptsAdded;
     Field.TheoryClosed += OnTheoryClosed;
+    Field.CommonZoneChanged += OnCommonZoneChanged;
     Field.UsedCardsRefreshed += OnUsedCardsRefreshed;
     Market.CardOpened += OnMarketCardOpened;
     Market.CardTaken += OnMarketCardTaken;
@@ -139,6 +140,7 @@ public partial class Board : Node2D
   {
     Field.AdeptsAdded -= OnAdeptsAdded;
     Field.TheoryClosed -= OnTheoryClosed;
+    Field.CommonZoneChanged -= OnCommonZoneChanged;
     Field.UsedCardsRefreshed -= OnUsedCardsRefreshed;
     Market.CardOpened -= OnMarketCardOpened;
     Market.CardTaken -= OnMarketCardTaken;
@@ -357,6 +359,8 @@ public partial class Board : Node2D
   }
 
   private void OnTurnChanged(Player player) => QueueRedraw();
+
+  private void OnCommonZoneChanged(Zone zone) => QueueRedraw();
 
   /// <summary>
   /// Штаб теории закрыт: все его карточки сереют, на первой — лента «CLOSED».

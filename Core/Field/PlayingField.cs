@@ -43,7 +43,12 @@ public sealed class PlayingField
   /// <summary>
   /// Общая зона всех игроков.
   /// </summary>
-  public Zone CommonZone { get; }
+  public Zone CommonZone { get; private set; }
+
+  /// <summary>
+  /// Общая зона выросла; аргумент — новая зона.
+  /// </summary>
+  public event Action<Zone>? CommonZoneChanged;
 
   /// <summary>
   /// Рабочие зоны игроков.
@@ -237,6 +242,8 @@ public sealed class PlayingField
     }
 
     player.Spend(check.Cost);
+    if (joined is not null)
+      GrowCommonZone();
     // Персона пришла в штаб теории — выполняется её действие при выкладывании в штаб.
     if (joined is not null)
       person.PlaceInHeadquarters(new GameContext(player, this).WithTargetTheory(joined));
@@ -264,6 +271,39 @@ public sealed class PlayingField
   /// Стопка теории, если теория уже выложена.
   /// </summary>
   public TheoryColumn? ColumnOf(Theory theory) => _theoryColumns.FirstOrDefault(column => column.Theory == theory);
+
+  /// <summary>
+  /// Вырастить общую зону под выложенные карточки. Нижняя строка зоны не меняется.
+  /// </summary>
+  /// <remarks>
+  /// Над самой высокой карточкой остаётся <see cref="FieldLayout.CommonZoneFreeRows"/> свободных ряда.
+  /// Когда во всех столбцах зоны есть карточки, зона расширяется на <see cref="FieldLayout.CommonZoneSideGrowth"/>
+  /// столбца с каждой стороны, пока не упрётся в края поля.
+  /// </remarks>
+  private void GrowCommonZone()
+  {
+    var zone = CommonZone;
+    var cells = _cards.Keys.Where(zone.Contains).ToList();
+
+    var levels = cells.Select(cell => zone.BottomRow - cell.Row + 1).DefaultIfEmpty(0).Max();
+    var height = Math.Min(Math.Max(zone.Height, levels + FieldLayout.CommonZoneFreeRows), zone.BottomRow + 1);
+
+    var left = zone.Left;
+    var right = zone.Left + zone.Width;
+    while ((left > 0 || right < Columns)
+      && Enumerable.Range(left, right - left).All(column => cells.Any(cell => cell.Column == column)))
+    {
+      left = Math.Max(0, left - FieldLayout.CommonZoneSideGrowth);
+      right = Math.Min(Columns, right + FieldLayout.CommonZoneSideGrowth);
+    }
+
+    var grown = new Zone(left, zone.BottomRow - height + 1, right - left, height);
+    if (grown == zone)
+      return;
+
+    CommonZone = grown;
+    CommonZoneChanged?.Invoke(grown);
+  }
 
   private bool IsInside(Cell cell) => cell.Column >= 0 && cell.Column < Columns && cell.Row >= 0 && cell.Row < Rows;
 

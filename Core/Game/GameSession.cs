@@ -106,7 +106,7 @@ public sealed class GameSession
   public GameSession(IEnumerable<Player> players, Random? random = null)
   {
     Turns = new TurnOrder(players);
-    Field = new PlayingField(FieldLayout.Columns, FieldLayout.Rows, FieldLayout.CommonZone);
+    Field = new PlayingField(FieldLayout.Columns, FieldLayout.Rows, FieldLayout.CommonZone(Players.Count));
     for (var i = 0; i < Players.Count; i++)
       Field.AddPlayer(Players[i], FieldLayout.PlayerZone(i, Players.Count));
     Market = new Market(FieldLayout.MarketZone, MarketDeck.Create(Players.Count, random ?? Random.Shared));
