@@ -167,11 +167,11 @@ public partial class CardView : Node2D
       return;
     }
 
-    if (Card is HiddenCard hidden && !_peeked)
+    if (Card is HiddenCard { IsRevealed: false } hidden && !_peeked)
       CardPainter.DrawHiddenBack(this, rect, hidden);
     else
     {
-      var face = Card is HiddenCard peeked ? peeked.Face : Card;
+      var face = Card is HiddenCard shown ? shown.Face : Card;
       CardPainter.DrawFace(this, rect, face, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
       if (_successPenalty > 0)
         CardPainter.DrawSuccessPenalty(this, rect, _successPenalty);

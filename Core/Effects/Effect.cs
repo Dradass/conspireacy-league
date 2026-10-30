@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 
 namespace ConspiracyLeague.Core.Effects;
@@ -38,9 +39,23 @@ public abstract class Effect
   public virtual bool RequiresHandCard => false;
 
   /// <summary>
-  /// Нужно ли перед выполнением выбрать карточку в личном штабе другого игрока (<see cref="GameContext.TargetCell"/>).
+  /// Нужно ли перед выполнением выбрать карточку на поле (<see cref="GameContext.TargetCell"/>).
   /// </summary>
-  public virtual bool RequiresRivalCard => false;
+  public virtual bool RequiresTargetCell => false;
+
+  /// <summary>
+  /// Карточки на поле, которые подходят для действия, с условиями выбора: можно ли и сколько $ это стоит.
+  /// </summary>
+  /// <param name="context">Контекст партии.</param>
+  public virtual IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) => [];
+
+  /// <summary>
+  /// Проверить, можно ли выбрать карточку на поле для действия.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="context">Контекст партии.</param>
+  public virtual PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+    PlacementCheck.Deny($"Действию «{Description}» не нужна карточка на поле.");
 
   /// <summary>
   /// Выполнить действие.

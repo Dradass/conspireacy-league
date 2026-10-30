@@ -16,7 +16,10 @@ namespace ConspiracyLeague.Game.Table;
 /// Если действию нужна теория (например, «Добавить адепта в теорию»), игрок выбирает её щелчком по стопке теории;
 /// Если действию нужна карточка в руке (например, «Выложить карту взакрытую»), игрок сначала выбирает её щелчком
 /// по руке, а затем стопку теории, сверху которой её положить.
-/// Esc или правая кнопка мыши отменяют выбор. Затем проводится проверка успеха (<see cref="SuccessCheck"/>):
+/// Если действию нужна карточка на поле (например, «Перевернуть карточку другого игрока»), подходящие карточки
+/// подсвечиваются, и игрок выбирает одну из них.
+/// Esc или щелчок левой кнопкой мимо карточек отменяют выбор;
+/// перемещение камеры правой кнопкой его не сбрасывает. Затем проводится проверка успеха (<see cref="SuccessCheck"/>):
 /// на карточку бросается двадцатигранный кубик, на нём появляется галка или крест, и через секунду карточка
 /// переворачивается рубашкой вверх. Действие выполняется, только если проверка успешна.
 /// Что можно использовать, решает <see cref="PlayingField"/>.
@@ -149,7 +152,7 @@ public partial class CardUseController : Node
   /// </summary>
   private void Choose(CardView view, Vector2I cell, Effect option)
   {
-    if (!option.RequiresTheory && !option.RequiresHandCard && !option.RequiresRivalCard)
+    if (!option.RequiresTheory && !option.RequiresHandCard && !option.RequiresTargetCell)
     {
       view.Lifted = false;
       Use(view, cell, option, _session.CreateContext());
@@ -168,13 +171,13 @@ public partial class CardUseController : Node
     if (_targeting.PicksHandCard)
     {
       _hand.Picking = true;
-      Hint?.Invoke("Выберите карточку в руке. Esc — отмена.");
+      Hint?.Invoke("Выберите карточку в руке. Esc или щелчок мимо карточек — отмена.");
     }
-    else if (option.RequiresRivalCard)
+    else if (option.RequiresTargetCell)
     {
-      // Подсвечиваем карточки, которые можно перевернуть, — с ценой, как при выкладывании с руки.
-      _board.ShowAvailable(RivalChecks().Where(target => target.Check.IsAllowed));
-      Hint?.Invoke("Выберите карточку в личном штабе другого игрока. Esc — отмена.");
+      // Подсвечиваем карточки, которые можно выбрать, — с ценой, как при выкладывании с руки.
+      _board.ShowAvailable(option.TargetCells(_session.CreateContext()).Where(target => target.Check.IsAllowed));
+      Hint?.Invoke($"Выберите подсвеченную карточку: {Lowercase(option.Description)}. Esc или щелчок мимо карточек — отмена.");
     }
     else
       ShowTheoryTargets(_targeting);
@@ -185,12 +188,12 @@ public partial class CardUseController : Node
   /// </summary>
   private string? DenialOf(Effect option)
   {
-    if (option.RequiresRivalCard)
+    if (option.RequiresTargetCell)
     {
-      var rivalChecks = RivalChecks().Select(target => target.Check).ToList();
-      if (rivalChecks.Count == 0)
-        return $"У других игроков нет несыгранных карточек — действие «{option.Description}» некуда применить.";
-      return rivalChecks.Any(check => check.IsAllowed) ? null : rivalChecks[0].Reason;
+      var targetChecks = option.TargetCells(_session.CreateContext()).Select(target => target.Check).ToList();
+      if (targetChecks.Count == 0)
+        return $"На поле нет подходящих карточек — действие «{option.Description}» некуда применить.";
+      return targetChecks.Any(check => check.IsAllowed) ? null : targetChecks[0].Reason;
     }
 
     if (!option.RequiresHandCard)
@@ -219,18 +222,7 @@ public partial class CardUseController : Node
   private IEnumerable<(TheoryColumn Column, PlacementCheck Check)> HiddenChecks(Card card) =>
     OpenTheories.Select(theory => (theory, _board.Field.CheckHidden(card, theory, _session.CurrentPlayer)));
 
-  /// <summary>
-  /// Условия, на которых можно перевернуть каждую несыгранную карточку в личных штабах других игроков.
-  /// </summary>
-  private IEnumerable<(Cell Cell, PlacementCheck Check)> RivalChecks()
-  {
-    var player = _session.CurrentPlayer;
-    return _board.Field.PlayerZones
-      .Where(zone => zone.Key != player)
-      .SelectMany(zone => zone.Value.Cells)
-      .Where(cell => _board.Field.CardAt(cell) is not null && !_board.Field.IsUsed(cell))
-      .Select(cell => (cell, _board.Field.CheckFlipRival(cell, player)));
-  }
+  private static string Lowercase(string text) => text.Length == 0 ? text : char.ToLower(text[0]) + text[1..];
 
   /// <summary>
   /// Подсветить теории, которые можно выбрать для действия.
@@ -240,7 +232,7 @@ public partial class CardUseController : Node
     if (targeting.HandCard is not { } card)
     {
       _board.ShowTargets(OpenTheories.SelectMany(theory => theory.Cells));
-      Hint?.Invoke("Выберите теорию щелчком по её карточкам. Esc — отмена.");
+      Hint?.Invoke("Выберите теорию щелчком по её карточкам. Esc или щелчок мимо карточек — отмена.");
       return;
     }
 
@@ -249,7 +241,7 @@ public partial class CardUseController : Node
       .Where(target => target.Check.IsAllowed)
       .Select(target => (target.Column.Top.Above, target.Check)));
     Hint?.Invoke("Выберите теорию: карточка ляжет сверху её стопки рубашкой вверх. "
-      + "Можно выбрать в руке другую карточку. Esc — отмена.");
+      + "Можно выбрать в руке другую карточку. Esc или щелчок мимо карточек — отмена.");
   }
 
   /// <summary>
@@ -267,9 +259,8 @@ public partial class CardUseController : Node
 
   private void HandleTargeting(InputEvent @event)
   {
-    var cancel = @event.IsActionPressed("ui_cancel")
-      || @event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right };
-    if (cancel)
+    // Правая и средняя кнопки двигают камеру — выбор при этом не сбрасывается.
+    if (@event.IsActionPressed("ui_cancel"))
     {
       GetViewport().SetInputAsHandled();
       EndTargeting();
@@ -280,15 +271,21 @@ public partial class CardUseController : Node
       return;
 
     GetViewport().SetInputAsHandled();
+    if (!IsOnCard(_board.CellAt(_board.GetGlobalMousePosition())))
+    {
+      EndTargeting();
+      return;
+    }
+
     if (_targeting!.PicksHandCard)
     {
       UseDenied?.Invoke("Выберите карточку в руке или нажмите Esc.");
       return;
     }
 
-    if (_targeting.Option.RequiresRivalCard)
+    if (_targeting.Option.RequiresTargetCell)
     {
-      ChooseRivalCard();
+      ChooseTargetCell();
       return;
     }
 
@@ -318,17 +315,23 @@ public partial class CardUseController : Node
   }
 
   /// <summary>
-  /// Игрок щёлкнул по столу, выбирая карточку другого игрока, которую перевернуть.
+  /// Щелчок пришёлся по карточке или по подсвеченной ячейке (туда ляжет закрытая карточка).
   /// </summary>
-  private void ChooseRivalCard()
+  private bool IsOnCard(Vector2I? cell) =>
+    cell is { } target && (_board.ViewAt(target) is not null || _board.MarketViewAt(target) is not null || _board.IsAvailable(target));
+
+  /// <summary>
+  /// Игрок щёлкнул по столу, выбирая карточку на поле для действия.
+  /// </summary>
+  private void ChooseTargetCell()
   {
     if (_board.CellAt(_board.GetGlobalMousePosition()) is not { } target)
     {
-      UseDenied?.Invoke("Выберите подсвеченную карточку другого игрока или нажмите Esc.");
+      UseDenied?.Invoke("Выберите подсвеченную карточку или нажмите Esc.");
       return;
     }
 
-    var check = _board.Field.CheckFlipRival(target.ToCell(), _session.CurrentPlayer);
+    var check = _targeting!.Option.CheckTargetCell(target.ToCell(), _session.CreateContext());
     if (!check.IsAllowed)
     {
       UseDenied?.Invoke($"{check.Reason} Выберите подсвеченную карточку или нажмите Esc.");
@@ -397,8 +400,8 @@ public partial class CardUseController : Node
     if (check.Succeeded && context.HandCard is not null)
       ShowHiddenCard(view, context);
     // Перевёрнутая карточка другого игрока лежит рубашкой вверх, как сыгранная.
-    if (check.Succeeded && context.TargetCell is { } flipped)
-      _board.ViewAt(flipped.ToVector2I())?.FlipFaceDown();
+    if (check.Succeeded && context.TargetCell is { } target && _board.Field.IsUsed(target))
+      _board.ViewAt(target.ToVector2I())?.FlipFaceDown();
   }
 
   /// <summary>

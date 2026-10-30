@@ -8,9 +8,15 @@ namespace ConspiracyLeague.Core.Cards;
 public sealed class HiddenCard : PersonCard
 {
   /// <summary>
-  /// Настоящая карточка. Её видит только владелец.
+  /// Настоящая карточка. Пока карточка не раскрыта, её видит только владелец.
   /// </summary>
   public Card Face { get; }
+
+  /// <summary>
+  /// Карточку раскрыли (<see cref="Effects.RevealHiddenCardEffect"/>): её настоящую лицевую сторону видят все.
+  /// По правилам она по-прежнему гражданин без теории.
+  /// </summary>
+  public bool IsRevealed { get; private set; }
 
   /// <param name="face">Настоящая карточка.</param>
   public HiddenCard(Card face)
@@ -31,4 +37,6 @@ public sealed class HiddenCard : PersonCard
     ArgumentNullException.ThrowIfNull(face);
     Face = face;
   }
+
+  internal void Reveal() => IsRevealed = true;
 }

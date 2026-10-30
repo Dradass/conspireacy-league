@@ -130,6 +130,7 @@ public partial class Board : Node2D
     Field.TheoryClosed += OnTheoryClosed;
     Field.CommonZoneChanged += OnCommonZoneChanged;
     Field.UsedCardsRefreshed += OnUsedCardsRefreshed;
+    Field.HiddenCardRevealed += OnHiddenCardRevealed;
     Market.CardOpened += OnMarketCardOpened;
     Market.CardTaken += OnMarketCardTaken;
     Market.CardDiscarded += OnMarketCardDiscarded;
@@ -143,6 +144,7 @@ public partial class Board : Node2D
     Field.TheoryClosed -= OnTheoryClosed;
     Field.CommonZoneChanged -= OnCommonZoneChanged;
     Field.UsedCardsRefreshed -= OnUsedCardsRefreshed;
+    Field.HiddenCardRevealed -= OnHiddenCardRevealed;
     Market.CardOpened -= OnMarketCardOpened;
     Market.CardTaken -= OnMarketCardTaken;
     Market.CardDiscarded -= OnMarketCardDiscarded;
@@ -224,6 +226,11 @@ public partial class Board : Node2D
     _available.Clear();
     QueueRedraw();
   }
+
+  /// <summary>
+  /// Подсвечена ли ячейка как доступная.
+  /// </summary>
+  public bool IsAvailable(Vector2I cell) => _available.ContainsKey(cell);
 
   /// <summary>
   /// Ячейка под точкой стола.
@@ -413,6 +420,11 @@ public partial class Board : Node2D
     foreach (var cell in cells)
       ViewAt(cell.ToVector2I())?.FlipFaceUp();
   }
+
+  /// <summary>
+  /// Закрытую карточку раскрыли: теперь все видят её лицевую сторону.
+  /// </summary>
+  private void OnHiddenCardRevealed(Cell cell) => ViewAt(cell.ToVector2I())?.QueueRedraw();
 
   /// <summary>
   /// Карточка ушла с рынка при обновлении: она поднимается и тает.

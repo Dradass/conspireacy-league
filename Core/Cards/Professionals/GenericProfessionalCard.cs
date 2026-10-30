@@ -34,6 +34,8 @@ public sealed class GenericProfessionalCard : ProfessionalCard
   private static Effect ActionOf(Profession profession) => profession switch
   {
     Profession.SpecialAgent => new ChooseOneEffect(new PlaceHiddenCardEffect(), new FlipRivalCardEffect()),
+    Profession.Journalist => new ChooseOneEffect(new AddAdeptsEffect(3, AdeptDestination.Theory), new RevealHiddenCardEffect()),
+    Profession.Politician => new GainMoneyEffect(10),
     _ => new GainMoneyEffect(4),
   };
 

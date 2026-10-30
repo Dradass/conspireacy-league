@@ -17,7 +17,8 @@ namespace ConspiracyLeague.Core.Field;
 /// или уже выложенной дочерней теории того же родителя;</item>
 /// <item>карточку уже выложенной теории — сверху её стопки;</item>
 /// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки;</item>
-/// <item>закрытую карточку (<see cref="HiddenCard"/>) — как карточку без теории: она считается гражданином без теории.</item>
+/// <item>закрытую карточку (<see cref="HiddenCard"/>) — как карточку без теории: она считается гражданином без теории.
+/// Раскрытая закрытая карточка (<see cref="Reveal"/>) видна всем, но по-прежнему считается гражданином без теории.</item>
 /// </list>
 /// В закрытые штабы теорий карточки класть нельзя.
 /// Карточку из своей зоны (личного штаба) можно один раз использовать: выполнить её действие,
@@ -76,6 +77,11 @@ public sealed class PlayingField
   /// Сыгранные карточки перевернулись лицевой стороной вверх; аргумент — их ячейки.
   /// </summary>
   public event Action<IReadOnlyList<Cell>>? UsedCardsRefreshed;
+
+  /// <summary>
+  /// Закрытая карточка раскрыта — теперь её видят все; аргумент — её ячейка.
+  /// </summary>
+  public event Action<Cell>? HiddenCardRevealed;
 
   /// <param name="columns">Количество столбцов.</param>
   /// <param name="rows">Количество строк.</param>
@@ -154,8 +160,8 @@ public sealed class PlayingField
       throw new ArgumentException($"Для действия «{option}» нужно выбрать теорию.", nameof(context));
     if (option.RequiresHandCard && (context.HandCard is not { } handCard || !context.CurrentPlayer.Hand.Contains(handCard)))
       throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку в руке.", nameof(context));
-    if (option.RequiresRivalCard && context.TargetCell is null)
-      throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку другого игрока.", nameof(context));
+    if (option.RequiresTargetCell && context.TargetCell is null)
+      throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку на поле.", nameof(context));
 
     option.Execute(context);
     _usedCells.Add(cell);
@@ -308,9 +314,49 @@ public sealed class PlayingField
 
   /// <summary>
   /// Закрытые персонажи (<see cref="HiddenCard"/>) игрока на поле — во всех стопках теорий, включая закрытые штабы.
+  /// Раскрытые не считаются.
   /// </summary>
   public IEnumerable<TheoryMember> HiddenCardsOf(Player player) =>
-    _theoryColumns.SelectMany(column => column.MembersOf(player)).Where(member => member.Card is HiddenCard);
+    _theoryColumns.SelectMany(column => column.MembersOf(player))
+      .Where(member => member.Card is HiddenCard { IsRevealed: false });
+
+  /// <summary>
+  /// Проверить, может ли игрок раскрыть закрытую карточку (<see cref="HiddenCard"/>) другого игрока.
+  /// </summary>
+  public PlacementCheck CheckReveal(Cell cell, Player player)
+  {
+    if (CardAt(cell) is not HiddenCard hidden)
+      return PlacementCheck.Deny("Здесь нет закрытой карточки.");
+    if (hidden.IsRevealed)
+      return PlacementCheck.Deny("Эта карточка уже раскрыта.");
+    if (ColumnAt(cell)?.OwnerAt(cell) == player)
+      return PlacementCheck.Deny("Это ваша закрытая карточка — раскрыть можно только карточку другого игрока.");
+
+    return PlacementCheck.Allowed;
+  }
+
+  /// <summary>
+  /// Закрытые карточки других игроков, которые игрок может раскрыть.
+  /// </summary>
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> RevealTargets(Player player) =>
+    _theoryColumns
+      .SelectMany(column => column.Members)
+      .Where(member => member.Card is HiddenCard { IsRevealed: false } && member.Owner != player)
+      .Select(member => (member.Cell, CheckReveal(member.Cell, player)));
+
+  /// <summary>
+  /// Раскрыть закрытую карточку другого игрока: теперь её видят все.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Карточку раскрыть нельзя.</exception>
+  public void Reveal(Cell cell, Player player)
+  {
+    var check = CheckReveal(cell, player);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    ((HiddenCard)_cards[cell]).Reveal();
+    HiddenCardRevealed?.Invoke(cell);
+  }
 
   /// <summary>
   /// Проверить, может ли игрок перевернуть карточку другого игрока в его личном штабе, как будто она уже сыграна.
@@ -331,6 +377,16 @@ public sealed class PlayingField
       ? PlacementCheck.Allow(cost)
       : PlacementCheck.Deny($"Недостаточно денег: чтобы перевернуть «{person}», нужно {cost}$, а у вас {player.Money}$.");
   }
+
+  /// <summary>
+  /// Несыгранные карточки в личных штабах других игроков с условиями, на которых их можно перевернуть.
+  /// </summary>
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> FlipRivalTargets(Player player) =>
+    _playerZones
+      .Where(zone => zone.Key != player)
+      .SelectMany(zone => zone.Value.Cells)
+      .Where(cell => CardAt(cell) is not null && !IsUsed(cell))
+      .Select(cell => (cell, CheckFlipRival(cell, player)));
 
   /// <summary>
   /// Перевернуть карточку другого игрока в его личном штабе рубашкой вверх, как будто она уже сыграна,

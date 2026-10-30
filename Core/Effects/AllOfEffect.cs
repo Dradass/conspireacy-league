@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 
 namespace ConspiracyLeague.Core.Effects;
@@ -25,7 +26,18 @@ public sealed class AllOfEffect : Effect
 
   public override bool RequiresHandCard => Effects.Any(e => e.RequiresHandCard);
 
-  public override bool RequiresRivalCard => Effects.Any(e => e.RequiresRivalCard);
+  public override bool RequiresTargetCell => Effects.Any(e => e.RequiresTargetCell);
+
+  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+    TargetCellEffect?.TargetCells(context) ?? [];
+
+  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+    TargetCellEffect?.CheckTargetCell(cell, context) ?? base.CheckTargetCell(cell, context);
+
+  /// <summary>
+  /// Действие, для которого выбирают карточку на поле.
+  /// </summary>
+  private Effect? TargetCellEffect => Effects.FirstOrDefault(e => e.RequiresTargetCell);
 
   public override void Execute(GameContext context)
   {
