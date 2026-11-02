@@ -11,6 +11,7 @@ public sealed class TurnOrder
   private readonly List<Player> _players;
   private readonly HashSet<Player> _passed = [];
   private int _currentIndex;
+  private int _firstIndex;
 
   /// <summary>
   /// Игроки в порядке хода.
@@ -21,6 +22,16 @@ public sealed class TurnOrder
   /// Игрок, который сейчас ходит.
   /// </summary>
   public Player CurrentPlayer => _players[_currentIndex];
+
+  /// <summary>
+  /// Игрок с жетоном первого игрока: он начинает раунд.
+  /// </summary>
+  public Player FirstPlayer => _players[_firstIndex];
+
+  /// <summary>
+  /// В начале раунда жетон первого игрока выдан; аргумент — первый игрок раунда.
+  /// </summary>
+  public event Action<Player>? FirstPlayerChanged;
 
   /// <summary>
   /// Ход перешёл к другому игроку; аргумент — игрок, который теперь ходит.
@@ -86,12 +97,29 @@ public sealed class TurnOrder
   }
 
   /// <summary>
-  /// Начать новый раунд: пасы сбрасываются, первым ходит первый игрок.
+  /// Следующий игрок по кругу (направо) после данного.
   /// </summary>
-  public void StartRound()
+  public Player NextAfter(Player player) => _players[(IndexOf(player) + 1) % _players.Count];
+
+  /// <summary>
+  /// Начать новый раунд: пасы сбрасываются, жетон первого игрока получает <paramref name="first"/>, и он ходит первым.
+  /// </summary>
+  /// <param name="first">Первый игрок раунда.</param>
+  public void StartRound(Player first)
   {
+    var firstIndex = IndexOf(first);
     _passed.Clear();
-    _currentIndex = 0;
+    _firstIndex = firstIndex;
+    _currentIndex = firstIndex;
+    FirstPlayerChanged?.Invoke(FirstPlayer);
     TurnChanged?.Invoke(CurrentPlayer);
+  }
+
+  private int IndexOf(Player player)
+  {
+    var index = _players.IndexOf(player);
+    if (index < 0)
+      throw new ArgumentException($"Игрок {player} не участвует в партии.", nameof(player));
+    return index;
   }
 }

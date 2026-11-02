@@ -10,6 +10,8 @@ namespace ConspiracyLeague.Core.Field;
 /// Колода лежит во втором столбце второй строки зоны рынка. Открытые карточки выкладываются в первую
 /// и третью строки, начиная с пятого столбца. Открытую карточку можно купить за её стоимость — она уходит в руку.
 /// В конце раунда рынок обновляется: нижняя строка уходит, верхняя сдвигается вниз, пустые места заполняются из колоды.
+/// Дополнительные карточки (<see cref="OpenExtraCards"/>) открываются во второй строке, правее колоды,
+/// и уходят при обновлении вместе с нижней строкой.
 /// </remarks>
 public sealed class Market
 {
@@ -94,7 +96,7 @@ public sealed class Market
   /// </summary>
   public void Refresh()
   {
-    foreach (var cell in BottomRow)
+    foreach (var cell in BottomRow.Concat(ExtraRow))
     {
       if (_openCards.Remove(cell, out var card))
         CardDiscarded?.Invoke(cell, card);
@@ -116,6 +118,20 @@ public sealed class Market
         break;
       Open(cell);
     }
+  }
+
+  /// <summary>
+  /// Открыть дополнительные карточки из колоды во второй строке рынка, правее колоды, — на свободные места.
+  /// </summary>
+  /// <param name="count">Сколько карточек открыть.</param>
+  /// <returns>Сколько открыто: меньше, если колода кончилась или нет свободных мест.</returns>
+  public int OpenExtraCards(int count)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegative(count);
+    var free = ExtraRow.Where(cell => !_openCards.ContainsKey(cell)).Take(Math.Min(count, DeckCount)).ToList();
+    foreach (var cell in free)
+      Open(cell);
+    return free.Count;
   }
 
   /// <summary>
@@ -151,9 +167,39 @@ public sealed class Market
     return card;
   }
 
+  /// <summary>
+  /// Есть ли в колоде карточка, подходящая под условие.
+  /// </summary>
+  public bool DeckContains(Func<PersonCard, bool> match) => _deck.Any(match);
+
+  /// <summary>
+  /// Вытащить из колоды первую сверху карточку, подходящую под условие. Порядок остальных не меняется.
+  /// </summary>
+  /// <returns>Карточка или <c>null</c>, если подходящей нет.</returns>
+  internal PersonCard? DrawFirst(Func<PersonCard, bool> match)
+  {
+    var cards = _deck.ToList();
+    var index = cards.FindIndex(card => match(card));
+    if (index < 0)
+      return null;
+
+    var card = cards[index];
+    cards.RemoveAt(index);
+    _deck.Clear();
+    for (var i = cards.Count - 1; i >= 0; i--)
+      _deck.Push(cards[i]);
+    return card;
+  }
+
   private IEnumerable<Cell> TopRow => Slots(Zone.Top);
 
   private IEnumerable<Cell> BottomRow => Slots(Zone.Top + 2);
+
+  /// <summary>
+  /// Места для дополнительных карточек: вторая строка зоны, правее колоды, до правого края.
+  /// </summary>
+  private IEnumerable<Cell> ExtraRow =>
+    Enumerable.Range(Zone.Left + FirstOpenColumn, Zone.Width - FirstOpenColumn).Select(column => new Cell(column, Zone.Top + 1));
 
   private IEnumerable<Cell> Slots(int row) =>
     Enumerable.Range(Zone.Left + FirstOpenColumn, _slotsPerRow).Select(column => new Cell(column, row));

@@ -8,7 +8,8 @@ namespace ConspiracyLeague.Game.Table;
 /// </summary>
 /// <remarks>
 /// Проверка штабов теорий (несостоятельные закрываются), доход от адептов — по одной теории, с анимацией,
-/// обновление карточек личных штабов, обновление рынка, затем начинается следующий раунд.
+/// обновление карточек личных штабов, обновление рынка, затем начинается следующий раунд. Если обновлять рынок
+/// нечем — колода кончилась, — вместо следующего раунда идёт итоговый подсчёт денег, и партия завершается.
 /// Камера переезжает туда, где что-то происходит.
 /// Сами правила — в <see cref="GameSession"/>.
 /// </remarks>
@@ -78,11 +79,39 @@ public partial class RoundController : Node
     _camera.FocusOn(Board.ZoneCenter(_session.Market.Zone));
     Hint?.Invoke("Обновление рынка.");
     await Pause(CameraPause);
-    _session.RefreshMarket();
+    if (!_session.RefreshMarket())
+    {
+      Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Итоговый подсчёт денег.");
+      await Pause(StepPause);
+      await PlayFinalScoring();
+      return;
+    }
+
     await Pause(MarketPause);
 
     _session.StartNextRound();
     Hint?.Invoke($"Раунд {_session.Round}. Ходит {_session.CurrentPlayer}.");
+  }
+
+  /// <summary>
+  /// Итоговый подсчёт: владельцы действующих теорий получают деньги за лидеров, затем адепты ещё раз
+  /// приносят деньги. После этого партия завершена, и интерфейс показывает итоги.
+  /// </summary>
+  private async Task PlayFinalScoring()
+  {
+    while (_session.PayNextLeadersBonus() is { } bonus)
+    {
+      _camera.FocusOn(Board.CellCenter(bonus.Column.TheoryCell.ToVector2I()));
+      Hint?.Invoke($"«{bonus.Column.Theory}»: владелец {bonus.Owner} получает {bonus.Amount}$ за лидеров.");
+      await _board.ShowLeadersBonus(bonus);
+    }
+
+    while (_session.PayNextTheoryIncome() is { } income)
+    {
+      _camera.FocusOn(Board.CellCenter(income.Column.TheoryCell.ToVector2I()));
+      Hint?.Invoke($"Повторный доход: адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
+      await _board.ShowIncome(income);
+    }
   }
 
   private SignalAwaiter Pause(double seconds) => ToSignal(GetTree().CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);

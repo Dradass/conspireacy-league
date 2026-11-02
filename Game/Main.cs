@@ -10,9 +10,13 @@ namespace ConspiracyLeague.Game;
 /// </summary>
 public partial class Main : Node2D
 {
-  private const int PlayerCount = 4;
   private const float StartZoom = 0.6f;
   private const float StartCameraShift = 80f;
+
+  /// <summary>
+  /// Количество игроков в партии; задаётся в стартовом меню (<see cref="Ui.StartMenu"/>).
+  /// </summary>
+  public int PlayerCount { get; init; } = 4;
 
   public override void _Ready()
   {

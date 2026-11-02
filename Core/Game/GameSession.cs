@@ -16,6 +16,9 @@ namespace ConspiracyLeague.Core.Game;
 /// к следующему игроку. Игрок, которому нечем ходить (<see cref="HasMoves"/>), пасует автоматически. Затем закрываются несостоятельные штабы
 /// (<see cref="CloseInsolventTheories"/>), адепты приносят деньги (<see cref="PayNextTheoryIncome"/>),
 /// сыгранные карточки переворачиваются лицом вверх (<see cref="RefreshPlayedCards"/>), обновляется рынок (<see cref="RefreshMarket"/>), и начинается следующий раунд (<see cref="StartNextRound"/>).
+/// Если при обновлении рынка в колоде не осталось карточек, идёт итоговый подсчёт: владельцы действующих теорий
+/// получают деньги за лидеров (<see cref="PayNextLeadersBonus"/>), адепты ещё раз приносят деньги
+/// (<see cref="PayNextTheoryIncome"/>), и партия завершена (<see cref="Ranking"/>).
 /// Шаги конца раунда вызываются по одному, чтобы между ними можно было показать, что произошло.
 /// </remarks>
 public sealed class GameSession
@@ -90,6 +93,17 @@ public sealed class GameSession
   public event Action<SuccessCheck?>? PendingCheckChanged;
 
   /// <summary>
+  /// Выбор цели для действия карточки, только что выложенной в штаб теории (<see cref="PlaceFromHand"/>),
+  /// или <c>null</c>. Пока он не завершён (<see cref="ResolvePlacement"/>), других действий сделать нельзя.
+  /// </summary>
+  public PlacementChoice? PendingPlacement { get; private set; }
+
+  /// <summary>
+  /// Начался или завершился выбор цели для действия при выкладывании; аргумент — <see cref="PendingPlacement"/>.
+  /// </summary>
+  public event Action<PlacementChoice?>? PendingPlacementChanged;
+
+  /// <summary>
   /// Изменилось количество оставшихся действий; аргумент — сколько осталось.
   /// </summary>
   public event Action<int>? ActionsLeftChanged;
@@ -123,8 +137,13 @@ public sealed class GameSession
   }
 
   /// <summary>
+  /// Сколько карточек открыто в каждой строке рынка: по одной на игрока и ещё одна, всего на рынке 2 + 2N.
+  /// </summary>
+  public int MarketCardsPerRow => Players.Count + 1;
+
+  /// <summary>
   /// Подготовка и начало первого раунда: каждый игрок получает стартовую руку (<see cref="StartingHand"/>) —
-  /// новых бездомных и граждан со случайными теориями, на рынке открывается по карточке на игрока в первую и третью строки.
+  /// новых бездомных и граждан со случайными теориями, на рынке открывается 2 + 2N карточек: в первую и третью строки по <see cref="MarketCardsPerRow"/>.
   /// </summary>
   public void Start()
   {
@@ -135,7 +154,7 @@ public sealed class GameSession
         player.Hand.Add(card);
     }
 
-    Market.OpenStartingCards(Players.Count);
+    Market.OpenStartingCards(MarketCardsPerRow);
     StartNextRound();
   }
 
@@ -154,6 +173,8 @@ public sealed class GameSession
 
   /// <summary>
   /// Игрок, который сейчас ходит, выкладывает карточку с руки на поле — в личный штаб или в общую зону. Это действие.
+  /// Если у карточки в штабе теории есть действие с выбором цели и выбрать есть что, действие завершается
+  /// только после выбора (<see cref="PendingPlacement"/>, <see cref="ResolvePlacement"/>).
   /// </summary>
   /// <returns>Условия, на которых карточка положена.</returns>
   /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
@@ -166,8 +187,65 @@ public sealed class GameSession
 
     var check = Field.Place(card, cell, CurrentPlayer);
     hand.Remove(card);
+    if (Field.ColumnAt(cell) is { } theory && card is PersonCard { OnPlacedInHeadquarters: { RequiresTargetCell: true } effect })
+    {
+      var choice = new PlacementChoice(cell, effect, theory);
+      if (effect.TargetCells(PlacementContext(choice)).Any(target => target.Check.IsAllowed))
+      {
+        PendingPlacement = choice;
+        PendingPlacementChanged?.Invoke(choice);
+        return check;
+      }
+
+      // Выбрать нечего — действие выполняется без цели (например, получить деньги).
+      effect.Execute(PlacementContext(choice));
+    }
+
     CompleteAction();
     return check;
+  }
+
+  /// <summary>
+  /// Контекст для действия карточки, выложенной в штаб теории: штаб и сама карточка.
+  /// </summary>
+  public GameContext PlacementContext(PlacementChoice choice) =>
+    CreateContext().WithTargetTheory(choice.Theory).WithSourceCell(choice.Cell);
+
+  /// <summary>
+  /// Завершить выбор цели для действия карточки, выложенной в штаб теории (<see cref="PendingPlacement"/>):
+  /// выполнить действие с выбранными карточками или без них (игрок отказался) и завершить действие хода.
+  /// </summary>
+  /// <param name="target">Выбранная карточка или <c>null</c>, если игрок отказался.</param>
+  /// <param name="second">Вторая карточка (<see cref="Effect.RequiresSecondTargetCell"/>).</param>
+  /// <exception cref="InvalidOperationException">Выбора нет или карточки выбрать нельзя.</exception>
+  public void ResolvePlacement(Cell? target = null, Cell? second = null)
+  {
+    var choice = PendingPlacement ?? throw new InvalidOperationException("Сейчас не выбирают цель для действия выложенной карточки.");
+    var effect = choice.Effect;
+    var context = PlacementContext(choice);
+    if (target is { } first)
+    {
+      context = context.WithTargetCell(RequireTarget(effect, first, context));
+      if (effect.RequiresSecondTargetCell)
+      {
+        if (second is not { } other)
+          throw new ArgumentException($"Для действия «{effect}» нужно выбрать две карточки.", nameof(second));
+        context = context.WithSecondTargetCell(RequireTarget(effect, other, context));
+      }
+    }
+    else if (!effect.TargetIsOptional)
+      throw new ArgumentException($"Для действия «{effect}» нужно выбрать карточку.", nameof(target));
+
+    PendingPlacement = null;
+    PendingPlacementChanged?.Invoke(null);
+    effect.Execute(context);
+    CompleteAction();
+  }
+
+  private static Cell RequireTarget(Effect effect, Cell cell, GameContext context)
+  {
+    var check = effect.CheckTargetCell(cell, context);
+    return check.IsAllowed ? cell : throw new InvalidOperationException(check.Reason);
   }
 
   /// <summary>
@@ -191,7 +269,8 @@ public sealed class GameSession
   /// <summary>
   /// Завершить розыгрыш карточки после проверки успеха (<see cref="CheckSuccess"/>). Это действие.
   /// Если проверка успешна, выполняется выбранный вариант действия карточки (<see cref="PlayingField.Use"/>),
-  /// иначе действие не выполняется (<see cref="PlayingField.Waste"/>). В обоих случаях карточка переворачивается.
+  /// иначе действие не выполняется (<see cref="PlayingField.Waste"/>). В обоих случаях карточка переворачивается
+  /// (после быстрого действия — поворачивается). Быстрое действие (<see cref="Effect.IsQuick"/>) не тратит действие хода.
   /// </summary>
   /// <param name="option">Выбранный вариант действия карточки.</param>
   /// <param name="context">Контекст партии.</param>
@@ -205,8 +284,9 @@ public sealed class GameSession
     if (check.Succeeded)
       Field.Use(check.Cell, option, context);
     else
-      Field.Waste(check.Cell, CurrentPlayer);
-    CompleteAction();
+      Field.Waste(check.Cell, CurrentPlayer, option.IsQuick);
+    if (!option.IsQuick)
+      CompleteAction();
     return check;
   }
 
@@ -251,24 +331,25 @@ public sealed class GameSession
     RequirePhase(GamePhase.HeadquartersCheck);
     var closed = Field.CloseInsolventTheories();
 
-    _unpaidTheories.Clear();
-    foreach (var column in Field.TheoryColumns.Where(column => !column.IsClosed && column.Adepts > 0))
-      _unpaidTheories.Enqueue(column);
+    EnqueueActiveTheories(column => column.Adepts > 0);
     SetPhase(GamePhase.AdeptIncome);
     return closed;
   }
 
   /// <summary>
   /// Адепты следующей действующей теории приносят деньги её лидерам (<see cref="TheoryIncome"/>).
-  /// Когда все теории получили доход, начинается обновление карточек.
+  /// Когда все теории получили доход, миплов-лидеров (<see cref="TheoryColumn.LeaderMeeples"/>) снимают
+  /// и начинается обновление карточек, а в итоговом подсчёте партия завершается.
   /// </summary>
   /// <returns>Доход теории или <c>null</c>, если все теории уже получили доход.</returns>
   public TheoryIncome? PayNextTheoryIncome()
   {
-    RequirePhase(GamePhase.AdeptIncome);
+    if (Phase is not (GamePhase.AdeptIncome or GamePhase.FinalAdeptIncome))
+      throw new InvalidOperationException($"Доход от адептов нельзя получить в фазе {Phase}.");
     if (!_unpaidTheories.TryDequeue(out var column))
     {
-      SetPhase(GamePhase.CardsRefresh);
+      Field.RemoveLeaderMeeples();
+      SetPhase(Phase == GamePhase.AdeptIncome ? GamePhase.CardsRefresh : GamePhase.GameOver);
       return null;
     }
 
@@ -291,31 +372,68 @@ public sealed class GameSession
 
   /// <summary>
   /// Обновить рынок: нижняя строка уходит, верхняя сдвигается вниз, пустые места заполняются из общей колоды.
+  /// Если в колоде не осталось карточек для выкладывания, рынок не обновляется — начинается итоговый подсчёт.
   /// </summary>
-  public void RefreshMarket()
+  /// <returns><c>true</c>, если рынок обновлён и будет следующий раунд; <c>false</c>, если начался итоговый подсчёт.</returns>
+  public bool RefreshMarket()
   {
     RequirePhase(GamePhase.MarketRefresh);
+    if (Market.DeckCount == 0)
+    {
+      EnqueueActiveTheories(column => true);
+      SetPhase(GamePhase.FinalLeadersBonus);
+      return false;
+    }
+
     Market.Refresh();
+    return true;
   }
 
   /// <summary>
-  /// Начать следующий раунд: пасы сброшены, первым ходит первый игрок.
+  /// Итоговый подсчёт: владелец следующей действующей теории получает по <see cref="LeadersBonus.PerLeader"/>$
+  /// за каждого её лидера. Когда награды выданы, адепты ещё раз приносят деньги (<see cref="PayNextTheoryIncome"/>).
+  /// </summary>
+  /// <returns>Награда или <c>null</c>, если все владельцы её уже получили.</returns>
+  public LeadersBonus? PayNextLeadersBonus()
+  {
+    RequirePhase(GamePhase.FinalLeadersBonus);
+    if (!_unpaidTheories.TryDequeue(out var column))
+    {
+      EnqueueActiveTheories(column => column.Adepts > 0);
+      SetPhase(GamePhase.FinalAdeptIncome);
+      return null;
+    }
+
+    var bonus = LeadersBonus.Of(column);
+    bonus.Owner.Earn(bonus.Amount);
+    return bonus;
+  }
+
+  /// <summary>
+  /// Итоги партии: игроки от самого богатого к самому бедному. При равенстве денег — в порядке хода.
+  /// </summary>
+  public IReadOnlyList<Player> Ranking => Players.OrderByDescending(player => player.Money).ToList();
+
+  /// <summary>
+  /// Начать следующий раунд: пасы сброшены, первым ходит игрок с жетоном первого игрока. В первом раунде
+  /// он выбирается случайно, затем в начале каждого следующего раунда жетон переходит по кругу направо.
   /// </summary>
   public void StartNextRound()
   {
     if (Phase is not (GamePhase.Setup or GamePhase.MarketRefresh))
       throw new InvalidOperationException($"Новый раунд нельзя начать в фазе {Phase}.");
 
+    var first = Round == 0 ? Players[_random.Next(Players.Count)] : Turns.NextAfter(Turns.FirstPlayer);
     Round++;
     SetPhase(GamePhase.PlayerTurns);
-    Turns.StartRound();
+    Turns.StartRound(first);
     AutoPass();
   }
 
   /// <summary>
   /// Контекст для действий игрока, который сейчас ходит.
   /// </summary>
-  public GameContext CreateContext() => new(CurrentPlayer, Field);
+  public GameContext CreateContext() => new(CurrentPlayer, Field, _random, Market);
 
   private void RequireAction()
   {
@@ -363,6 +481,8 @@ public sealed class GameSession
   {
     if (PendingCheck is not null)
       throw new InvalidOperationException("Идёт проверка успеха карточки — дождитесь её окончания.");
+    if (PendingPlacement is not null)
+      throw new InvalidOperationException("Сначала выберите цель для действия выложенной карточки.");
   }
 
   private void SetPendingCheck(SuccessCheck? check)
@@ -381,6 +501,16 @@ public sealed class GameSession
   {
     if (Phase != phase)
       throw new InvalidOperationException($"Это можно сделать только в фазе {phase}, а сейчас {Phase}.");
+  }
+
+  /// <summary>
+  /// Поставить в очередь на выплату действующие (не закрытые) теории, подходящие под условие.
+  /// </summary>
+  private void EnqueueActiveTheories(Func<TheoryColumn, bool> predicate)
+  {
+    _unpaidTheories.Clear();
+    foreach (var column in Field.TheoryColumns.Where(column => !column.IsClosed && predicate(column)))
+      _unpaidTheories.Enqueue(column);
   }
 
   private void SetPhase(GamePhase phase)

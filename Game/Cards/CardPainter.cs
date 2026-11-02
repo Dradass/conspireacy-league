@@ -34,9 +34,13 @@ public static class CardPainter
   private static readonly Color PlainBackColor = new("000000");
   private static readonly Color HiddenBackColor = new("2e3a4f");
   private static readonly Color ClosedOverlayColor = new(0.3f, 0.3f, 0.3f, 0.6f);
+  private static readonly Color PeekOverlayColor = new(0f, 0f, 0f, 0.3f);
   private static readonly Color HazardYellow = new("f2c230");
   private static readonly Color HazardBlack = new("1a1a1a");
   private static readonly Color PenaltyColor = new("d1423a");
+  private static readonly Color BonusColor = new("3fa34d");
+  private static readonly Color ShieldColor = new("2f6fd1");
+  private static readonly Color ShieldEdgeColor = new("fdfaf2");
 
   /// <summary>
   /// Цвет карточки по её типу.
@@ -162,18 +166,48 @@ public static class CardPainter
     ThemeDB.FallbackFont.GetMultilineStringSize(text, HorizontalAlignment.Center, width, fontSize).Y;
 
   /// <summary>
-  /// Нарисовать снижение вероятности успеха персонажа: красная стрелка вниз и рядом, например, «-10%».
+  /// Нарисовать щит в левом верхнем углу карточки: её защищает полицейский.
   /// </summary>
   /// <param name="canvas">Где рисовать.</param>
   /// <param name="rect">Прямоугольник карточки.</param>
-  /// <param name="penalty">На сколько процентов снижена вероятность успеха.</param>
-  public static void DrawSuccessPenalty(CanvasItem canvas, Rect2 rect, int penalty)
+  public static void DrawShield(CanvasItem canvas, Rect2 rect)
   {
+    var width = rect.Size.X * 0.2f;
+    var height = width * 1.2f;
+    // Щит выступает за угол карточки, чтобы не закрывать название.
+    var topLeft = rect.Position - new Vector2(width, height) * 0.3f;
+    Vector2[] outline =
+    [
+      topLeft,
+      topLeft + new Vector2(width / 2, -height * 0.1f),
+      topLeft + new Vector2(width, 0),
+      topLeft + new Vector2(width, height * 0.45f),
+      topLeft + new Vector2(width / 2, height),
+      topLeft + new Vector2(0, height * 0.45f),
+    ];
+    canvas.DrawColoredPolygon(outline, ShieldColor);
+    canvas.DrawPolyline([.. outline, outline[0]], ShieldEdgeColor, 2, antialiased: true);
+    var center = topLeft + new Vector2(width / 2, height * 0.42f);
+    canvas.DrawLine(center + new Vector2(0, -height * 0.25f), center + new Vector2(0, height * 0.3f), ShieldEdgeColor, 2);
+    canvas.DrawLine(center + new Vector2(-width * 0.25f, 0), center + new Vector2(width * 0.25f, 0), ShieldEdgeColor, 2);
+  }
+
+  /// <summary>
+  /// Нарисовать изменение вероятности успеха персонажа: зелёная стрелка вверх и, например, «+10%»
+  /// или красная стрелка вниз и «-10%».
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  /// <param name="modifier">На сколько процентов изменена вероятность успеха; не 0.</param>
+  public static void DrawSuccessModifier(CanvasItem canvas, Rect2 rect, int modifier)
+  {
+    var up = modifier > 0;
+    var color = up ? BonusColor : PenaltyColor;
     // Свободное место между названием теории и влиянием.
     var center = rect.Position + new Vector2(rect.Size.X / 2, rect.Size.Y * (HeaderShare + TheoryShare + 0.12f));
     var arrowHeight = rect.Size.Y * 0.14f;
     var arrowWidth = arrowHeight * 0.7f;
-    var text = $"-{penalty}%";
+    var text = up ? $"+{modifier}%" : $"{modifier}%";
     var fontSize = (int)(rect.Size.Y * 0.11f);
     var textWidth = ThemeDB.FallbackFont.GetStringSize(text, HorizontalAlignment.Left, -1, fontSize).X;
     var gap = rect.Size.X * 0.04f;
@@ -181,15 +215,19 @@ public static class CardPainter
 
     var arrowX = left + arrowWidth / 2;
     var top = center.Y - arrowHeight / 2;
-    var headTop = top + arrowHeight * 0.45f;
-    canvas.DrawLine(new Vector2(arrowX, top), new Vector2(arrowX, headTop), PenaltyColor, arrowWidth * 0.35f);
+    var bottom = top + arrowHeight;
+    // Стрелка вниз: древко сверху, остриё внизу; стрелка вверх — наоборот.
+    var tail = up ? bottom : top;
+    var tip = up ? top : bottom;
+    var headBase = up ? bottom - arrowHeight * 0.45f : top + arrowHeight * 0.45f;
+    canvas.DrawLine(new Vector2(arrowX, tail), new Vector2(arrowX, headBase), color, arrowWidth * 0.35f);
     canvas.DrawColoredPolygon(
-      [new Vector2(left, headTop), new Vector2(left + arrowWidth, headTop), new Vector2(arrowX, top + arrowHeight)],
-      PenaltyColor);
+      [new Vector2(left, headBase), new Vector2(left + arrowWidth, headBase), new Vector2(arrowX, tip)],
+      color);
 
     // Запас по ширине, чтобы надпись не переносилась из-за округления.
     var textRect = new Rect2(left + arrowWidth + gap, center.Y - fontSize / 2f, textWidth + 2, fontSize);
-    DrawCenteredText(canvas, text, textRect, fontSize, PenaltyColor);
+    DrawCenteredText(canvas, text, textRect, fontSize, color);
   }
 
   /// <summary>
@@ -238,6 +276,19 @@ public static class CardPainter
     var back = new StyleBoxFlat { BgColor = PlainBackColor };
     back.SetCornerRadiusAll(CornerRadius(rect));
     canvas.DrawStyleBox(back, rect);
+  }
+
+  /// <summary>
+  /// Нарисовать лёгкую тень поверх закрытой карточки (<see cref="HiddenCard"/>), лицо которой видит только
+  /// владелец или подсмотревший: так видно, что для остальных она лежит рубашкой вверх.
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  public static void DrawPeekOverlay(CanvasItem canvas, Rect2 rect)
+  {
+    var overlay = new StyleBoxFlat { BgColor = PeekOverlayColor };
+    overlay.SetCornerRadiusAll(CornerRadius(rect));
+    canvas.DrawStyleBox(overlay, rect);
   }
 
   /// <summary>

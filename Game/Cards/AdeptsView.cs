@@ -7,7 +7,7 @@ namespace ConspiracyLeague.Game.Cards;
 /// </summary>
 /// <remarks>
 /// Фигурки стоят рядами снизу вверх; когда их много, ряды сдвигаются плотнее. Сколько всего адептов,
-/// подписано под теорией, поэтому фигурок рисуется не больше <see cref="MaxShown"/>.
+/// подписано под теорией или значком <see cref="Total"/>, поэтому фигурок рисуется не больше <see cref="MaxShown"/>.
 /// </remarks>
 public partial class AdeptsView : Node2D
 {
@@ -17,6 +17,9 @@ public partial class AdeptsView : Node2D
   private const double DropDuration = 0.45;
   private const double DropStagger = 0.12;
   private const double ShiftDuration = 0.2;
+
+  private static readonly Color BadgeColor = new("7a4fa3");
+  private static readonly Color BadgeTextColor = Colors.White;
 
   /// <summary>
   /// Область карточки, где стоят ступни фигурок, относительно центра карточки: первый ряд — у нижнего края,
@@ -29,11 +32,40 @@ public partial class AdeptsView : Node2D
     CardPainter.CardSize.Y * 0.795f - MeepleView.Size.Y);
 
   private readonly List<MeepleView> _meeples = [];
+  private int? _total;
+
+  /// <summary>
+  /// Сколько всего адептов — рисуется значком в углу карточки. <c>null</c> — значка нет
+  /// (у теории количество подписано под стопкой).
+  /// </summary>
+  public int? Total
+  {
+    get => _total;
+    set
+    {
+      _total = value;
+      QueueRedraw();
+    }
+  }
 
   public override void _Ready()
   {
     // Фигурки задних рядов (выше на экране) рисуются раньше передних.
     YSortEnabled = true;
+  }
+
+  public override void _Draw()
+  {
+    if (_total is not { } total)
+      return;
+
+    // Значок в правом верхнем углу карточки, над заголовком.
+    var radius = CardPainter.CardSize.X * 0.13f;
+    var center = new Vector2(CardPainter.CardSize.X / 2 - radius * 0.6f, -CardPainter.CardSize.Y / 2 + radius * 0.6f);
+    DrawCircle(center, radius, BadgeColor);
+    DrawCircle(center, radius, BadgeTextColor, filled: false, width: 2);
+    var area = new Rect2(center - Vector2.One * radius, Vector2.One * radius * 2);
+    CardPainter.DrawCenteredText(this, total.ToString(), area, (int)(radius * 1.1f), BadgeTextColor);
   }
 
   /// <summary>
@@ -70,6 +102,30 @@ public partial class AdeptsView : Node2D
       tween.Parallel()
         .TweenProperty(meeple, MeepleView.PropertyName.Height.ToString(), 0f, DropDuration)
         .SetTrans(Tween.TransitionType.Bounce)
+        .SetEase(Tween.EaseType.Out);
+    }
+  }
+
+  /// <summary>
+  /// Адептов стало меньше: лишние фигурки тают, остальные встают плотнее.
+  /// </summary>
+  /// <param name="total">Сколько адептов осталось.</param>
+  public void ShrinkTo(int total)
+  {
+    while (_meeples.Count > Mathf.Max(0, Mathf.Min(total, MaxShown)))
+    {
+      var meeple = _meeples[^1];
+      _meeples.RemoveAt(_meeples.Count - 1);
+      var fade = meeple.CreateTween();
+      fade.TweenProperty(meeple, CanvasItem.PropertyName.Modulate.ToString(), Colors.Transparent, ShiftDuration);
+      fade.TweenCallback(Callable.From(meeple.QueueFree));
+    }
+
+    for (var i = 0; i < _meeples.Count; i++)
+    {
+      _meeples[i].CreateTween()
+        .TweenProperty(_meeples[i], Node2D.PropertyName.Position.ToString(), PositionOf(i), ShiftDuration)
+        .SetTrans(Tween.TransitionType.Cubic)
         .SetEase(Tween.EaseType.Out);
     }
   }

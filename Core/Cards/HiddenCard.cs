@@ -1,3 +1,5 @@
+using ConspiracyLeague.Core.Game;
+
 namespace ConspiracyLeague.Core.Cards;
 
 /// <summary>
@@ -8,7 +10,8 @@ namespace ConspiracyLeague.Core.Cards;
 public sealed class HiddenCard : PersonCard
 {
   /// <summary>
-  /// Настоящая карточка. Пока карточка не раскрыта, её видит только владелец.
+  /// Настоящая карточка. Пока карточка не раскрыта, её видят только владелец и те, кто в неё посмотрел
+  /// (<see cref="IsKnownBy"/>).
   /// </summary>
   public Card Face { get; }
 
@@ -17,6 +20,8 @@ public sealed class HiddenCard : PersonCard
   /// По правилам она по-прежнему гражданин без теории.
   /// </summary>
   public bool IsRevealed { get; private set; }
+
+  private readonly HashSet<Player> _knownBy = [];
 
   /// <param name="face">Настоящая карточка.</param>
   public HiddenCard(Card face)
@@ -39,4 +44,12 @@ public sealed class HiddenCard : PersonCard
   }
 
   internal void Reveal() => IsRevealed = true;
+
+  /// <summary>
+  /// Посмотрел ли игрок в карточку (<see cref="Effects.PeekHiddenCardEffect"/>): тогда он, как и владелец,
+  /// может смотреть её в любой момент.
+  /// </summary>
+  public bool IsKnownBy(Player player) => _knownBy.Contains(player);
+
+  internal void ShowTo(Player player) => _knownBy.Add(player);
 }

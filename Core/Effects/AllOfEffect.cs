@@ -24,7 +24,15 @@ public sealed class AllOfEffect : Effect
 
   public override bool RequiresTheory => Effects.Any(e => e.RequiresTheory);
 
+  public override bool CanTargetTheory(TheoryColumn column, Player player) =>
+    Effects.Where(e => e.RequiresTheory).All(e => e.CanTargetTheory(column, player));
+
+  public override bool CanTargetAdeptCard(Cell cell, PlayingField field) =>
+    Effects.Where(e => e.RequiresTheory).All(e => e.CanTargetAdeptCard(cell, field));
+
   public override bool RequiresHandCard => Effects.Any(e => e.RequiresHandCard);
+
+  public override bool RequiresTargetPlayer => Effects.Any(e => e.RequiresTargetPlayer);
 
   public override bool RequiresTargetCell => Effects.Any(e => e.RequiresTargetCell);
 

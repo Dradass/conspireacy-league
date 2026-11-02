@@ -10,4 +10,7 @@ public enum PlayerColor
   Green,
   Yellow,
   Purple,
+  Orange,
+  Cyan,
+  Pink,
 }

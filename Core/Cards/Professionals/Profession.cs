@@ -41,9 +41,9 @@ public enum Profession
   Coach,
 
   /// <summary>
-  /// Авторитет.
+  /// Бандит.
   /// </summary>
-  CrimeBoss,
+  Bandit,
 
   /// <summary>
   /// Политик.

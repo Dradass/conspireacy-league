@@ -5,7 +5,7 @@ namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
 /// Интерфейс поверх стола: раунд и фаза, игроки с балансами, кнопки «Пас» и «Переход хода» слева внизу, рука игрока справа внизу
-/// и сообщения сверху.
+/// и сообщения сверху. Когда партия завершена — итоги (<see cref="ResultsPanel"/>).
 /// </summary>
 public partial class Hud : CanvasLayer
 {
@@ -25,6 +25,7 @@ public partial class Hud : CanvasLayer
   private PanelContainer _messagePanel = null!;
   private Label _message = null!;
   private Tween? _messageTween;
+  private Control _root = null!;
 
   /// <summary>
   /// Сессия игры: игроки, чьи балансы показываются, и очерёдность ходов.
@@ -43,6 +44,7 @@ public partial class Hud : CanvasLayer
     var root = new Control { Name = "Root", MouseFilter = Control.MouseFilterEnum.Ignore };
     root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
     AddChild(root);
+    _root = root;
 
     root.AddChild(CreatePlayers());
     root.AddChild(CreateHand());
@@ -56,10 +58,12 @@ public partial class Hud : CanvasLayer
 
     Turns.TurnChanged += OnTurnChanged;
     Turns.Passed += OnPassed;
+    Turns.FirstPlayerChanged += OnFirstPlayerChanged;
     Session.PhaseChanged += OnPhaseChanged;
     Session.ActionsLeftChanged += OnActionsLeftChanged;
     Session.AutoPassed += OnAutoPassed;
     Session.PendingCheckChanged += OnPendingCheckChanged;
+    Session.PendingPlacementChanged += OnPendingPlacementChanged;
     OnPhaseChanged(Session.Phase);
   }
 
@@ -69,10 +73,12 @@ public partial class Hud : CanvasLayer
       player.MoneyChanged -= OnMoneyChanged;
     Turns.TurnChanged -= OnTurnChanged;
     Turns.Passed -= OnPassed;
+    Turns.FirstPlayerChanged -= OnFirstPlayerChanged;
     Session.PhaseChanged -= OnPhaseChanged;
     Session.ActionsLeftChanged -= OnActionsLeftChanged;
     Session.AutoPassed -= OnAutoPassed;
     Session.PendingCheckChanged -= OnPendingCheckChanged;
+    Session.PendingPlacementChanged -= OnPendingPlacementChanged;
   }
 
   /// <summary>
@@ -183,7 +189,15 @@ public partial class Hud : CanvasLayer
   }
 
   private void OnMoneyChanged(Player player) =>
-    _balances[player].Text = $"{player.Name}: {player.Money}$" + (Turns.HasPassed(player) ? " — пас" : string.Empty);
+    _balances[player].Text = (player == Turns.FirstPlayer ? "(1) " : string.Empty)
+      + $"{player.Name}: {player.Money}$" + (Turns.HasPassed(player) ? " — пас" : string.Empty);
+
+  private void OnFirstPlayerChanged(Player first)
+  {
+    foreach (var player in Turns.Players)
+      OnMoneyChanged(player);
+    ShowMessage($"Жетон первого игрока у игрока {first.Name}: он начинает раунд.");
+  }
 
   private void OnPassed(Player player) => OnMoneyChanged(player);
 
@@ -198,12 +212,14 @@ public partial class Hud : CanvasLayer
 
   private void OnPendingCheckChanged(SuccessCheck? check) => UpdateButtons();
 
+  private void OnPendingPlacementChanged(PlacementChoice? choice) => UpdateButtons();
+
   /// <summary>
   /// Пасовать и передавать ход можно только во время ходов игроков и не посреди проверки успеха.
   /// </summary>
   private void UpdateButtons()
   {
-    var canAct = Session.Phase == GamePhase.PlayerTurns && Session.PendingCheck is null;
+    var canAct = Session.Phase == GamePhase.PlayerTurns && Session.PendingCheck is null && Session.PendingPlacement is null;
     _pass.Disabled = !canAct;
     _endTurn.Disabled = !canAct;
   }
@@ -216,6 +232,8 @@ public partial class Hud : CanvasLayer
     foreach (var player in Turns.Players)
       OnMoneyChanged(player);
     OnTurnChanged(Turns.CurrentPlayer);
+    if (phase == GamePhase.GameOver)
+      _root.AddChild(new ResultsPanel { Name = "Results", Session = Session });
   }
 
   private static string NameOf(GamePhase phase) => phase switch
@@ -226,12 +244,20 @@ public partial class Hud : CanvasLayer
     GamePhase.AdeptIncome => "адепты приносят деньги",
     GamePhase.CardsRefresh => "обновление карточек",
     GamePhase.MarketRefresh => "обновление рынка",
+    GamePhase.FinalLeadersBonus => "итоговый подсчёт: деньги владельцам за лидеров",
+    GamePhase.FinalAdeptIncome => "итоговый подсчёт: адепты приносят деньги",
+    GamePhase.GameOver => "партия завершена",
     _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null),
   };
 
   private void OnTurnChanged(Player current)
   {
-    _turn.Text = Session.Phase == GamePhase.PlayerTurns ? $"Ходит: {current.Name}" : "Конец раунда";
+    _turn.Text = Session.Phase switch
+    {
+      GamePhase.PlayerTurns => $"Ходит: {current.Name}",
+      GamePhase.FinalLeadersBonus or GamePhase.FinalAdeptIncome or GamePhase.GameOver => "Итоговый подсчёт",
+      _ => "Конец раунда",
+    };
     _turn.AddThemeColorOverride("font_color", PlayerPalette.MainOf(current.Color));
     foreach (var (player, balance) in _balances)
       balance.Modulate = player == current ? Colors.White : Colors.White with { A = WaitingPlayerAlpha };

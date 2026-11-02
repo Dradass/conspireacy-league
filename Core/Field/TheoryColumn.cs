@@ -1,5 +1,7 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Cards.Professionals;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Core.Passives;
 using ConspiracyLeague.Core.Theories;
 
 namespace ConspiracyLeague.Core.Field;
@@ -14,7 +16,13 @@ public sealed class TheoryColumn
   /// </summary>
   public const int SolvencyCheckLeadersThreshold = 3;
 
+  /// <summary>
+  /// Влияние мипла-лидера (<see cref="LeaderMeeples"/>) — как у профессионала, который его ставит (Бандита).
+  /// </summary>
+  public const int LeaderMeepleInfluence = GenericProfessionalCard.BanditInfluence;
+
   private readonly List<TheoryMember> _members = [];
+  private readonly List<Player> _leaderMeeples = [];
 
   /// <summary>
   /// Теория.
@@ -47,9 +55,16 @@ public sealed class TheoryColumn
   public Cell Top => _members[^1].Cell;
 
   /// <summary>
-  /// Суммарное влияние персон в стопке.
+  /// Миплы-лидеры под карточкой теории — чьего цвета, в порядке появления. Мипл считается лидером теории:
+  /// даёт своему игроку влияние (<see cref="LeaderMeepleInfluence"/>) и долю дохода от адептов,
+  /// но не учитывается при проверке состоятельности штаба. Миплов снимают после дохода от адептов.
   /// </summary>
-  public int Influence => _members.Sum(member => member.Card.Influence);
+  public IReadOnlyList<Player> LeaderMeeples => _leaderMeeples;
+
+  /// <summary>
+  /// Суммарное влияние лидеров теории: персон в стопке и миплов-лидеров.
+  /// </summary>
+  public int Influence => _members.Sum(member => member.Card.Influence) + _leaderMeeples.Count * LeaderMeepleInfluence;
 
   /// <summary>
   /// Количество адептов теории.
@@ -65,6 +80,7 @@ public sealed class TheoryColumn
   /// <summary>
   /// Несостоятелен ли штаб: в нём больше <see cref="SolvencyCheckLeadersThreshold"/> лидеров,
   /// и бездомных среди них больше, чем остальных персонажей. Штабы с меньшим числом лидеров не проверяются.
+  /// Миплы-лидеры (<see cref="LeaderMeeples"/>) здесь не учитываются.
   /// </summary>
   public bool IsInsolvent
   {
@@ -94,6 +110,7 @@ public sealed class TheoryColumn
   /// </summary>
   public Player Owner => _members
     .Select(member => member.Owner)
+    .Concat(_leaderMeeples)
     // Distinct сохраняет порядок первых карточек игроков, а MaxBy при равенстве возвращает первого.
     .Distinct()
     .MaxBy(InfluenceOf)!;
@@ -116,13 +133,79 @@ public sealed class TheoryColumn
   public IEnumerable<TheoryMember> MembersOf(Player player) => _members.Where(member => member.Owner == player);
 
   /// <summary>
-  /// Влияние игрока в стопке — сумма очков влияния выложенных им карточек.
+  /// Влияние игрока в стопке — сумма очков влияния выложенных им карточек и его миплов-лидеров.
   /// </summary>
-  public int InfluenceOf(Player player) => MembersOf(player).Sum(member => member.Card.Influence);
+  public int InfluenceOf(Player player) =>
+    MembersOf(player).Sum(member => member.Card.Influence)
+    + _leaderMeeples.Count(meeple => meeple == player) * LeaderMeepleInfluence;
+
+  /// <summary>
+  /// Защищена ли теория полицейским: в стопке лежит открытый полицейский (<see cref="PolicemanPassive"/>).
+  /// К защищённой теории нельзя применять негативные эффекты.
+  /// </summary>
+  /// <param name="except">Карточка, которая сейчас действует: сама себя она не защищает от своего действия.</param>
+  public bool IsProtected(Cell? except = null) =>
+    _members.Any(member => member.Cell != except && member.Card.Passive is PolicemanPassive);
 
   internal void Add(TheoryMember member) => _members.Add(member);
 
+  /// <summary>
+  /// Заменить карточку в ячейке стопки; владелец остаётся прежним.
+  /// </summary>
+  internal void Replace(Cell cell, PersonCard card)
+  {
+    var index = IndexOf(cell);
+    _members[index] = _members[index] with { Card = card };
+  }
+
+  /// <summary>
+  /// Убрать карточку из стопки: карточки над ней опускаются на одну ячейку.
+  /// </summary>
+  /// <returns>Переезды карточек снизу вверх: откуда и куда.</returns>
+  internal IReadOnlyList<(Cell From, Cell To)> Remove(Cell cell)
+  {
+    var index = IndexOf(cell);
+    if (_members.Count == 1)
+      throw new InvalidOperationException($"Нельзя убрать единственную карточку теории «{Theory}».");
+
+    var cells = _members.Select(member => member.Cell).ToList();
+    var moves = new List<(Cell From, Cell To)>();
+    for (var i = index + 1; i < _members.Count; i++)
+    {
+      moves.Add((cells[i], cells[i - 1]));
+      _members[i] = _members[i] with { Cell = cells[i - 1] };
+    }
+
+    _members.RemoveAt(index);
+    return moves;
+  }
+
+  /// <summary>
+  /// Поменять местами карточки двух ячеек стопки вместе с их владельцами.
+  /// </summary>
+  internal void Swap(Cell first, Cell second)
+  {
+    var i = IndexOf(first);
+    var j = IndexOf(second);
+    var a = _members[i];
+    var b = _members[j];
+    _members[i] = a with { Card = b.Card, Owner = b.Owner };
+    _members[j] = b with { Card = a.Card, Owner = a.Owner };
+  }
+
+  private int IndexOf(Cell cell)
+  {
+    var index = _members.FindIndex(member => member.Cell == cell);
+    return index >= 0 ? index : throw new ArgumentException($"Ячейка {cell} не относится к теории «{Theory}».", nameof(cell));
+  }
+
   internal void AddAdepts(int count) => Adepts += count;
+
+  internal void RemoveAdepts(int count) => Adepts -= count;
+
+  internal void AddLeaderMeeple(Player player) => _leaderMeeples.Add(player);
+
+  internal void ClearLeaderMeeples() => _leaderMeeples.Clear();
 
   internal void Close() => IsClosed = true;
 

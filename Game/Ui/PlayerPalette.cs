@@ -21,6 +21,9 @@ public static class PlayerPalette
     PlayerColor.Green => new Color("6fcf7a"),
     PlayerColor.Yellow => new Color("e0b84f"),
     PlayerColor.Purple => new Color("a98fe0"),
+    PlayerColor.Orange => new Color("e08a3c"),
+    PlayerColor.Cyan => new Color("4fd1c8"),
+    PlayerColor.Pink => new Color("e07fb8"),
     _ => throw new ArgumentOutOfRangeException(nameof(color), color, null),
   };
 

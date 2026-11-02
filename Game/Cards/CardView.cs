@@ -11,6 +11,7 @@ namespace ConspiracyLeague.Game.Cards;
 public partial class CardView : Node2D
 {
   private const double FlipDuration = 0.3;
+  private const double RotateDuration = 0.3;
   private const float OwnerMarkDropHeight = 40f;
   private const double OwnerMarkDropDuration = 0.4;
 
@@ -20,10 +21,12 @@ public partial class CardView : Node2D
   private bool _lifted;
   private bool _isHeadquarters;
   private bool _faceDown;
+  private bool _rotated;
+  private bool _shielded;
   private bool _closed;
   private bool _closedRibbon;
   private bool _peeked;
-  private int _successPenalty;
+  private int _successModifier;
   private Player? _owner;
   private MeepleView? _ownerMark;
 
@@ -81,15 +84,15 @@ public partial class CardView : Node2D
   }
 
   /// <summary>
-  /// На сколько процентов снижена вероятность успеха персонажа: на карточке красная стрелка вниз и, например, «-10%».
-  /// 0 — не снижена.
+  /// На сколько процентов изменена вероятность успеха персонажа: на карточке зелёная стрелка вверх и, например, «+10%»
+  /// или красная стрелка вниз и «-10%». 0 — не изменена.
   /// </summary>
-  public int SuccessPenalty
+  public int SuccessModifier
   {
-    get => _successPenalty;
+    get => _successModifier;
     set
     {
-      _successPenalty = value;
+      _successModifier = value;
       QueueRedraw();
     }
   }
@@ -114,6 +117,15 @@ public partial class CardView : Node2D
   public static CardView Create(Card card) => new() { Card = card, Name = card.GetType().Name };
 
   /// <summary>
+  /// Показать на месте этой карточки другую (бездомного обучили, лидера закрыли).
+  /// </summary>
+  public void ShowCard(Card card)
+  {
+    Card = card;
+    QueueRedraw();
+  }
+
+  /// <summary>
   /// Штаб теории, к которому относится карточка, закрыт: карточка сереет.
   /// </summary>
   /// <param name="withRibbon">Повесить ленту «CLOSED» — на первую карточку штаба.</param>
@@ -124,6 +136,41 @@ public partial class CardView : Node2D
     if (_ownerMark is not null)
       _ownerMark.Modulate = ClosedTint;
     QueueRedraw();
+  }
+
+  /// <summary>
+  /// Карточку защищает полицейский: в углу нарисован щит.
+  /// </summary>
+  public bool Shielded
+  {
+    get => _shielded;
+    set
+    {
+      if (_shielded == value)
+        return;
+
+      _shielded = value;
+      QueueRedraw();
+    }
+  }
+
+  /// <summary>
+  /// Карточка повёрнута на 90 градусов: она сыграла быстрое действие и может сыграть ещё одно.
+  /// </summary>
+  public bool Rotated
+  {
+    get => _rotated;
+    set
+    {
+      if (_rotated == value)
+        return;
+
+      _rotated = value;
+      CreateTween()
+        .TweenProperty(this, Node2D.PropertyName.Rotation.ToString(), value ? Mathf.Pi / 2 : 0f, RotateDuration)
+        .SetTrans(Tween.TransitionType.Cubic)
+        .SetEase(Tween.EaseType.Out);
+    }
   }
 
   /// <summary>
@@ -164,6 +211,7 @@ public partial class CardView : Node2D
     if (_flip >= 0.5f)
     {
       CardPainter.DrawPlainBack(this, rect);
+      DrawShieldIfNeeded(rect);
       return;
     }
 
@@ -173,14 +221,23 @@ public partial class CardView : Node2D
     {
       var face = Card is HiddenCard shown ? shown.Face : Card;
       CardPainter.DrawFace(this, rect, face, _lifted, _isHeadquarters, withOwnerMark: _owner is not null);
-      if (_successPenalty > 0)
-        CardPainter.DrawSuccessPenalty(this, rect, _successPenalty);
+      if (_successModifier != 0)
+        CardPainter.DrawSuccessModifier(this, rect, _successModifier);
+      if (Card is HiddenCard { IsRevealed: false })
+        CardPainter.DrawPeekOverlay(this, rect);
     }
 
     if (_closed)
       CardPainter.DrawClosedOverlay(this, rect);
     if (_closedRibbon)
       CardPainter.DrawClosedRibbon(this, rect);
+    DrawShieldIfNeeded(rect);
+  }
+
+  private void DrawShieldIfNeeded(Rect2 rect)
+  {
+    if (_shielded)
+      CardPainter.DrawShield(this, rect);
   }
 
   /// <summary>

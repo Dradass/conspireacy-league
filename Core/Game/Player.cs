@@ -30,6 +30,11 @@ public sealed class Player
   /// </summary>
   public event Action<Player>? MoneyChanged;
 
+  /// <summary>
+  /// Игрок получил деньги; аргументы — игрок и сумма.
+  /// </summary>
+  public event Action<Player, int>? Earned;
+
   /// <param name="name">Имя.</param>
   /// <param name="color">Цвет.</param>
   /// <param name="money">Начальный баланс в $.</param>
@@ -56,6 +61,8 @@ public sealed class Player
   {
     ArgumentOutOfRangeException.ThrowIfNegative(amount);
     ChangeMoney(amount);
+    if (amount > 0)
+      Earned?.Invoke(this, amount);
   }
 
   /// <summary>

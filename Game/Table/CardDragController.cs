@@ -164,6 +164,9 @@ public partial class CardDragController : Node
 
     var player = _session.CurrentPlayer;
     var placed = _session.PlaceFromHand(drag.View.Card, cell.ToCell());
+    // Действие при выкладывании могло убрать карточки под выложенной — тогда она опустилась ниже.
+    if (_board.Field.CellOf(drag.View.Card) is { } actual)
+      cell = actual.ToVector2I();
     drag.View.IsHeadquarters = placed.CreatesHeadquarters;
     // Карточка в теории отмечается миплом цвета владельца.
     if (_board.Field.CommonZone.Contains(cell.ToCell()))
@@ -246,7 +249,8 @@ public partial class CardDragController : Node
   /// <summary>
   /// Брать карточки можно только в фазе ходов игроков.
   /// </summary>
-  private bool CanAct => _session.Phase == GamePhase.PlayerTurns && _session.PendingCheck is null;
+  private bool CanAct =>
+    _session.Phase == GamePhase.PlayerTurns && _session.PendingCheck is null && _session.PendingPlacement is null;
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
 

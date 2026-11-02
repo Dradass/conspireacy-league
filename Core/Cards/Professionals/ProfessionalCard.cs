@@ -23,7 +23,7 @@ namespace ConspiracyLeague.Core.Cards.Professionals;
 public abstract class ProfessionalCard : PersonCard
 {
   /// <summary>
-  /// Влияние профессионала.
+  /// Влияние профессионала, если у профессии нет своего.
   /// </summary>
   public const int ProfessionalInfluence = 3;
 
@@ -34,8 +34,9 @@ public abstract class ProfessionalCard : PersonCard
     Effect onPlayFromHand,
     Effect onPlacedInHeadquarters,
     PassiveAbility? passive = null,
-    Theory? theory = null)
-    : base(name, successChancePercent, cost, ProfessionalInfluence, onPlayFromHand, onPlacedInHeadquarters, passive, theory)
+    Theory? theory = null,
+    int influence = ProfessionalInfluence)
+    : base(name, successChancePercent, cost, influence, onPlayFromHand, onPlacedInHeadquarters, passive, theory)
   {
   }
 }

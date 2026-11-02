@@ -31,6 +31,17 @@ public abstract class PersonCard : Card
   /// </summary>
   public Effect OnPlacedInHeadquarters { get; }
 
+  /// <summary>
+  /// Сколько адептов дополнительно приходит, когда их приводят на эту карточку в личном штабе,
+  /// или <c>null</c>, если на карточку адептов приводить нельзя.
+  /// </summary>
+  public virtual int? AdeptsBonus => null;
+
+  /// <summary>
+  /// На сколько $ дешевле присоединиться к чужой теории (карточкой без теории).
+  /// </summary>
+  public virtual int JoiningDiscount => 0;
+
   protected PersonCard(
     string name,
     int successChancePercent,

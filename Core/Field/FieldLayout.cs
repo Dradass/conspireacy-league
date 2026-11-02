@@ -8,7 +8,7 @@ public static class FieldLayout
   /// <summary>
   /// Количество столбцов поля.
   /// </summary>
-  public const int Columns = 50;
+  public const int Columns = 80;
 
   /// <summary>
   /// Количество строк поля.
