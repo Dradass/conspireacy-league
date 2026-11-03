@@ -17,6 +17,16 @@ public sealed class TheoryColumn
   public const int SolvencyCheckLeadersThreshold = 3;
 
   /// <summary>
+  /// Владелец получает карточку теории, когда у теории хотя бы столько лидеров (карточек и миплов-лидеров).
+  /// </summary>
+  public const int TheoryCardLeadersThreshold = 3;
+
+  /// <summary>
+  /// Сколько единиц убеждения (<see cref="Influence"/>) нужно, чтобы теория была действующей.
+  /// </summary>
+  public const int ActiveInfluence = 4;
+
+  /// <summary>
   /// Влияние мипла-лидера (<see cref="LeaderMeeples"/>) — как у профессионала, который его ставит (Бандита).
   /// </summary>
   public const int LeaderMeepleInfluence = GenericProfessionalCard.BanditInfluence;
@@ -64,7 +74,33 @@ public sealed class TheoryColumn
   /// <summary>
   /// Суммарное влияние лидеров теории: персон в стопке и миплов-лидеров.
   /// </summary>
-  public int Influence => _members.Sum(member => member.Card.Influence) + _leaderMeeples.Count * LeaderMeepleInfluence;
+  public int Influence => _members.Sum(member => member.Card.Influence) + _leaderMeeples.Count * LeaderMeepleInfluence + FounderInfluenceBonus;
+
+  /// <summary>
+  /// Добавка к влиянию основателя теории (пассивная способность «Плоской Земли»).
+  /// </summary>
+  internal int FounderInfluenceBonus { get; set; }
+
+  /// <summary>
+  /// Насколько труднее закрыть штаб: бездомных должно быть больше остальных на эту величину плюс один
+  /// (пассивная способность «Антипрививочников»).
+  /// </summary>
+  internal int SolvencyMargin { get; set; }
+
+  /// <summary>
+  /// Владельцы, чьи бездомные в этом штабе влияют на закрытие за двух (пассивная способность «Коммунистов в Антарктиде»).
+  /// </summary>
+  internal IReadOnlyCollection<Player> DoubleHomelessOwners { get; set; } = [];
+
+  /// <summary>
+  /// Адептов в штабе нельзя перевести или убрать: на них не действуют никакие эффекты (шапочка из фольги).
+  /// </summary>
+  public bool AdeptsShielded { get; internal set; }
+
+  /// <summary>
+  /// Количество лидеров теории: карточки стопки и миплы-лидеры.
+  /// </summary>
+  public int Leaders => _members.Count + _leaderMeeples.Count;
 
   /// <summary>
   /// Количество адептов теории.
@@ -89,8 +125,13 @@ public sealed class TheoryColumn
       if (_members.Count <= SolvencyCheckLeadersThreshold)
         return false;
 
-      var homeless = _members.Count(member => member.Card is HomelessCard);
-      return homeless > _members.Count - homeless;
+      // Бездомный владельца «Коммунистов в Антарктиде» считается за два.
+      var homeless = _members.Where(member => member.Card is HomelessCard)
+        .Sum(member => DoubleHomelessOwners.Contains(member.Owner) ? 2 : 1);
+      var others = _members.Count(member => member.Card is not HomelessCard);
+      // Каждый учёный в штабе делает закрытие сложнее (пассивная способность учёного в штабе теории).
+      var scientists = _members.Count(member => member.Card.Passive is ScientistPassive);
+      return homeless > others + SolvencyMargin + scientists * ScientistPassive.SolvencyBonus;
     }
   }
 
@@ -137,7 +178,8 @@ public sealed class TheoryColumn
   /// </summary>
   public int InfluenceOf(Player player) =>
     MembersOf(player).Sum(member => member.Card.Influence)
-    + _leaderMeeples.Count(meeple => meeple == player) * LeaderMeepleInfluence;
+    + _leaderMeeples.Count(meeple => meeple == player) * LeaderMeepleInfluence
+    + (player == Founder ? FounderInfluenceBonus : 0);
 
   /// <summary>
   /// Защищена ли теория полицейским: в стопке лежит открытый полицейский (<see cref="PolicemanPassive"/>).
@@ -152,10 +194,10 @@ public sealed class TheoryColumn
   /// <summary>
   /// Заменить карточку в ячейке стопки; владелец остаётся прежним.
   /// </summary>
-  internal void Replace(Cell cell, PersonCard card)
+  internal void Replace(Cell cell, PersonCard card, Player? owner = null)
   {
     var index = IndexOf(cell);
-    _members[index] = _members[index] with { Card = card };
+    _members[index] = _members[index] with { Card = card, Owner = owner ?? _members[index].Owner };
   }
 
   /// <summary>
@@ -178,6 +220,15 @@ public sealed class TheoryColumn
 
     _members.RemoveAt(index);
     return moves;
+  }
+
+  /// <summary>
+  /// Сдвинуть всю стопку по горизонтали на <paramref name="dx"/> столбцов; ряды карточек не меняются.
+  /// </summary>
+  internal void Shift(int dx)
+  {
+    for (var i = 0; i < _members.Count; i++)
+      _members[i] = _members[i] with { Cell = _members[i].Cell with { Column = _members[i].Cell.Column + dx } };
   }
 
   /// <summary>

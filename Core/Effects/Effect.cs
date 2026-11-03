@@ -45,6 +45,12 @@ public abstract class Effect
   public virtual bool RequiresTheory => false;
 
   /// <summary>
+  /// Сколько теорий нужно выбрать для действия (<see cref="GameContext.TargetTheories"/>). Больше одной — например,
+  /// «добавь адептов в любые 3 теории».
+  /// </summary>
+  public virtual int TheoryCount => 1;
+
+  /// <summary>
   /// Можно ли выбрать для действия эту теорию, если действию нужна теория.
   /// </summary>
   /// <param name="column">Теория.</param>

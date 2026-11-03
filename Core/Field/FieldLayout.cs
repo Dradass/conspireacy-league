@@ -18,14 +18,20 @@ public static class FieldLayout
   private const int PlayerZoneWidth = 7;
   private const int PlayerZoneHeight = 3;
   private const int PlayerZoneGap = 3;
-  private const int MarketZoneWidth = 8 + 5;
+  // 4 — пустые столбцы слева от открытых карточек (см. Market), по две открытые карточки на игрока в строке.
+  private const int MarketZoneWidth = 4 + 2 * MaxPlayers;
   private const int MarketZoneHeight = 3;
   private const int MarketZoneGap = 1;
 
   /// <summary>
-  /// Верхняя строка рабочих зон игроков: над рынком, через пустой ряд от него.
+  /// Ряд карточек теорий игрока: сразу под его рабочей зоной (<see cref="PlayingField.TheoryCards"/>).
   /// </summary>
-  private const int PlayerZoneTop = Rows - MarketZoneHeight - MarketZoneGap - PlayerZoneHeight;
+  private const int TheoryCardRowHeight = 1;
+
+  /// <summary>
+  /// Верхняя строка рабочих зон игроков: над рынком, через пустой ряд от него и через ряд карточек теорий.
+  /// </summary>
+  private const int PlayerZoneTop = Rows - MarketZoneHeight - MarketZoneGap - TheoryCardRowHeight - PlayerZoneHeight;
 
   /// <summary>
   /// Сколько рядов общей зоны остаётся свободными над самой высокой карточкой; столько же рядов у пустой общей зоны.

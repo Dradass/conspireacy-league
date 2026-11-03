@@ -173,6 +173,20 @@ public sealed class Market
   public bool DeckContains(Func<PersonCard, bool> match) => _deck.Any(match);
 
   /// <summary>
+  /// Убрать открытую карточку с рынка из игры.
+  /// </summary>
+  /// <returns>Убранная карточка.</returns>
+  public PersonCard RemoveOpenCard(Cell cell)
+  {
+    if (!_openCards.TryGetValue(cell, out var card))
+      throw new InvalidOperationException("На этом месте рынка нет карточки.");
+
+    _openCards.Remove(cell);
+    CardDiscarded?.Invoke(cell, card);
+    return card;
+  }
+
+  /// <summary>
   /// Вытащить из колоды первую сверху карточку, подходящую под условие. Порядок остальных не меняется.
   /// </summary>
   /// <returns>Карточка или <c>null</c>, если подходящей нет.</returns>

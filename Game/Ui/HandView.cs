@@ -137,7 +137,10 @@ public partial class HandView : PanelContainer
   /// </summary>
   public bool ContainsScreenPoint(Vector2 point) => GetGlobalRect().HasPoint(point);
 
-  private void ShowHandOf(Player player)
+  /// <summary>
+  /// Показать руку указанного игрока (например, владельца основной теории, который выбирает карточку в руке).
+  /// </summary>
+  public void ShowHandOf(Player player)
   {
     if (_hand is not null)
       _hand.Changed -= Refresh;

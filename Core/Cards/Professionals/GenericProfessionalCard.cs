@@ -39,7 +39,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     : base(
       name: NameOf(profession),
       successChancePercent: SuccessChanceOf(profession),
-      cost: 6,
+      cost: CostOf(profession),
       onPlayFromHand: ActionOf(profession),
       onPlacedInHeadquarters: PlacementActionOf(profession),
       passive: PassiveOf(profession),
@@ -66,11 +66,27 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     _ => ProfessionalInfluence,
   };
 
+  private static int CostOf(Profession profession) => profession switch
+  {
+    Profession.Bandit => 7,
+    Profession.Driver => 7,
+    Profession.Policeman => 9,
+    Profession.Journalist => 9,
+    Profession.Scientist => 9,
+    Profession.Coach => 9,
+    Profession.Actor => 11,
+    Profession.SpecialAgent => 11,
+    Profession.TheoryMaster => 12,
+    Profession.Politician => 15,
+    _ => 6,
+  };
+
   private static int SuccessChanceOf(Profession profession) => profession switch
   {
     Profession.Scientist => 100,
     Profession.Psychic => 50,
     Profession.Bandit => 75,
+    Profession.Driver => 75,
     _ => 85,
   };
 

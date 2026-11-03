@@ -98,7 +98,7 @@ public partial class CardView : Node2D
   }
 
   /// <summary>
-  /// Владелец подглядывает в закрытую карточку (<see cref="HiddenCard"/>): видна её настоящая лицевая сторона.
+  /// Владелец смотрит на закрытую карточку (<see cref="HiddenCard"/>) или на карточку, лежащую рубашкой вверх: видна лицевая сторона.
   /// Остальные карточки это не меняет.
   /// </summary>
   public bool Peeked
@@ -203,12 +203,27 @@ public partial class CardView : Node2D
       .SetEase(Tween.EaseType.InOut);
   }
 
+  private bool _chipped;
+
+  /// <summary>
+  /// На персонажа положили фишку чипа (<see cref="Core.Field.PlayingField.Chips"/>).
+  /// </summary>
+  public bool Chipped
+  {
+    get => _chipped;
+    set
+    {
+      _chipped = value;
+      QueueRedraw();
+    }
+  }
+
   public override void _Draw()
   {
     // При перевороте карточка сжимается по горизонтали до ребра и раскрывается другой стороной.
     DrawSetTransform(Vector2.Zero, 0, new Vector2(Mathf.Abs(Mathf.Cos(_flip * Mathf.Pi)), 1));
     var rect = new Rect2(-CardPainter.CardSize / 2, CardPainter.CardSize);
-    if (_flip >= 0.5f)
+    if (_flip >= 0.5f && !_peeked)
     {
       CardPainter.DrawPlainBack(this, rect);
       DrawShieldIfNeeded(rect);
@@ -232,6 +247,19 @@ public partial class CardView : Node2D
     if (_closedRibbon)
       CardPainter.DrawClosedRibbon(this, rect);
     DrawShieldIfNeeded(rect);
+    if (_chipped)
+      DrawChip(rect);
+  }
+
+  /// <summary>
+  /// Фишка чипа в правом верхнем углу карточки: её положили на персонажа («Чипирование»).
+  /// </summary>
+  private void DrawChip(Rect2 rect)
+  {
+    var radius = rect.Size.X * 0.09f;
+    var center = new Vector2(rect.End.X - rect.Size.X * 0.12f, rect.Position.Y + rect.Size.Y * 0.1f);
+    DrawCircle(center, radius, new Color("e0b84f"));
+    DrawArc(center, radius, 0, Mathf.Tau, 24, Colors.Black, 2f);
   }
 
   private void DrawShieldIfNeeded(Rect2 rect)

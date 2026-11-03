@@ -78,6 +78,7 @@ public partial class Board : Node2D
   private readonly Dictionary<Vector2I, AdeptsView> _cardAdepts = new();
   private readonly Dictionary<TheoryColumn, List<MeepleView>> _leaderMeeples = new();
   private readonly Dictionary<Vector2I, CardView> _marketViews = new();
+  private readonly Dictionary<OwnedTheoryCard, CardView> _theoryViews = new();
   private int _marketCardsInFlight;
   private readonly HashSet<CardView> _peeked = [];
   private readonly HashSet<CardView> _shownHidden = [];
@@ -158,6 +159,14 @@ public partial class Board : Node2D
     Field.TheoryCardRemoved += OnTheoryCardRemoved;
     Field.CardReplaced += OnCardReplaced;
     Field.CardsSwapped += OnCardsSwapped;
+    Field.TheoryColumnMoved += OnTheoryColumnMoved;
+    Field.TheoryCardGranted += OnTheoryCardGranted;
+    Field.TheoryCardTransferred += OnTheoryCardTransferred;
+    Field.CardRemoved += OnCardTakenToHand;
+    Field.CharacterChipped += OnCharacterChipped;
+    Field.TheoryCardUsed += OnTheoryCardUsed;
+    Field.TheoryCardsRefreshed += OnTheoryCardsRefreshed;
+    Field.AdeptsRemoved += OnAdeptsRemoved;
     Market.CardOpened += OnMarketCardOpened;
     Market.CardTaken += OnMarketCardTaken;
     Market.CardDiscarded += OnMarketCardDiscarded;
@@ -184,6 +193,14 @@ public partial class Board : Node2D
     Field.TheoryCardRemoved -= OnTheoryCardRemoved;
     Field.CardReplaced -= OnCardReplaced;
     Field.CardsSwapped -= OnCardsSwapped;
+    Field.TheoryColumnMoved -= OnTheoryColumnMoved;
+    Field.TheoryCardGranted -= OnTheoryCardGranted;
+    Field.TheoryCardTransferred -= OnTheoryCardTransferred;
+    Field.CardRemoved -= OnCardTakenToHand;
+    Field.CharacterChipped -= OnCharacterChipped;
+    Field.TheoryCardUsed -= OnTheoryCardUsed;
+    Field.TheoryCardsRefreshed -= OnTheoryCardsRefreshed;
+    Field.AdeptsRemoved -= OnAdeptsRemoved;
     Market.CardOpened -= OnMarketCardOpened;
     Market.CardTaken -= OnMarketCardTaken;
     Market.CardDiscarded -= OnMarketCardDiscarded;
@@ -203,6 +220,20 @@ public partial class Board : Node2D
     var peeked = new HashSet<CardView>(_shownHidden.Where(IsInstanceValid));
     if (known)
       peeked.Add(hovered!);
+    // Свою карточку, лежащую рубашкой вверх (сыгранную в личном штабе или перевёрнутую карточку теории), игрок видит,
+    // пока на неё наведён курсор.
+    if (CellAt(GetGlobalMousePosition()) is { } hoverCell)
+    {
+      var hoveredCell = hoverCell.ToCell();
+      if (Field.PlayerZones.TryGetValue(player, out var zone) && zone.Contains(hoveredCell) && Field.IsUsed(hoveredCell)
+        && ViewAt(hoverCell) is { } playedView)
+        peeked.Add(playedView);
+      if (TheoryCardAt(hoverCell) is { Owner: var owner, IsUsed: true } theory && owner == player
+        && _theoryViews.TryGetValue(theory, out var theoryView))
+        peeked.Add(theoryView);
+    }
+    if (Field.CanSeeAllHidden(player))
+      peeked.UnionWith(_views.Values.Where(view => view.Card is HiddenCard { IsRevealed: false }));
     if (peeked.SetEquals(_peeked))
       return;
 
@@ -295,6 +326,16 @@ public partial class Board : Node2D
   /// Карточка, лежащая в ячейке.
   /// </summary>
   public CardView? ViewAt(Vector2I cell) => _views.GetValueOrDefault(cell);
+
+  /// <summary>
+  /// Карточка теории в ячейке ряда карточек теорий или <c>null</c>.
+  /// </summary>
+  public OwnedTheoryCard? TheoryCardAt(Vector2I cell) => Field.TheoryCards.FirstOrDefault(owned => owned.Cell == cell.ToCell());
+
+  /// <summary>
+  /// Вид карточки теории на столе.
+  /// </summary>
+  public CardView? TheoryViewOf(OwnedTheoryCard owned) => _theoryViews.GetValueOrDefault(owned);
 
   /// <summary>
   /// Открытая карточка рынка, лежащая в ячейке.
@@ -453,6 +494,72 @@ public partial class Board : Node2D
     if (_adepts.TryGetValue(from, out var view))
       view.ShrinkTo(from.Adepts);
     OnAdeptsAdded(to, count);
+  }
+
+  /// <summary>
+  /// На персонажа в личном штабе положили фишку чипа.
+  /// </summary>
+  private void OnCharacterChipped(Cell cell)
+  {
+    if (ViewAt(cell.ToVector2I()) is { } view)
+      view.Chipped = true;
+  }
+
+  /// <summary>
+  /// Адепты ушли из теории: фигурки убывают.
+  /// </summary>
+  private void OnAdeptsRemoved(TheoryColumn column, int count)
+  {
+    if (_adepts.TryGetValue(column, out var view))
+      view.ShrinkTo(column.Adepts);
+    QueueRedraw();
+  }
+
+  /// <summary>
+  /// Владелец получил карточку теории: она ложится в ряд карточек теорий под его рабочей зоной.
+  /// </summary>
+  private void OnTheoryCardGranted(OwnedTheoryCard owned)
+  {
+    var view = CardView.Create(owned.Card);
+    view.CardOwner = owned.Owner;
+    _theoryViews[owned] = view;
+    SnapTo(view, owned.Cell.ToVector2I());
+  }
+
+  /// <summary>
+  /// Теория перешла новому владельцу: её карточка уезжает к нему в ряд, сохраняя состояние.
+  /// </summary>
+  private void OnTheoryCardTransferred(OwnedTheoryCard owned)
+  {
+    if (!_theoryViews.TryGetValue(owned, out var view))
+      return;
+
+    view.CardOwner = owned.Owner;
+    view.CreateTween()
+      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CellCenter(owned.Cell.ToVector2I()), SnapDuration)
+      .SetTrans(Tween.TransitionType.Cubic)
+      .SetEase(Tween.EaseType.Out);
+  }
+
+  /// <summary>
+  /// Карточку теории применили: она переворачивается рубашкой вверх.
+  /// </summary>
+  private void OnTheoryCardUsed(OwnedTheoryCard owned)
+  {
+    if (_theoryViews.TryGetValue(owned, out var view))
+      view.FlipFaceDown();
+  }
+
+  /// <summary>
+  /// Обновление карточек: применённые карточки теорий переворачиваются лицевой стороной вверх.
+  /// </summary>
+  private void OnTheoryCardsRefreshed(IReadOnlyList<OwnedTheoryCard> cards)
+  {
+    foreach (var owned in cards)
+    {
+      if (_theoryViews.TryGetValue(owned, out var view))
+        view.FlipFaceUp();
+    }
   }
 
   /// <summary>
@@ -689,7 +796,13 @@ public partial class Board : Node2D
   private void OnCardReplaced(Cell cell)
   {
     if (ViewAt(cell.ToVector2I()) is { } view && Field.CardAt(cell) is { } card)
+    {
       view.ShowCard(card);
+      view.Chipped = Field.Chips.ContainsKey(cell);
+      // Замененная карточка могла перейти другому игроку: владелец мипла — владелец новой карточки.
+      if (Field.ColumnAt(cell) is { } column)
+        view.CardOwner = column.OwnerAt(cell);
+    }
     // Перерисовываем итоги теорий и колоду рынка: из неё могли взять карточку.
     QueueRedraw();
   }
@@ -716,6 +829,50 @@ public partial class Board : Node2D
 
     QueueRedraw();
   }
+
+  /// <summary>
+  /// Теорию сдвинули в соседний столбец: её карточки, адепты и миплы-лидеры плавно переезжают.
+  /// </summary>
+  private void OnTheoryColumnMoved(TheoryColumn column, IReadOnlyList<(Cell From, Cell To)> moves)
+  {
+    MoveViews(_views, moves);
+    MoveViews(_cardAdepts, moves);
+    if (_adepts.TryGetValue(column, out var adepts))
+      SlideView(adepts, CellCenter(column.TheoryCell.ToVector2I()));
+    if (_leaderMeeples.TryGetValue(column, out var meeples))
+    {
+      for (var i = 0; i < meeples.Count; i++)
+        SlideView(meeples[i], LeaderMeeplePosition(column, i, meeples.Count));
+    }
+
+    QueueRedraw();
+  }
+
+  /// <summary>
+  /// Перенести виды по ячейкам: вид, стоявший в <c>From</c>, теперь в <c>To</c>.
+  /// </summary>
+  private static void MoveViews<T>(Dictionary<Vector2I, T> views, IReadOnlyList<(Cell From, Cell To)> moves)
+    where T : Node2D
+  {
+    var moved = new List<(Vector2I To, T View)>();
+    foreach (var (from, to) in moves)
+    {
+      if (views.Remove(from.ToVector2I(), out var view))
+        moved.Add((to.ToVector2I(), view));
+    }
+
+    foreach (var (to, view) in moved)
+    {
+      views[to] = view;
+      SlideView(view, CellCenter(to));
+    }
+  }
+
+  private static void SlideView(Node2D view, Vector2 position) =>
+    view.CreateTween()
+      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), position, SnapDuration)
+      .SetTrans(Tween.TransitionType.Cubic)
+      .SetEase(Tween.EaseType.InOut);
 
   private static void SlideTo(CardView view, Vector2I cell) =>
     view.CreateTween()
@@ -833,51 +990,57 @@ public partial class Board : Node2D
     if (row >= Field.Rows)
       return;
 
-    // В одном столбце могут оказаться две теории (дочерняя над чужой родительской) — тогда подписываем названия.
-    foreach (var group in Field.TheoryColumns.GroupBy(column => column.Cells[0].Column))
+    // В одном столбце лежит только одна теория.
+    foreach (var column in Field.TheoryColumns)
     {
-      var area = new Rect2(CellOrigin(new Vector2I(group.Key, row)), CellSize).Grow(-SlotInset);
-      if (group.Count() == 1)
-      {
-        DrawTotals(group.Single(), area);
-        continue;
-      }
-
-      var text = string.Join("\n", group.Select(column =>
-        $"{column.Theory}:\nвлияние {column.Influence}, человек {column.Cards.Count}, адептов {column.Adepts}"
-        + (column.IsHeadquarters ? $", владелец {column.Owner}" : string.Empty)));
-      CardPainter.DrawCenteredText(this, text, area, TotalsFontSize, TotalsColor);
+      var area = new Rect2(CellOrigin(new Vector2I(column.TheoryCell.Column, row)), CellSize).Grow(-SlotInset);
+      DrawTotals(column, area);
     }
   }
 
   private void DrawTotals(TheoryColumn column, Rect2 area)
   {
-    List<(string Text, int FontSize, Color Color)> lines =
+    List<(int FontSize, List<(string Text, Color Color)> Segments)> lines =
     [
-      ("Влияние", TotalsFontSize, TotalsColor),
-      (column.Influence.ToString(), TotalsValueFontSize, TotalsColor),
-      ("Человек", TotalsFontSize, TotalsColor),
-      (column.Cards.Count.ToString(), TotalsValueFontSize, TotalsColor),
-      ("Адептов", TotalsFontSize, TotalsColor),
-      (column.Adepts.ToString(), TotalsValueFontSize, TotalsColor),
+      (TotalsFontSize, [("Влияние", TotalsColor)]),
+      (TotalsValueFontSize, InfluenceSegments(column)),
+      (TotalsFontSize, [("Человек", TotalsColor)]),
+      (TotalsValueFontSize, [(column.Cards.Count.ToString(), TotalsColor)]),
+      (TotalsFontSize, [("Адептов", TotalsColor)]),
+      (TotalsValueFontSize, [(column.Adepts.ToString(), TotalsColor)]),
     ];
     if (column.IsClosed)
-      lines.Add(("Закрыт", TotalsFontSize, ClosedColor));
-    if (column.IsHeadquarters)
-    {
-      var owner = column.Owner;
-      lines.Add(("Владелец", TotalsFontSize, TotalsColor));
-      lines.Add(($"{owner.Name} ({column.InfluenceOf(owner)})", TotalsOwnerFontSize, PlayerPalette.MainOf(owner.Color)));
-    }
+      lines.Add((TotalsFontSize, [("Закрыт", ClosedColor)]));
+    // Владелец есть у любой теории, в том числе побочной: это игрок с наибольшим влиянием в её стопке.
+    var owner = column.Owner;
+    lines.Add((TotalsFontSize, [("Владелец", TotalsColor)]));
+    lines.Add((TotalsOwnerFontSize, [($"{owner.Name} ({column.InfluenceOf(owner)})", PlayerPalette.MainOf(owner.Color))]));
     // Высота строки пропорциональна размеру шрифта.
     var scale = area.Size.Y / lines.Sum(line => line.FontSize);
     var top = area.Position.Y;
-    foreach (var (text, fontSize, color) in lines)
+    foreach (var (fontSize, segments) in lines)
     {
       var lineArea = new Rect2(area.Position.X, top, area.Size.X, fontSize * scale);
-      CardPainter.DrawCenteredText(this, text, lineArea, fontSize, color);
+      CardPainter.DrawSegmentedText(this, segments, lineArea, fontSize);
       top = lineArea.End.Y;
     }
+  }
+
+  /// <summary>
+  /// Общее влияние теории и в скобках через слеш влияние каждого игрока его цветом: «12 (3/0/5/4)».
+  /// </summary>
+  private List<(string Text, Color Color)> InfluenceSegments(TheoryColumn column)
+  {
+    var segments = new List<(string Text, Color Color)> { (column.Influence.ToString(), TotalsColor), (" (", TotalsColor) };
+    for (var i = 0; i < Session.Players.Count; i++)
+    {
+      var player = Session.Players[i];
+      if (i > 0)
+        segments.Add(("/", TotalsColor));
+      segments.Add((column.InfluenceOf(player).ToString(), PlayerPalette.MainOf(player.Color)));
+    }
+    segments.Add((")", TotalsColor));
+    return segments;
   }
 
   /// <summary>
@@ -920,7 +1083,7 @@ public partial class Board : Node2D
 
     foreach (var (player, zone) in Field.PlayerZones)
     {
-      if (zone.Contains(cell))
+      if (zone.Contains(cell) || Field.TheoryCardZoneOf(player).Contains(cell))
         return PlayerPalette.SlotOf(player.Color);
     }
 

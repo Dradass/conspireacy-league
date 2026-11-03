@@ -4,15 +4,24 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Быстрое действие: сыграть другого своего персонажа из личного штаба (<see cref="GameContext.BorrowedCell"/>)
+/// Сыграть другого своего персонажа из личного штаба (<see cref="GameContext.BorrowedCell"/>)
 /// со 100% успехом — выполнить выбранный вариант его действия (<see cref="GameContext.BorrowedOption"/>) без проверки
 /// успеха. Персонаж после этого переворачивается, как сыгранный.
 /// </summary>
+/// <remarks>
+/// По умолчанию — быстрое действие (не тратит действие хода). Карточка теории «Ленин — гриб» — обычное действие.
+/// </remarks>
 public sealed class PlayOwnCardEffect : Effect
 {
-  public override string Description => "Быстрое: сыграть своего персонажа со 100% успехом";
+  private readonly bool _quick;
 
-  public override bool IsQuick => true;
+  /// <param name="quick">Быстрое действие: не тратит действие хода.</param>
+  public PlayOwnCardEffect(bool quick = true) => _quick = quick;
+
+  public override string Description =>
+    _quick ? "Быстрое: сыграть своего персонажа со 100% успехом" : "Сыграть своего персонажа со 100% успехом";
+
+  public override bool IsQuick => _quick;
 
   public override bool RequiresTargetCell => true;
 

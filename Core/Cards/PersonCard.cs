@@ -24,7 +24,7 @@ public abstract class PersonCard : Card
   /// <summary>
   /// Влияние.
   /// </summary>
-  public int Influence { get; }
+  public int Influence { get; internal set; }
 
   /// <summary>
   /// Действие при выкладывании в штаб теории.

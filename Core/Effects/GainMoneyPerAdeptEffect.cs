@@ -4,26 +4,31 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Получить столько $, сколько адептов в выбранной теории, где у игрока есть лидер,
+/// Получить 1$ за каждые <see cref="AdeptsPerDollar"/> адепта в выбранной теории, где у игрока есть лидер,
 /// или на своей карточке в личном штабе, на которую приводят адептов (<see cref="GameContext.TargetAdeptCard"/>).
-/// Теорию или карточку без адептов выбрать нельзя.
+/// Теорию или карточку, где адептов меньше <see cref="AdeptsPerDollar"/>, выбрать нельзя.
 /// </summary>
 public sealed class GainMoneyPerAdeptEffect : Effect
 {
-  public override string Description => "Получить $ по числу адептов в своей теории";
+  /// <summary>
+  /// За сколько адептов дают 1$.
+  /// </summary>
+  public const int AdeptsPerDollar = 2;
+
+  public override string Description => $"Получить 1$ за каждые {AdeptsPerDollar} адепта в своей теории";
 
   public override bool RequiresTheory => true;
 
   public override bool CanTargetTheory(TheoryColumn column, Player player) =>
-    base.CanTargetTheory(column, player) && column.MembersOf(player).Any() && column.Adepts > 0;
+    base.CanTargetTheory(column, player) && column.MembersOf(player).Any() && column.Adepts >= AdeptsPerDollar;
 
-  public override bool CanTargetAdeptCard(Cell cell, PlayingField field) => field.AdeptsAt(cell) > 0;
+  public override bool CanTargetAdeptCard(Cell cell, PlayingField field) => field.AdeptsAt(cell) >= AdeptsPerDollar;
 
   public override void Execute(GameContext context)
   {
     var adepts = context.TargetAdeptCard is { } card
       ? context.Field.AdeptsAt(card)
       : (context.TargetTheory ?? throw new InvalidOperationException("Не выбрана теория.")).Adepts;
-    context.CurrentPlayer.Earn(adepts);
+    context.CurrentPlayer.Earn(adepts / AdeptsPerDollar);
   }
 }

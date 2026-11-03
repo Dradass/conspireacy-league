@@ -2,6 +2,7 @@ using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Decks;
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Field;
+using ConspiracyLeague.Core.Passives;
 
 namespace ConspiracyLeague.Core.Game;
 
@@ -137,13 +138,13 @@ public sealed class GameSession
   }
 
   /// <summary>
-  /// Сколько карточек открыто в каждой строке рынка: по одной на игрока и ещё одна, всего на рынке 2 + 2N.
+  /// Сколько карточек открыто в каждой строке рынка: по две на игрока, всего на рынке 4N.
   /// </summary>
-  public int MarketCardsPerRow => Players.Count + 1;
+  public int MarketCardsPerRow => Players.Count * 2;
 
   /// <summary>
   /// Подготовка и начало первого раунда: каждый игрок получает стартовую руку (<see cref="StartingHand"/>) —
-  /// новых бездомных и граждан со случайными теориями, на рынке открывается 2 + 2N карточек: в первую и третью строки по <see cref="MarketCardsPerRow"/>.
+  /// новых бездомных и граждан со случайными теориями, на рынке открывается 4N карточек: в первую и третью строки по <see cref="MarketCardsPerRow"/>.
   /// </summary>
   public void Start()
   {
@@ -186,10 +187,12 @@ public sealed class GameSession
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
 
     var check = Field.Place(card, cell, CurrentPlayer);
+    // Выложенная теория могла сдвинуться в соседний столбец вместе с карточкой — берём её актуальную ячейку.
+    var placedCell = Field.CellOf(card) ?? cell;
     hand.Remove(card);
-    if (Field.ColumnAt(cell) is { } theory && card is PersonCard { OnPlacedInHeadquarters: { RequiresTargetCell: true } effect })
+    if (Field.ColumnAt(placedCell) is { } theory && card is PersonCard { OnPlacedInHeadquarters: { RequiresTargetCell: true } effect })
     {
-      var choice = new PlacementChoice(cell, effect, theory);
+      var choice = new PlacementChoice(placedCell, effect, theory);
       if (effect.TargetCells(PlacementContext(choice)).Any(target => target.Check.IsAllowed))
       {
         PendingPlacement = choice;
@@ -285,9 +288,133 @@ public sealed class GameSession
       Field.Use(check.Cell, option, context);
     else
       Field.Waste(check.Cell, CurrentPlayer, option.IsQuick);
-    if (!option.IsQuick)
+    // Быстрое действие не тратит действие игрока, пока карточка только поворачивается. Если же она перевернулась
+    // рубашкой вверх (второе быстрое действие), действие игрока тратится.
+    if (!option.IsQuick || Field.IsUsed(check.Cell))
       CompleteAction();
     return check;
+  }
+
+  /// <summary>
+  /// Игрок, который сейчас ходит, применяет свою карточку теории (<see cref="PlayingField.UseTheoryCard"/>).
+  /// Это действие. Карточка переворачивается и восстанавливается в фазе обновления карточек.
+  /// </summary>
+  /// <param name="card">Карточка теории.</param>
+  /// <param name="context">Контекст партии с выбранными целями (например, теорией).</param>
+  public void UseTheoryCard(OwnedTheoryCard card, GameContext context)
+  {
+    // Перенос «Шапочки из фольги» ничего не тратит: она уже лежит на персонаже.
+    var move = card.AttachedTo is not null && card.Card.Passive is TinFoilPassive;
+    if (move)
+    {
+      RequireNoPendingCheck();
+      RequirePhase(GamePhase.PlayerTurns);
+    }
+    else
+      RequireAction();
+
+    var trigger = Field.UseTheoryCard(card, context);
+    if (trigger is not null)
+      SetPendingTheoryTrigger(trigger);
+    else if (!move)
+      CompleteAction();
+  }
+
+  /// <summary>
+  /// Действие основной теории, которое ждёт выбора владельца основной теории (после <see cref="UseTheoryCard"/>), или <c>null</c>.
+  /// Пока оно не разрешено, другие действия сделать нельзя; ход не заканчивается.
+  /// </summary>
+  public TheoryTrigger? PendingTheoryTrigger { get; private set; }
+
+  /// <summary>
+  /// Начался или завершился выбор для действия основной теории; аргумент — <see cref="PendingTheoryTrigger"/>.
+  /// </summary>
+  public event Action<TheoryTrigger?>? PendingTheoryTriggerChanged;
+
+  /// <summary>
+  /// Владелец основной теории выбирает карточку в руке для её действия.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Выбора нет или карточку выбрать нельзя.</exception>
+  public void SelectTriggerHandCard(Card card)
+  {
+    var trigger = RequirePendingTheoryTrigger();
+    if (!trigger.Effect.RequiresHandCard || !trigger.Owner.Hand.Contains(card))
+      throw new InvalidOperationException("Эту карточку выбрать нельзя.");
+    trigger.HandCard = card;
+    ContinueTheoryTrigger(trigger);
+  }
+
+  /// <summary>
+  /// Владелец основной теории выбирает теорию для её действия.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Выбора нет или теорию выбрать нельзя.</exception>
+  public void SelectTriggerTheory(TheoryColumn theory)
+  {
+    var trigger = RequirePendingTheoryTrigger();
+    if (!trigger.Effect.RequiresTheory || !trigger.Effect.CanTargetTheory(theory, trigger.Owner))
+      throw new InvalidOperationException($"Теорию «{theory}» выбрать нельзя.");
+    trigger.Theory = theory;
+    ContinueTheoryTrigger(trigger);
+  }
+
+  /// <summary>
+  /// Владелец основной теории выбирает карточку на поле для её действия.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Выбора нет или карточку выбрать нельзя.</exception>
+  public void SelectTriggerCell(Cell cell)
+  {
+    var trigger = RequirePendingTheoryTrigger();
+    if (!trigger.Effect.RequiresTargetCell)
+      throw new InvalidOperationException("Здесь нужен выбор не карточки на поле.");
+    var check = trigger.Effect.CheckTargetCell(cell, trigger.Context);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+    trigger.Cell = cell;
+    ContinueTheoryTrigger(trigger);
+  }
+
+  /// <summary>
+  /// Владелец основной теории отказывается от её действия: оно не выполняется, действие хода тратится.
+  /// </summary>
+  public void SkipTheoryTrigger()
+  {
+    RequirePendingTheoryTrigger();
+    SetPendingTheoryTrigger(null);
+    CompleteAction();
+  }
+
+  private TheoryTrigger RequirePendingTheoryTrigger() =>
+    PendingTheoryTrigger ?? throw new InvalidOperationException("Сейчас ничего не выбирают.");
+
+  /// <summary>
+  /// Все выборы сделаны — действие выполняется, и тратится действие хода игрока, применившего дочернюю карточку.
+  /// Иначе ждём остальных выборов.
+  /// </summary>
+  private void ContinueTheoryTrigger(TheoryTrigger trigger)
+  {
+    if (!trigger.IsComplete)
+    {
+      PendingTheoryTriggerChanged?.Invoke(trigger);
+      return;
+    }
+
+    SetPendingTheoryTrigger(null);
+    try
+    {
+      Field.ResolveTheoryTrigger(trigger);
+    }
+    catch (Exception)
+    {
+      SetPendingTheoryTrigger(trigger);
+      throw;
+    }
+    CompleteAction();
+  }
+
+  private void SetPendingTheoryTrigger(TheoryTrigger? trigger)
+  {
+    PendingTheoryTrigger = trigger;
+    PendingTheoryTriggerChanged?.Invoke(trigger);
   }
 
   /// <summary>
@@ -330,6 +457,10 @@ public sealed class GameSession
   {
     RequirePhase(GamePhase.HeadquartersCheck);
     var closed = Field.CloseInsolventTheories();
+
+    // Пассивные способности карточек теорий срабатывают в конце раунда, уже после закрытия штабов.
+    foreach (var owned in Field.TheoryCards.ToList())
+      owned.Card.HandleEvent(new RoundEnded(), new GameContext(owned.Owner, Field, _random, Market));
 
     EnqueueActiveTheories(column => column.Adepts > 0);
     SetPhase(GamePhase.AdeptIncome);
@@ -483,6 +614,8 @@ public sealed class GameSession
       throw new InvalidOperationException("Идёт проверка успеха карточки — дождитесь её окончания.");
     if (PendingPlacement is not null)
       throw new InvalidOperationException("Сначала выберите цель для действия выложенной карточки.");
+    if (PendingTheoryTrigger is not null)
+      throw new InvalidOperationException("Владелец основной теории ещё выбирает цель её действия.");
   }
 
   private void SetPendingCheck(SuccessCheck? check)

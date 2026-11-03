@@ -61,6 +61,10 @@ public partial class Main : Node2D
 	roundController.Initialize(board, session, camera);
 	roundController.Hint += hud.ShowMessage;
 
+	var debugDumper = new DebugStateDumper { Name = "DebugStateDumper", Session = session };
+	AddChild(debugDumper);
+	debugDumper.Saved += hud.ShowMessage;
+
 	// Подготовка: стол и рука уже следят за партией — стартовые карточки рынка выезжают из колоды
 	// на глазах у игроков, стартовые карточки появляются в руке.
 	session.Start();

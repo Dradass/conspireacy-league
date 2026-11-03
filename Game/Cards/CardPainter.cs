@@ -1,5 +1,7 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Cards.Professionals;
+using ConspiracyLeague.Core.Passives;
 using ConspiracyLeague.Core.Theories;
 using Godot;
 
@@ -24,6 +26,7 @@ public static class CardPainter
   private const float RibbonShare = 0.14f;
   private const float TheoryShare = 0.3f;
   private const float ParentTheoryFontShare = 0.8f;
+  private const int MinEffectFontSize = 6;
 
   private static readonly Color PaperColor = new("f3ecd9");
   private static readonly Color InkColor = new("fdfaf2");
@@ -107,13 +110,28 @@ public static class CardPainter
       CornerRadiusTopRight = radius,
     };
     canvas.DrawStyleBox(header, headerRect);
-    DrawCenteredText(canvas, card.Name, headerRect, (int)(headerRect.Size.Y * 0.5f), InkColor);
+    var headerFont = (int)(headerRect.Size.Y * 0.5f);
+    if (card is PersonCard { Cost: var cost })
+    {
+      // Стоимость — справа в заголовке, название — по центру оставшегося места.
+      var costText = $"{cost}$";
+      var padding = rect.Size.X * 0.05f;
+      var costWidth = ThemeDB.FallbackFont.GetStringSize(costText, fontSize: headerFont).X;
+      var costRect = new Rect2(headerRect.End.X - padding - costWidth, headerRect.Position.Y, costWidth, headerRect.Size.Y);
+      DrawCenteredText(canvas, costText, costRect, headerFont, InkColor);
+      var nameRect = new Rect2(headerRect.Position.X + padding, headerRect.Position.Y, costRect.Position.X - headerRect.Position.X - padding * 2, headerRect.Size.Y);
+      DrawCenteredText(canvas, card.Name, nameRect, FitFontSize(card.Name, nameRect.Size.X, headerFont), InkColor);
+    }
+    else
+      DrawCenteredText(canvas, card.Name, headerRect, headerFont, InkColor);
 
     var smallFont = (int)(rect.Size.Y * 0.075f);
     if (card.Theory is { } theory)
-      DrawTheoryName(canvas, TheoryRect(rect, withOwnerMark), theory, smallFont);
+      DrawTheoryName(canvas, TheoryRect(rect, withOwnerMark), theory, smallFont, withName: card is not TheoryCard);
 
     var ribbonHeight = rect.Size.Y * RibbonShare;
+    if (card is TheoryCard theoryCard)
+      DrawTheoryEffects(canvas, rect, theoryCard, smallFont);
     if (card is PersonCard person)
     {
       var bottom = rect.End.Y - (isHeadquarters ? ribbonHeight : 0);
@@ -138,18 +156,26 @@ public static class CardPainter
   /// <summary>
   /// Нарисовать название теории, а у дочерней теории под ним — название родительской в скобках,
   /// мельче и бледнее. Обе надписи вместе стоят по центру области.
+  /// Если название уже написано в шапке карточки (<paramref name="withName"/> = false), рисуется только родительская.
   /// </summary>
-  private static void DrawTheoryName(CanvasItem canvas, Rect2 area, Theory theory, int fontSize)
+  private static void DrawTheoryName(CanvasItem canvas, Rect2 area, Theory theory, int fontSize, bool withName)
   {
     var nameFontSize = FitFontSize(theory.Name, area.Size.X, fontSize);
     if (theory.Parent is not { } parent)
     {
-      DrawCenteredText(canvas, theory.Name, area, nameFontSize, TextColor);
+      if (withName)
+        DrawCenteredText(canvas, theory.Name, area, nameFontSize, TextColor);
       return;
     }
 
     var parentText = $"({parent.Name})";
     var parentFontSize = FitFontSize(parentText, area.Size.X, (int)(fontSize * ParentTheoryFontShare));
+    if (!withName)
+    {
+      DrawCenteredText(canvas, parentText, area, parentFontSize, ParentTheoryColor);
+      return;
+    }
+
     var nameHeight = TextHeight(theory.Name, area.Size.X, nameFontSize);
     var parentHeight = TextHeight(parentText, area.Size.X, parentFontSize);
     var top = area.Position.Y + (area.Size.Y - nameHeight - parentHeight) / 2;
@@ -160,6 +186,33 @@ public static class CardPainter
       new Rect2(area.Position.X, top + nameHeight, area.Size.X, parentHeight),
       parentFontSize,
       ParentTheoryColor);
+  }
+
+  /// <summary>
+  /// Нарисовать на карточке теории её эффект: действие при применении и пассивную способность.
+  /// Текст под названием теории уменьшается, пока не поместится.
+  /// </summary>
+  private static void DrawTheoryEffects(CanvasItem canvas, Rect2 rect, TheoryCard card, int fontSize)
+  {
+    var lines = new List<string>();
+    if (card.OnPlayFromHand != Effect.None)
+      lines.Add(card.OnPlayFromHand.Description);
+    if (card.Passive != PassiveAbility.None)
+      lines.Add($"Пассивно: {card.Passive.Description}");
+    var text = string.Join("\n", lines);
+
+    var padding = rect.Size.X * 0.06f;
+    var top = rect.Position.Y + rect.Size.Y * (HeaderShare + TheoryShare);
+    var area = new Rect2(
+      rect.Position.X + padding,
+      top,
+      rect.Size.X - padding * 2,
+      rect.End.Y - padding - top);
+
+    var size = fontSize;
+    while (size > MinEffectFontSize && TextHeight(text, area.Size.X, size) > area.Size.Y)
+      size--;
+    DrawCenteredText(canvas, text, area, size, TextColor);
   }
 
   private static float TextHeight(string text, float width, int fontSize) =>
@@ -357,6 +410,28 @@ public static class CardPainter
       area.Size.X,
       fontSize,
       modulate: color);
+  }
+
+  /// <summary>
+  /// Нарисовать одну строку по центру области из кусков разного цвета. Если строка не помещается по ширине, шрифт уменьшается.
+  /// </summary>
+  public static void DrawSegmentedText(CanvasItem canvas, IReadOnlyList<(string Text, Color Color)> segments, Rect2 area, int fontSize)
+  {
+    var font = ThemeDB.FallbackFont;
+    var width = segments.Sum(segment => font.GetStringSize(segment.Text, fontSize: fontSize).X);
+    while (fontSize > 1 && width > area.Size.X)
+    {
+      fontSize--;
+      width = segments.Sum(segment => font.GetStringSize(segment.Text, fontSize: fontSize).X);
+    }
+
+    var x = area.Position.X + (area.Size.X - width) / 2;
+    var baseline = area.Position.Y + (area.Size.Y - font.GetHeight(fontSize)) / 2 + font.GetAscent(fontSize);
+    foreach (var (text, color) in segments)
+    {
+      canvas.DrawString(font, new Vector2(x, baseline), text, fontSize: fontSize, modulate: color);
+      x += font.GetStringSize(text, fontSize: fontSize).X;
+    }
   }
 
   /// <summary>

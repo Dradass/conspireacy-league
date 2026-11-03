@@ -24,12 +24,21 @@ public sealed class HiddenCard : PersonCard
   private readonly HashSet<Player> _knownBy = [];
 
   /// <param name="face">Настоящая карточка.</param>
-  public HiddenCard(Card face)
-    : this(face, new CitizenCard())
+  private readonly int _joiningDiscount;
+
+  /// <summary>
+  /// Влияние, которое даёт закрытая карточка без пассивных способностей теорий (как у гражданина).
+  /// </summary>
+  public int BaseInfluence { get; }
+
+  /// <param name="face">Настоящая карточка.</param>
+  /// <param name="joiningDiscount">Скидка на выкладывание, $.</param>
+  public HiddenCard(Card face, int joiningDiscount = 0)
+    : this(face, new CitizenCard(), joiningDiscount)
   {
   }
 
-  private HiddenCard(Card face, CitizenCard citizen)
+  private HiddenCard(Card face, CitizenCard citizen, int joiningDiscount)
     : base(
       name: "Закрытая карта",
       successChancePercent: citizen.SuccessChancePercent,
@@ -40,8 +49,21 @@ public sealed class HiddenCard : PersonCard
       passive: citizen.Passive)
   {
     ArgumentNullException.ThrowIfNull(face);
+    ArgumentOutOfRangeException.ThrowIfNegative(joiningDiscount);
     Face = face;
+    BaseInfluence = citizen.Influence;
+    _joiningDiscount = joiningDiscount;
   }
+
+  /// <summary>
+  /// Скидка на выкладывание закрытой карточки, $.
+  /// </summary>
+  public override int JoiningDiscount => _joiningDiscount;
+
+  /// <summary>
+  /// Изменить влияние закрытой карточки (например, по пассивной способности теории).
+  /// </summary>
+  internal void SetInfluence(int influence) => Influence = influence;
 
   internal void Reveal() => IsRevealed = true;
 

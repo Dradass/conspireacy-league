@@ -23,7 +23,7 @@ public sealed class MoveAdeptEffect : Effect
   public override bool RequiresSourceTheory => true;
 
   public override bool CanTargetSourceTheory(TheoryColumn column, Player player) =>
-    !column.IsClosed && column.Adepts > 0 && !column.IsProtected();
+    !column.IsClosed && column.Adepts > 0 && !column.IsProtected() && !column.AdeptsShielded;
 
   public override void Execute(GameContext context)
   {

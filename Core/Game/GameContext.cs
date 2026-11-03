@@ -29,6 +29,11 @@ public sealed class GameContext
   public TheoryColumn? TargetTheory { get; private set; }
 
   /// <summary>
+  /// Все выбранные теории, когда действию нужно несколько (<see cref="Effect.TheoryCount"/>), в порядке выбора.
+  /// </summary>
+  public IReadOnlyList<TheoryColumn> TargetTheories { get; private set; } = [];
+
+  /// <summary>
   /// Карточка в руке, которую игрок выбрал для действия (например, чтобы выложить её взакрытую).
   /// </summary>
   public Card? HandCard { get; private set; }
@@ -105,6 +110,17 @@ public sealed class GameContext
   /// </summary>
   /// <param name="theory">Выбранная теория.</param>
   public GameContext WithTargetTheory(TheoryColumn theory) => With(context => context.TargetTheory = theory);
+
+  /// <summary>
+  /// Тот же контекст с несколькими выбранными теориями; последняя становится <see cref="TargetTheory"/>.
+  /// </summary>
+  /// <param name="theories">Выбранные теории в порядке выбора.</param>
+  public GameContext WithTargetTheories(IReadOnlyList<TheoryColumn> theories) =>
+    With(context =>
+    {
+      context.TargetTheories = theories;
+      context.TargetTheory = theories.LastOrDefault();
+    });
 
   /// <summary>
   /// Тот же контекст с выбранной игроком карточкой в руке.
