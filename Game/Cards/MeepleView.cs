@@ -9,6 +9,16 @@ namespace ConspiracyLeague.Game.Cards;
 public partial class MeepleView : Node2D
 {
   /// <summary>
+  /// Облик фигурки: деревянный мипл, инопланетянин (теория «Инопланетяне среди нас») или человек в мантии (теория «Тайное правительство»).
+  /// </summary>
+  public enum MeepleLook
+  {
+    Wooden,
+    Alien,
+    Robed,
+  }
+
+  /// <summary>
   /// Размер фигурки (без толщины).
   /// </summary>
   public static readonly Vector2 Size = new(22, 26);
@@ -38,6 +48,11 @@ public partial class MeepleView : Node2D
   public Color Color { get; init; } = new("d9a55b");
 
   /// <summary>
+  /// Облик фигурки. Инопланетянин всегда зелёный, человек в мантии — цвета <see cref="Color"/> (мантия).
+  /// </summary>
+  public MeepleLook Look { get; init; } = MeepleLook.Wooden;
+
+  /// <summary>
   /// Высота над столом: фигурка поднимается, а тень остаётся на месте.
   /// </summary>
   public float Height
@@ -58,7 +73,17 @@ public partial class MeepleView : Node2D
     DrawCircle(Vector2.Zero, 1, ShadowColor);
     DrawSetTransform(Vector2.Zero);
 
-    var front = Outline.Select(point => new Vector2(point.X * Size.X, (point.Y - 1) * Size.Y - _height)).ToArray();
+    switch (Look)
+    {
+      case MeepleLook.Alien:
+        DrawAlien();
+        return;
+      case MeepleLook.Robed:
+        DrawRobed();
+        return;
+    }
+
+    var front =Outline.Select(point => new Vector2(point.X * Size.X, (point.Y - 1) * Size.Y - _height)).ToArray();
 
     // Толщина: слои от задней грани к передней, задние темнее.
     var side = Color.Darkened(0.45f);
@@ -80,6 +105,64 @@ public partial class MeepleView : Node2D
 
     // Блик на голове.
     DrawCircle(new Vector2(-Size.X * 0.06f, -Size.Y * 0.88f - _height), Size.X * 0.06f, HighlightColor);
+  }
+
+  /// <summary>
+  /// Точка фигурки: x — в долях ширины от центра, y — в долях высоты от макушки (0) до ступней (1), с учётом высоты над столом.
+  /// </summary>
+  private Vector2 At(float x, float y) => new(x * Size.X, (y - 1) * Size.Y - _height);
+
+  /// <summary>
+  /// Инопланетянин: зелёный, тонкое туловище, большая голова с огромными чёрными глазами.
+  /// </summary>
+  private void DrawAlien()
+  {
+    var green = new Color("5fd35a");
+    var outline = new Color("1d4d1b");
+
+    var legs = new[] { At(-0.02f, 0.8f), At(-0.1f, 1f) };
+    DrawLine(legs[0], legs[1], green, 2f, antialiased: true);
+    DrawLine(At(0.02f, 0.8f), At(0.1f, 1f), green, 2f, antialiased: true);
+
+    DrawLine(At(-0.05f, 0.46f), At(-0.22f, 0.66f), green, 2f, antialiased: true);
+    DrawLine(At(0.05f, 0.46f), At(0.22f, 0.66f), green, 2f, antialiased: true);
+
+    DrawColoredPolygon([At(-0.05f, 0.42f), At(0.05f, 0.42f), At(0.04f, 0.8f), At(-0.04f, 0.8f)], green);
+
+    var head = At(0, 0.2f);
+    var headRadius = Size.X * 0.28f;
+    DrawCircle(head, headRadius, green);
+    DrawArc(head, headRadius, 0, Mathf.Tau, 24, outline, 1.2f, antialiased: true);
+
+    // Огромные чёрные глаза с бликом.
+    var eyeRadius = Size.X * 0.13f;
+    foreach (var side in new[] { -1f, 1f })
+    {
+      var eye = At(side * 0.12f, 0.18f);
+      DrawCircle(eye, eyeRadius, Colors.Black);
+      DrawCircle(eye + new Vector2(-eyeRadius * 0.3f, -eyeRadius * 0.3f), eyeRadius * 0.3f, HighlightColor);
+    }
+  }
+
+  /// <summary>
+  /// Человек в мантии: капюшон, лицо в тени и широкая мантия цвета <see cref="Color"/>.
+  /// </summary>
+  private void DrawRobed()
+  {
+    var skin = new Color("e8c9a0");
+    var robeDark = Color.Darkened(0.35f);
+
+    var robe = new[] { At(-0.1f, 0.36f), At(0.1f, 0.36f), At(0.26f, 0.62f), At(0.4f, 1f), At(-0.4f, 1f), At(-0.26f, 0.62f) };
+    DrawColoredPolygon(robe, Color);
+    DrawPolyline([.. robe, robe[0]], OutlineColor, 1f, antialiased: true);
+
+    var hood = new[] { At(-0.16f, 0.3f), At(0, -0.05f), At(0.16f, 0.3f) };
+    DrawColoredPolygon(hood, Color);
+    DrawPolyline([.. hood, hood[0]], OutlineColor, 1f, antialiased: true);
+
+    // Лицо глубоко в капюшоне.
+    DrawCircle(At(0, 0.2f), Size.X * 0.14f, robeDark);
+    DrawCircle(At(0, 0.22f), Size.X * 0.1f, skin);
   }
 
   private static Vector2[] CreateOutline()

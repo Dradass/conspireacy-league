@@ -81,7 +81,7 @@ public partial class RoundController : Node
     await Pause(CameraPause);
     if (!_session.RefreshMarket())
     {
-      Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Итоговый подсчёт денег.");
+      Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Закрытые карточки раскрываются. Итоговый подсчёт денег.");
       await Pause(StepPause);
       await PlayFinalScoring();
       return;

@@ -112,7 +112,7 @@ public abstract class Effect
   /// Можно ли выполнить этот вариант через другую карточку (<see cref="BorrowsTargetCard"/>): можно любой,
   /// кроме тех, что сами используют другую карточку.
   /// </summary>
-  public bool CanBeBorrowed => !BorrowsTargetCard;
+  public virtual bool CanBeBorrowed => !BorrowsTargetCard;
 
   /// <summary>
   /// Карточки на поле, которые подходят для действия, с условиями выбора: можно ли и сколько $ это стоит.

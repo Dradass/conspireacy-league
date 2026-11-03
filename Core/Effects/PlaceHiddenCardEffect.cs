@@ -18,7 +18,7 @@ public sealed class PlaceHiddenCardEffect : Effect
   /// <summary>
   /// Сколько $ по умолчанию игрок получает за каждого своего закрытого персонажа на поле.
   /// </summary>
-  public const int DefaultBonusPerHiddenCard = 2;
+  public const int DefaultBonusPerHiddenCard = 1;
 
   /// <summary>
   /// Скидка, которая делает выкладывание бесплатным.

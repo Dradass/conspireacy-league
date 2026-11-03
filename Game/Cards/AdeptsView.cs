@@ -35,6 +35,11 @@ public partial class AdeptsView : Node2D
   private int? _total;
 
   /// <summary>
+  /// Облик адептов: у теорий «Инопланетяне среди нас» и «Тайное правительство» свой (см. <see cref="MeepleView.MeepleLook"/>).
+  /// </summary>
+  public MeepleView.MeepleLook Look { get; init; } = MeepleView.MeepleLook.Wooden;
+
+  /// <summary>
   /// Сколько всего адептов — рисуется значком в углу карточки. <c>null</c> — значка нет
   /// (у теории количество подписано под стопкой).
   /// </summary>
@@ -77,7 +82,7 @@ public partial class AdeptsView : Node2D
     var added = new List<MeepleView>();
     for (var i = Mathf.Min(count, MaxShown - _meeples.Count); i > 0; i--)
     {
-      var meeple = new MeepleView { Height = DropHeight, Modulate = Colors.Transparent };
+      var meeple = new MeepleView { Height = DropHeight, Modulate = Colors.Transparent, Look = Look };
       _meeples.Add(meeple);
       added.Add(meeple);
       AddChild(meeple);

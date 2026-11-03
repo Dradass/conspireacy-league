@@ -17,6 +17,11 @@ public sealed class CopyRivalCardEffect : Effect
 
   public override bool BorrowsTargetCard => true;
 
+  /// <summary>
+  /// Само копирование можно выполнить через чужое действие (учёный играет копирование актёра).
+  /// </summary>
+  public override bool CanBeBorrowed => true;
+
   public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
     context.Field.CopyTargets(context.CurrentPlayer).Where(target => target.Cell != context.SourceCell);
 
@@ -27,7 +32,8 @@ public sealed class CopyRivalCardEffect : Effect
 
   public override void Execute(GameContext context)
   {
-    var cell = context.BorrowedCell ?? throw new InvalidOperationException("Не выбрана карточка.");
+    // Копирование через чужое действие выбирает карточку отдельно (CopiedCell), прямое — как BorrowedCell.
+    var cell = context.CopiedCell ?? context.BorrowedCell ?? throw new InvalidOperationException("Не выбрана карточка.");
     context.Field.CopyRival(cell, context);
   }
 }

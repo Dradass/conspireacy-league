@@ -39,7 +39,7 @@ public static class FieldLayout
   public const int CommonZoneFreeRows = 2;
 
   /// <summary>
-  /// На сколько столбцов общая зона расширяется с каждой стороны, когда во всех её столбцах есть карточки.
+  /// На сколько столбцов общая зона расширяется с той стороны, где новая теория легла в крайний столбец.
   /// </summary>
   public const int CommonZoneSideGrowth = 2;
 
@@ -49,8 +49,13 @@ public static class FieldLayout
   public const int MaxPlayers = (Columns + PlayerZoneGap) / (PlayerZoneWidth + PlayerZoneGap);
 
   /// <summary>
-  /// Начальная общая зона всех игроков: над рабочими зонами игроков, от левого края зоны первого игрока
-  /// до правого края зоны последнего, высотой <see cref="CommonZoneFreeRows"/> ряда. Растёт по мере
+  /// Ширина начальной общей зоны, столбцов.
+  /// </summary>
+  public const int CommonZoneStartWidth = 5;
+
+  /// <summary>
+  /// Начальная общая зона всех игроков: над рабочими зонами игроков, по центру их ряда, шириной
+  /// <see cref="CommonZoneStartWidth"/> столбцов, высотой <see cref="CommonZoneFreeRows"/> ряда. Растёт по мере
   /// выкладывания карточек (<see cref="PlayingField.CommonZone"/>). Между ней и зонами игроков остаётся
   /// один ряд — там подписаны итоги теорий.
   /// </summary>
@@ -60,10 +65,11 @@ public static class FieldLayout
     var first = PlayerZone(0, playerCount);
     var last = PlayerZone(playerCount - 1, playerCount);
     var bottomRow = PlayerZoneTop - 2;
+    var span = last.Left + last.Width - first.Left;
     return new Zone(
-      first.Left,
+      first.Left + (span - CommonZoneStartWidth) / 2,
       bottomRow - CommonZoneFreeRows + 1,
-      last.Left + last.Width - first.Left,
+      CommonZoneStartWidth,
       CommonZoneFreeRows);
   }
 

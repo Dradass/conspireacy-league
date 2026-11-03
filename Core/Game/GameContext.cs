@@ -67,6 +67,17 @@ public sealed class GameContext
   public Effect? BorrowedOption { get; private set; }
 
   /// <summary>
+  /// Карточка, действие которой скопирует <see cref="BorrowedOption"/> (копирование через чужое действие,
+  /// например учёный играет копирование актёра): её выбирают отдельно от <see cref="BorrowedCell"/>.
+  /// </summary>
+  public Cell? CopiedCell { get; private set; }
+
+  /// <summary>
+  /// Вариант действия карточки <see cref="CopiedCell"/>, который скопирует игрок.
+  /// </summary>
+  public Effect? CopiedOption { get; private set; }
+
+  /// <summary>
   /// Другой игрок, которого игрок выбрал для действия (например, для инспекции).
   /// </summary>
   public Player? TargetPlayer { get; private set; }
@@ -157,6 +168,18 @@ public sealed class GameContext
   /// </summary>
   /// <param name="option">Вариант действия.</param>
   public GameContext WithBorrowedOption(Effect option) => With(context => context.BorrowedOption = option);
+
+  /// <summary>
+  /// Тот же контекст с карточкой, действие которой скопируют (см. <see cref="CopiedCell"/>).
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  public GameContext WithCopiedCell(Cell cell) => With(context => context.CopiedCell = cell);
+
+  /// <summary>
+  /// Тот же контекст с вариантом действия, который скопируют (см. <see cref="CopiedOption"/>).
+  /// </summary>
+  /// <param name="option">Вариант действия.</param>
+  public GameContext WithCopiedOption(Effect option) => With(context => context.CopiedOption = option);
 
   /// <summary>
   /// Тот же контекст с выбранным другим игроком.

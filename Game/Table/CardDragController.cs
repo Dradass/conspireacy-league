@@ -90,8 +90,11 @@ public partial class CardDragController : Node
       return;
 
     GetViewport().SetInputAsHandled();
-    StartDrag(new MarketDrag(_board.TakeMarketView(cell), cell));
+    var view = _board.TakeMarketView(cell);
+    StartDrag(new MarketDrag(view, cell));
     _hand.DropState = HandDropState.Target;
+    // Пока решаем, брать ли карточку, подсвечиваем её теорию на поле.
+    _board.ShowTargets(_board.Field.TheoryCellsOf(view.Card));
   }
 
   public override void _Process(double delta)
@@ -103,8 +106,11 @@ public partial class CardDragController : Node
     _drag.View.Position = MouseOnTable();
     switch (_drag)
     {
-      case HandDrag:
-        var cell = _board.CellAt(_drag.View.Position);
+      case HandDrag hand:
+        // В перегородке между теориями карточка вставляется, а не кладётся в занятую ячейку: подсвечиваем перегородку.
+        var wall = WallOf(hand);
+        _board.ShowWall(wall);
+        var cell = wall is null ? _board.CellAt(_drag.View.Position) : null;
         _board.Highlight(cell, cell is { } target ? Check(_drag.View, target) : null);
         break;
       case MarketDrag:
@@ -148,6 +154,12 @@ public partial class CardDragController : Node
 
   private void DropFromHand(HandDrag drag)
   {
+    if (WallOf(drag) is { } boundary)
+    {
+      DropInWall(drag, boundary);
+      return;
+    }
+
     if (_board.CellAt(drag.View.Position) is not { } cell)
     {
       ReturnToHand(drag);
@@ -174,6 +186,28 @@ public partial class CardDragController : Node
     _dragLayer.RemoveChild(drag.View);
     _board.Place(drag.View, cell);
   }
+
+  /// <summary>
+  /// Дочерняя теория вставлена в перегородку: теории слева сдвигаются, карточка ложится в освободившийся столбец.
+  /// </summary>
+  private void DropInWall(HandDrag drag, int boundary)
+  {
+    var player = _session.CurrentPlayer;
+    var placed = _session.PlaceInWallFromHand(drag.View.Card, boundary);
+    var cell = _board.Field.CellOf(drag.View.Card)!.Value.ToVector2I();
+    drag.View.IsHeadquarters = placed.CreatesHeadquarters;
+    drag.View.CardOwner = player;
+    _dragLayer.RemoveChild(drag.View);
+    _board.Place(drag.View, cell);
+  }
+
+  /// <summary>
+  /// Перегородка, в которую можно вставить карточку из руки, или <c>null</c>.
+  /// </summary>
+  private int? WallOf(HandDrag drag) =>
+    _board.WallAt(drag.View.Position) is { } boundary && _board.Field.CheckInWall(drag.View.Card, boundary, _session.CurrentPlayer).IsAllowed
+      ? boundary
+      : null;
 
   private void DropFromMarket(MarketDrag drag)
   {
@@ -214,6 +248,7 @@ public partial class CardDragController : Node
     var drag = _drag;
     _drag = null;
     _board.Highlight(null);
+    _board.ShowWall(null);
     _board.HideAvailable();
     _hand.DropState = HandDropState.None;
     Input.SetDefaultCursorShape();

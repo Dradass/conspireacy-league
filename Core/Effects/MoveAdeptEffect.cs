@@ -4,7 +4,7 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Быстрое действие: перевести одного адепта из одной действующей теории (<see cref="GameContext.SourceTheory"/>)
+/// Перевести одного адепта из одной действующей теории (<see cref="GameContext.SourceTheory"/>)
 /// в другую (<see cref="GameContext.TargetTheory"/>) и получить <see cref="Reward"/>$.
 /// </summary>
 public sealed class MoveAdeptEffect : Effect
@@ -14,9 +14,7 @@ public sealed class MoveAdeptEffect : Effect
   /// </summary>
   public const int Reward = 2;
 
-  public override string Description => $"Быстрое: перевести адепта из одной теории в другую и получить {Reward}$";
-
-  public override bool IsQuick => true;
+  public override string Description => $"Перевести адепта из одной теории в другую и получить {Reward}$";
 
   public override bool RequiresTheory => true;
 

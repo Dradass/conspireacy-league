@@ -61,7 +61,7 @@ public partial class Main : Node2D
 	roundController.Initialize(board, session, camera);
 	roundController.Hint += hud.ShowMessage;
 
-	var debugDumper = new DebugStateDumper { Name = "DebugStateDumper", Session = session };
+	var debugDumper = new DebugStateDumper { Name = "DebugStateDumper", Session = session, Board = board };
 	AddChild(debugDumper);
 	debugDumper.Saved += hud.ShowMessage;
 

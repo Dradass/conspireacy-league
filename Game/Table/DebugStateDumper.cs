@@ -21,6 +21,11 @@ public partial class DebugStateDumper : Node
   public GameSession Session { get; init; } = null!;
 
   /// <summary>
+  /// Стол: виды карточек на нём попадают в снимок (раздел BoardViews).
+  /// </summary>
+  public Board Board { get; init; } = null!;
+
+  /// <summary>
   /// Снимок сохранён; аргумент — сообщение с путём к файлу.
   /// </summary>
   public event Action<string>? Saved;
@@ -31,7 +36,12 @@ public partial class DebugStateDumper : Node
       return;
 
     var path = ProjectSettings.GlobalizePath(FilePath);
-    File.WriteAllText(path, GameStateDump.ToJson(Session));
+    var views = Board.AllViews.Select(pair => new GameStateDump.DumpView(
+      pair.Cell.X,
+      pair.Cell.Y,
+      pair.View.Card.Name,
+      $"({pair.View.Position.X:0},{pair.View.Position.Y:0})"));
+    File.WriteAllText(path, GameStateDump.ToJson(Session, views));
     GetViewport().SetInputAsHandled();
     GD.Print($"Состояние партии сохранено: {path}");
     Saved?.Invoke($"Состояние партии сохранено: {path}");

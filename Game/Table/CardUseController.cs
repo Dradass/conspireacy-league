@@ -2,6 +2,7 @@ using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Core.Theories;
 using ConspiracyLeague.Game.Cards;
 using ConspiracyLeague.Game.Ui;
 using Godot;
@@ -86,7 +87,9 @@ public partial class CardUseController : Node
     Cell? SecondTargetCell = null,
     PlacementChoice? Placement = null,
     OwnedTheoryCard? OwnedTheory = null,
-    IReadOnlyList<TheoryColumn>? Theories = null)
+    IReadOnlyList<TheoryColumn>? Theories = null,
+    Cell? CopiedCell = null,
+    Effect? CopiedOption = null)
   {
     /// <summary>
     /// Игрок ещё выбирает теорию-источник.
@@ -108,8 +111,14 @@ public partial class CardUseController : Node
     /// </summary>
     public bool PicksTargetCell =>
       PicksBorrowedCell
+      || PicksCopiedCell
       || Active.RequiresTargetCell && !Active.BorrowsTargetCard && TargetCell is null
       || PicksSecondTargetCell;
+
+    /// <summary>
+    /// Копирование выбрано через чужое действие: теперь выбирают карточку, действие которой скопируют.
+    /// </summary>
+    public bool PicksCopiedCell => BorrowedOption is CopyRivalCardEffect && CopiedCell is null;
 
     /// <summary>
     /// Игрок выбирает вторую карточку на поле.
@@ -119,12 +128,13 @@ public partial class CardUseController : Node
     /// <summary>
     /// Действие, для которого сейчас выбирают карточку на поле.
     /// </summary>
-    public Effect CellPicker => PicksBorrowedCell ? Option : Active;
+    public Effect CellPicker => PicksCopiedCell ? BorrowedOption! : PicksBorrowedCell ? Option : Active;
 
     /// <summary>
-    /// Действие, для которого сейчас выбирают цели: вариант чужой карточки, если он выбран, иначе своё.
+    /// Действие, для которого сейчас выбирают цели: скопированный вариант, если он выбран, иначе вариант чужой карточки,
+    /// иначе своё.
     /// </summary>
-    public Effect Active => BorrowedOption ?? Option;
+    public Effect Active => CopiedOption ?? BorrowedOption ?? Option;
   }
 
   /// <summary>
@@ -157,7 +167,7 @@ public partial class CardUseController : Node
     // Меню закрыли, не выбрав вариант, — выбор отменяется. Откладываем, как и у основного меню.
     _borrowMenu.PopupHide += () => Callable.From(() =>
     {
-      if (_targeting is { BorrowedCell: not null, BorrowedOption: null })
+      if (_targeting is { BorrowedCell: not null, BorrowedOption: null } or { CopiedCell: not null, CopiedOption: null })
         EndTargeting();
     }).CallDeferred();
     AddChild(_borrowMenu);
@@ -306,7 +316,7 @@ public partial class CardUseController : Node
     }
     // Если основная теория ждёт выбора владельца, подсказку выставит выбор.
     if (_session.PendingTheoryTrigger is null)
-      Hint?.Invoke($"Применена карточка теории «{owned.Card.Name}»: {owned.Card.OnPlayFromHand.Description}.");
+      Hint?.Invoke(TheoryTriggerPrefix(owned.Card.Theory) + $"Применена карточка теории «{owned.Card.Name}»: {owned.Card.OnPlayFromHand.Description}.");
   }
 
   /// <summary>
@@ -589,26 +599,35 @@ public partial class CardUseController : Node
     var effect = trigger.Effect;
     var owner = trigger.Owner;
     var name = $"«{trigger.Parent.Card.Name}» ({owner})";
+    var prefix = $"Сработал эффект теории: \"{trigger.Parent.Card.Theory}\". ";
     _hand.Picking = effect.RequiresHandCard && trigger.HandCard is null;
     _hand.SelectedCard = trigger.HandCard;
 
     if (_hand.Picking)
     {
-      Hint?.Invoke($"Основная теория {name}: выберите карточку в руке. Esc — пропустить действие.");
+      Hint?.Invoke(prefix + $"Основная теория {name}: выберите карточку в руке. Esc — пропустить действие.");
       return;
     }
     if (effect.RequiresTheory && trigger.Theory is null)
     {
       _board.ShowTargets(_board.Field.TheoryColumns.Where(theory => effect.CanTargetTheory(theory, owner)).SelectMany(theory => theory.Cells));
-      Hint?.Invoke($"Основная теория {name}: выберите теорию. Esc — пропустить действие.");
+      Hint?.Invoke(prefix + $"Основная теория {name}: выберите теорию. Esc — пропустить действие.");
       return;
     }
     if (effect.RequiresTargetCell && trigger.Cell is null)
     {
       _board.ShowAvailable(effect.TargetCells(trigger.Context).Where(target => target.Check.IsAllowed));
-      Hint?.Invoke($"Основная теория {name}: выберите подсвеченную карточку. Esc — пропустить действие.");
+      Hint?.Invoke(prefix + $"Основная теория {name}: выберите подсвеченную карточку. Esc — пропустить действие.");
     }
   }
+
+  /// <summary>
+  /// Начало подсказки, если эффект базовой теории сработал от дочерней карточки; иначе пусто.
+  /// </summary>
+  private string TheoryTriggerPrefix(Theory theory) =>
+    theory.Parent is { } parent && _board.Field.TheoryCards.Any(owned => owned.Card.Theory == parent)
+      ? $"Сработал эффект теории: \"{parent}\". "
+      : string.Empty;
 
   /// <summary>
   /// Щелчок или Esc, пока владелец основной теории выбирает цель её действия.
@@ -761,6 +780,10 @@ public partial class CardUseController : Node
       context = context.WithSecondTargetCell(second);
     if (targeting.BorrowedOption is { } option)
       context = context.WithBorrowedOption(option);
+    if (targeting.CopiedCell is { } copied)
+      context = context.WithCopiedCell(copied);
+    if (targeting.CopiedOption is { } copiedOption)
+      context = context.WithCopiedOption(copiedOption);
     return context;
   }
 
@@ -793,6 +816,11 @@ public partial class CardUseController : Node
       Borrow(target.ToCell());
       return;
     }
+    if (_targeting.PicksCopiedCell)
+    {
+      BorrowCopied(target.ToCell());
+      return;
+    }
 
     _targeting = _targeting.TargetCell is null
       ? _targeting with { TargetCell = target.ToCell() }
@@ -816,19 +844,62 @@ public partial class CardUseController : Node
 
     _targeting = _targeting! with { BorrowedCell = cell };
     _board.HideAvailable();
+    // Копирование не копирует копирование: его выбирают через карточку, которую уже копируют.
+    if (_targeting!.Option is CopyRivalCardEffect)
+      options = options.Where(option => option is not CopyRivalCardEffect).ToList();
+    if (options.Count == 0)
+    {
+      UseDenied?.Invoke($"Действие «{card.Name}» скопировать нельзя. Выберите другую карточку или нажмите Esc.");
+      return;
+    }
     if (options.Count == 1)
     {
       ChooseBorrowed(options[0]);
       return;
     }
 
+    ShowOptionMenu(card, options, option => ContextFor(_targeting! with { BorrowedOption = option }));
+  }
+
+  /// <summary>
+  /// Выбрана карточка, действие которой скопируют через чужое действие (<see cref="CopyRivalCardEffect"/>):
+  /// теперь выбирают вариант её действия.
+  /// </summary>
+  private void BorrowCopied(Cell cell)
+  {
+    var card = _board.Field.CardAt(cell)!;
+    var options = CopyableOptions(card);
+    if (options.Count == 0)
+    {
+      UseDenied?.Invoke($"Действие «{card.Name}» скопировать нельзя. Выберите другую карточку или нажмите Esc.");
+      return;
+    }
+
+    _targeting = _targeting! with { CopiedCell = cell };
+    _board.HideAvailable();
+    if (options.Count == 1)
+    {
+      ChooseCopied(options[0]);
+      return;
+    }
+
+    ShowOptionMenu(card, options, option => ContextFor(_targeting! with { CopiedOption = option }));
+  }
+
+  /// <summary>
+  /// Меню вариантов действия карточки. Вариант, который сейчас некуда применить, виден, но недоступен.
+  /// </summary>
+  /// <param name="card">Карточка, чьи варианты показываем.</param>
+  /// <param name="options">Варианты.</param>
+  /// <param name="contextFor">Контекст, если выбран этот вариант.</param>
+  private void ShowOptionMenu(Card card, IReadOnlyList<Effect> options, Func<Effect, GameContext> contextFor)
+  {
     _borrowMenu.Clear();
     _borrowMenu.AddSeparator(card.Name);
     for (var i = 0; i < options.Count; i++)
     {
       _borrowMenu.AddItem(options[i].Description, i);
-      // Вариант, который сейчас некуда применить, виден, но недоступен — причина во всплывающей подсказке.
-      if (DenialOf(options[i], ContextFor(_targeting with { BorrowedOption = options[i] })) is { } reason)
+      if (DenialOf(options[i], contextFor(options[i])) is { } reason)
       {
         var index = _borrowMenu.GetItemIndex(i);
         _borrowMenu.SetItemDisabled(index, true);
@@ -845,10 +916,34 @@ public partial class CardUseController : Node
   private static List<Effect> BorrowableOptions(Card card) =>
     card.OnPlayFromHand.Options.Where(option => option.CanBeBorrowed).ToList();
 
+  /// <summary>
+  /// Варианты действия карточки, которые можно скопировать: копирование не копирует копирование.
+  /// </summary>
+  private static List<Effect> CopyableOptions(Card card) =>
+    BorrowableOptions(card).Where(option => option is not CopyRivalCardEffect).ToList();
+
   private void OnBorrowMenuIdPressed(long id)
   {
-    if (_targeting is { BorrowedCell: { } cell })
+    if (_targeting is { CopiedCell: { } copied, CopiedOption: null })
+      ChooseCopied(CopyableOptions(_board.Field.CardAt(copied)!)[(int)id]);
+    else if (_targeting is { BorrowedCell: { } cell })
       ChooseBorrowed(BorrowableOptions(_board.Field.CardAt(cell)!)[(int)id]);
+  }
+
+  /// <summary>
+  /// Выбран вариант действия карточки, которую скопируют: выполнить сразу или сначала выбрать для него цели.
+  /// </summary>
+  private void ChooseCopied(Effect option)
+  {
+    _targeting = _targeting! with { CopiedOption = option };
+    if (DenialOf(option, ContextFor(_targeting)) is { } reason)
+    {
+      EndTargeting();
+      UseDenied?.Invoke(reason);
+      return;
+    }
+
+    Advance();
   }
 
   /// <summary>
@@ -927,20 +1022,5 @@ public partial class CardUseController : Node
     // После быстрого действия карточка поворачивается, иначе переворачивается; действие могло перевернуть
     // и чужие карточки (например, инспекция).
     _board.ShowPlayStates();
-    if (check.Succeeded && context.HandCard is not null)
-      ShowHiddenCard(view, context);
-  }
-
-  /// <summary>
-  /// Карточка выложена взакрытую: она выезжает из сыгранной карточки на верх стопки теории
-  /// и отмечается миплом владельца.
-  /// </summary>
-  private void ShowHiddenCard(CardView source, GameContext context)
-  {
-    var top = context.TargetTheory!.Top;
-    var hidden = CardView.Create(_board.Field.CardAt(top)!);
-    hidden.Position = source.Position;
-    _board.Place(hidden, top.ToVector2I());
-    hidden.CardOwner = context.CurrentPlayer;
   }
 }

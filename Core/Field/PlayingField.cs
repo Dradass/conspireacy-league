@@ -108,6 +108,16 @@ public sealed class PlayingField
   public event Action<Cell, Player>? HiddenCardPeeked;
 
   /// <summary>
+  /// Закрытая карточка выложена в стопку теории; аргументы — её ячейка и владелец.
+  /// </summary>
+  public event Action<Cell, Player>? HiddenCardPlaced;
+
+  /// <summary>
+  /// Карточка теории принесла деньги её владельцу; аргументы — карточка и сумма в $.
+  /// </summary>
+  public event Action<OwnedTheoryCard, int>? TheoryEarned;
+
+  /// <summary>
   /// В теорию поставлен мипл-лидер; аргументы — теория и чей мипл.
   /// </summary>
   public event Action<TheoryColumn, Player>? LeaderMeepleAdded;
@@ -118,10 +128,10 @@ public sealed class PlayingField
   public event Action<IReadOnlyList<TheoryColumn>>? LeaderMeeplesRemoved;
 
   /// <summary>
-  /// Карточка личного штаба принесла деньги; аргументы — ячейка карточки, сколько принесло само действие
-  /// и сколько добавили учёные (<see cref="ScientistPassive"/>).
+  /// Карточка личного штаба принесла деньги; аргументы — ячейка карточки, сколько принесло само действие,
+  /// сколько добавили учёные (<see cref="ScientistPassive"/>) и сколько добавили карточки теорий.
   /// </summary>
-  public event Action<Cell, int, int>? CardEarned;
+  public event Action<Cell, int, int, int>? CardEarned;
 
   /// <summary>
   /// Вероятность успеха персонажа навсегда повышена (<see cref="Train"/>); аргумент — его ячейка.
@@ -340,10 +350,13 @@ public sealed class PlayingField
 
   /// <summary>
   /// Сколько % к успеху соседу даёт ученый в ячейке: базовый бонус учёного и, если владелец держит
-  /// «Технологии от инопланетян», ещё бонус <see cref="ScientistBoostPassive.SuccessBonus"/>.
+  /// «Технологии от инопланетян», он заменяет обычный бонус учёного на <see cref="ScientistBoostPassive.SuccessBonus"/>
+  /// (не складывается с ним).
   /// </summary>
   private int ScientistSuccessBonusOf(Cell scientist) =>
-    ScientistPassive.NeighborSuccessBonus + (HoldsPassive<ScientistBoostPassive>(OwnerOfCell(scientist)) ? ScientistBoostPassive.SuccessBonus : 0);
+    HoldsPassive<ScientistBoostPassive>(OwnerOfCell(scientist))
+      ? ScientistBoostPassive.SuccessBonus
+      : ScientistPassive.NeighborSuccessBonus;
 
   /// <summary>
   /// Сколько $ добавляет ученый в ячейке к деньгам соседа: базовый бонус учёного и, если владелец держит
@@ -805,11 +818,11 @@ public sealed class PlayingField
       if (holder == newLeader || !column.Members.Any(member => member.Owner == holder))
         continue;
 
-      holder.Earn(EbolaPassive.HolderBonus);
+      EarnForTheory(owned, holder, EbolaPassive.HolderBonus);
       if (newLeader.CanAfford(EbolaPassive.LeaderPayment))
       {
         newLeader.Spend(EbolaPassive.LeaderPayment);
-        holder.Earn(EbolaPassive.LeaderPayment);
+        EarnForTheory(owned, holder, EbolaPassive.LeaderPayment);
       }
     }
   }
@@ -928,11 +941,12 @@ public sealed class PlayingField
     // Бонус дают учёные рядом с карточкой, принёсшей деньги, если она в личном штабе игрока; иначе (чужую карточку
     // использовали или скопировали) — учёные рядом с карточкой, которая действовала.
     var bonusCell = _playerZones[player].Contains(source) ? source : cell;
-    var bonus = MoneyBonusAt(bonusCell) + ProfessionMoneyBonusAt(source) + HomelessMoneyBonusAt(source) + PoliticianMoneyBonusAt(source);
-    player.Earn(bonus);
+    var scientistBonus = MoneyBonusAt(bonusCell);
+    var theoryBonus = ProfessionMoneyBonusAt(source) + HomelessMoneyBonusAt(source) + PoliticianMoneyBonusAt(source);
+    player.Earn(scientistBonus + theoryBonus);
     // Деньги всплывают над карточкой, которая выполнила действие (своей у текущего игрока), даже если действие
     // было за чужую карточку.
-    CardEarned?.Invoke(cell, earned, bonus);
+    CardEarned?.Invoke(cell, earned, scientistBonus, theoryBonus);
   }
 
   private void RequireTheoryTarget(Effect option, GameContext context)
@@ -1101,7 +1115,8 @@ public sealed class PlayingField
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
-    ExecuteBorrowed(cell, context);
+    // Вариант, который копируем: выбранный через чужое действие (CopiedOption) или прямо (BorrowedOption).
+    ExecuteBorrowed(cell, context, context.CopiedOption ?? context.BorrowedOption);
   }
 
   /// <summary>
@@ -1148,10 +1163,10 @@ public sealed class PlayingField
   /// Выполнить выбранный вариант действия карточки в ячейке (<see cref="GameContext.BorrowedOption"/>).
   /// </summary>
   /// <returns>Выполненный вариант.</returns>
-  private Effect ExecuteBorrowed(Cell cell, GameContext context)
+  private Effect ExecuteBorrowed(Cell cell, GameContext context, Effect? chosen = null)
   {
     var card = _cards[cell];
-    var option = context.BorrowedOption ?? throw new ArgumentException("Не выбрано действие карточки.", nameof(context));
+    var option = chosen ?? context.BorrowedOption ?? throw new ArgumentException("Не выбрано действие карточки.", nameof(context));
     if (!card.OnPlayFromHand.Options.Contains(option))
       throw new ArgumentException($"У карточки «{card}» нет действия «{option}».", nameof(context));
     if (!option.CanBeBorrowed)
@@ -1644,8 +1659,32 @@ public sealed class PlayingField
     foreach (var owned in _theoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).ToList())
     {
       if (owned.Owner != newLeader && column.Members.Any(member => member.Owner == owned.Owner && member.Card is HiddenCard))
-        owned.Owner.Earn(IlluminatiPassive.Payment);
+        EarnForTheory(owned, owned.Owner, IlluminatiPassive.Payment);
     }
+  }
+
+  /// <summary>
+  /// Деньги пришли от карточки теории: игрок их получает, а над карточкой всплывает сумма (<see cref="TheoryEarned"/>).
+  /// </summary>
+  /// <param name="owned">Карточка теории, которая принесла деньги.</param>
+  /// <param name="player">Получатель.</param>
+  /// <param name="amount">Сумма в $.</param>
+  public void EarnForTheory(OwnedTheoryCard owned, Player player, int amount)
+  {
+    if (amount <= 0)
+      return;
+
+    player.Earn(amount);
+    ReportTheoryEarned(owned, amount);
+  }
+
+  /// <summary>
+  /// Сообщить, что карточка теории принесла деньги, уже полученные владельцем (<see cref="TheoryEarned"/>).
+  /// </summary>
+  public void ReportTheoryEarned(OwnedTheoryCard owned, int amount)
+  {
+    if (amount > 0)
+      TheoryEarned?.Invoke(owned, amount);
   }
 
   /// <summary>
@@ -1782,6 +1821,7 @@ public sealed class PlayingField
     var person = (PersonCard)card;
     _cards[cell] = person;
     TheoryColumn? joined = null;
+    TheoryColumn? created = null;
     if (CommonZone.Contains(cell))
     {
       var member = new TheoryMember(cell, person, player);
@@ -1793,6 +1833,7 @@ public sealed class PlayingField
       else
       {
         joined = new TheoryColumn(person.Theory!, member);
+        created = joined;
         _theoryColumns.Add(joined);
         ResolveColumnConflict(joined);
       }
@@ -1801,7 +1842,7 @@ public sealed class PlayingField
     player.Spend(check.Cost);
     if (joined is not null)
     {
-      GrowCommonZone();
+      GrowCommonZone(created);
       UpdateTheoryCards();
       if (check.Column is { } joinedColumn)
       {
@@ -1831,8 +1872,13 @@ public sealed class PlayingField
   /// <returns>Условия, на которых карточка положена.</returns>
   /// <exception cref="InvalidOperationException">Карточку сюда класть нельзя.</exception>
   /// <param name="discount">Скидка на выкладывание, $.</param>
-  public PlacementCheck PlaceHidden(Card card, TheoryColumn column, Player player, int discount = 0) =>
-    Place(new HiddenCard(card, discount), column.Top.Above, player);
+  public PlacementCheck PlaceHidden(Card card, TheoryColumn column, Player player, int discount = 0)
+  {
+    var cell = column.Top.Above;
+    var check = Place(new HiddenCard(card, discount), cell, player);
+    HiddenCardPlaced?.Invoke(cell, player);
+    return check;
+  }
 
   /// <summary>
   /// Закрытые персонажи (<see cref="HiddenCard"/>) игрока на поле — во всех стопках теорий, включая закрытые штабы.
@@ -1887,6 +1933,11 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Сколько $ получает владелец раскрытой карточки, совпавшей с теорией штаба, за каждую единицу суммарного влияния штаба.
+  /// </summary>
+  public const int RevealBonusPerInfluence = 2;
+
+  /// <summary>
   /// Проверить, может ли игрок раскрыть закрытую карточку (<see cref="HiddenCard"/>) другого игрока.
   /// </summary>
   public PlacementCheck CheckReveal(Cell cell, Player player)
@@ -1926,6 +1977,48 @@ public sealed class PlayingField
 
     ((HiddenCard)_cards[cell]).Reveal();
     HiddenCardRevealed?.Invoke(cell);
+    ResolveRevealed(cell);
+  }
+
+  /// <summary>
+  /// Раскрыть все закрытые карточки на поле (в конце игры перед итоговым подсчётом).
+  /// </summary>
+  public void RevealAllHiddenCards()
+  {
+    for (var cell = FirstUnrevealedHidden(); cell is { } target; cell = FirstUnrevealedHidden())
+    {
+      ((HiddenCard)_cards[target]).Reveal();
+      HiddenCardRevealed?.Invoke(target);
+      ResolveRevealed(target);
+    }
+  }
+
+  /// <summary>
+  /// Первая закрытая, но ещё не раскрытая карточка в теориях, или <c>null</c>.
+  /// </summary>
+  private Cell? FirstUnrevealedHidden() =>
+    _theoryColumns
+      .SelectMany(column => column.Members)
+      .Where(member => member.Card is HiddenCard { IsRevealed: false })
+      .Select(member => (Cell?)member.Cell)
+      .FirstOrDefault();
+
+  /// <summary>
+  /// Что происходит с раскрытой карточкой в штабе теории:
+  /// без теории — ничего; с теорией штаба — владелец получает <see cref="RevealBonusPerInfluence"/>$ за каждую единицу
+  /// суммарного влияния штаба; с другой теорией — карточка уходит из игры.
+  /// </summary>
+  private void ResolveRevealed(Cell cell)
+  {
+    var column = ColumnAt(cell) ?? throw new InvalidOperationException("Раскрытая карточка не в теории.");
+    var face = ((HiddenCard)_cards[cell]).Face;
+    if (face is not PersonCard { Theory: { } theory })
+      return;
+
+    if (theory == column.Theory)
+      EarnAt(cell, column.OwnerAt(cell) ?? throw new InvalidOperationException("У карточки нет владельца."), RevealBonusPerInfluence * column.Influence);
+    else
+      RemoveFromTheory(column, cell);
   }
 
   /// <summary>
@@ -1989,7 +2082,7 @@ public sealed class PlayingField
 
     player.Earn(amount);
     if (cell is { } source)
-      CardEarned?.Invoke(source, amount, 0);
+      CardEarned?.Invoke(source, amount, 0, 0);
   }
 
   /// <summary>
@@ -2258,14 +2351,33 @@ public sealed class PlayingField
   public TheoryColumn? ColumnOf(Theory theory) => _theoryColumns.FirstOrDefault(column => column.Theory == theory);
 
   /// <summary>
+  /// Ячейки, которые подсвечивают, пока игрок решает, брать ли карточку с рынка. Теория выложена — вся её стопка.
+  /// Подтеория выложена — её стопка и основная теория. Подтеории нет — только первая карточка основной теории.
+  /// </summary>
+  public IEnumerable<Cell> TheoryCellsOf(Card card)
+  {
+    if (card is not PersonCard { Theory: { } theory })
+      return [];
+
+    if (theory.Parent is not { } parent)
+      return ColumnOf(theory)?.Cells ?? [];
+
+    if (ColumnOf(theory) is { } child)
+      return child.Cells.Concat(ColumnOf(parent)?.Cells ?? []);
+
+    return ColumnOf(parent) is { } main ? [main.TheoryCell] : [];
+  }
+
+  /// <summary>
   /// Вырастить общую зону под выложенные карточки. Нижняя строка зоны не меняется.
   /// </summary>
+  /// <param name="created">Новая теория, если карточка открыла её; зона растёт в сторону, где она стоит у края.</param>
   /// <remarks>
   /// Над самой высокой карточкой остаётся <see cref="FieldLayout.CommonZoneFreeRows"/> свободных ряда.
-  /// Когда во всех столбцах зоны есть карточки, зона расширяется на <see cref="FieldLayout.CommonZoneSideGrowth"/>
-  /// столбца с каждой стороны, пока не упрётся в края поля.
+  /// Если новая теория легла в крайний столбец зоны, зона расширяется на <see cref="FieldLayout.CommonZoneSideGrowth"/>
+  /// столбца с этой стороны, пока не упрётся в край поля.
   /// </remarks>
-  private void GrowCommonZone()
+  private void GrowCommonZone(TheoryColumn? created)
   {
     var zone = CommonZone;
     var cells = _cards.Keys.Where(zone.Contains).ToList();
@@ -2275,11 +2387,13 @@ public sealed class PlayingField
 
     var left = zone.Left;
     var right = zone.Left + zone.Width;
-    while ((left > 0 || right < Columns)
-      && Enumerable.Range(left, right - left).All(column => cells.Any(cell => cell.Column == column)))
+    if (created is not null)
     {
-      left = Math.Max(0, left - FieldLayout.CommonZoneSideGrowth);
-      right = Math.Min(Columns, right + FieldLayout.CommonZoneSideGrowth);
+      var column = created.TheoryCell.Column;
+      if (column == zone.Left)
+        left = Math.Max(0, left - FieldLayout.CommonZoneSideGrowth);
+      if (column == right - 1)
+        right = Math.Min(Columns, right + FieldLayout.CommonZoneSideGrowth);
     }
 
     var grown = new Zone(left, zone.BottomRow - height + 1, right - left, height);
@@ -2410,6 +2524,103 @@ public sealed class PlayingField
     TheoryColumnMoved?.Invoke(column, moves);
   }
 
+  /// <summary>
+  /// Проверить, можно ли вставить дочернюю теорию в перегородку между столбцами <paramref name="boundary"/> - 1 и
+  /// <paramref name="boundary"/>: в ряду дочерних теорий, вплотную к стопке родительской (или её дочерней) теории,
+  /// справа или слева от перегородки (см. <see cref="WallInsertion"/>).
+  /// </summary>
+  public PlacementCheck CheckInWall(Card card, int boundary, Player player) => WallInsertionAt(card, boundary).Check;
+
+  /// <summary>
+  /// Куда вставляется дочерняя теория в перегородке и можно ли это.
+  /// </summary>
+  /// <param name="ToLeft">Новая теория встаёт в столбец слева от перегородки; иначе — в столбец справа.</param>
+  /// <param name="Check">Условия вставки.</param>
+  private readonly record struct WallInsertion(bool ToLeft, PlacementCheck Check);
+
+  /// <summary>
+  /// Вставка дочерней теории в перегородку. Если родительская (или её дочерняя) теория стоит справа от перегородки,
+  /// новая встаёт слева, и занятые столбцы слева сдвигаются на 1 влево. Иначе, если она стоит слева, новая встаёт справа,
+  /// и занятые столбцы справа сдвигаются на 1 вправо.
+  /// </summary>
+  private WallInsertion WallInsertionAt(Card card, int boundary)
+  {
+    var deny = (string reason) => new WallInsertion(false, PlacementCheck.Deny(reason));
+    if (card is not PersonCard { Theory: { Parent: { } parentTheory } theory })
+      return deny("В перегородку можно вставить только дочернюю теорию.");
+    if (ColumnOf(theory) is not null)
+      return deny($"Теория «{theory}» уже выложена.");
+    if (ColumnOf(parentTheory) is not { } parent || parent.IsClosed)
+      return deny($"Родительская теория «{parentTheory}» не выложена или её штаб закрыт.");
+
+    var row = CommonZone.BottomRow - 1;
+    var leftCell = new Cell(boundary - 1, row);
+    var rightCell = new Cell(boundary, row);
+    var family = _theoryColumns.Where(column => column == parent || column.Theory.Parent == parentTheory).ToList();
+    bool InFamily(Cell cell) => family.Any(column => column.Cells.Contains(cell));
+
+    var canLeft = _cards.ContainsKey(leftCell) && InFamily(rightCell)
+      && _theoryColumns.Where(column => column.TheoryCell.Column < boundary).Select(column => column.TheoryCell.Column).DefaultIfEmpty(boundary).Min() > 0;
+    if (canLeft)
+      return new WallInsertion(true, PlacementCheck.Allow());
+
+    var canRight = _cards.ContainsKey(rightCell) && InFamily(leftCell)
+      && _theoryColumns.Where(column => column.TheoryCell.Column >= boundary).Select(column => column.TheoryCell.Column).DefaultIfEmpty(boundary - 1).Max() < Columns - 1;
+    if (canRight)
+      return new WallInsertion(false, PlacementCheck.Allow());
+
+    if (!_cards.ContainsKey(leftCell) && !_cards.ContainsKey(rightCell))
+      return deny("Здесь свободно — карточку можно положить обычно.");
+    return deny($"Перегородка должна быть вплотную к карточке родительской теории «{parentTheory}» и в поле должно хватить места для сдвига.");
+  }
+
+  /// <summary>
+  /// Вставить дочернюю теорию в перегородку (см. <see cref="CheckInWall"/>): теории слева сдвигаются на 1 столбец влево,
+  /// и карточка ложится в освободившийся столбец.
+  /// </summary>
+  /// <returns>Условия, на которых карточка положена.</returns>
+  /// <exception cref="InvalidOperationException">Карточку сюда класть нельзя.</exception>
+  public PlacementCheck PlaceInWall(Card card, int boundary, Player player)
+  {
+    var insertion = WallInsertionAt(card, boundary);
+    if (!insertion.Check.IsAllowed)
+      throw new InvalidOperationException(insertion.Check.Reason);
+
+    var row = CommonZone.BottomRow - 1;
+    if (insertion.ToLeft)
+    {
+      // Сдвигаем левые теории от ближней к дальней: их новые столбцы всегда свободны.
+      var left = _theoryColumns.Where(column => column.TheoryCell.Column < boundary).OrderBy(column => column.TheoryCell.Column).ToList();
+      foreach (var column in left)
+        MoveColumn(column, -1);
+
+      // Сдвинутые теории не должны выпасть за общую зону: зона тянется влево.
+      var leftmost = left.Select(column => column.TheoryCell.Column).DefaultIfEmpty(CommonZone.Left).Min();
+      if (leftmost < CommonZone.Left)
+      {
+        CommonZone = CommonZone with { Left = leftmost, Width = CommonZone.Width + CommonZone.Left - leftmost };
+        CommonZoneChanged?.Invoke(CommonZone);
+      }
+
+      return Place(card, new Cell(boundary - 1, row), player);
+    }
+
+    // Правые теории сдвигаем от дальней к ближней, чтобы не наступить на соседний столбец.
+    var right = _theoryColumns.Where(column => column.TheoryCell.Column >= boundary).OrderByDescending(column => column.TheoryCell.Column).ToList();
+    foreach (var column in right)
+      MoveColumn(column, 1);
+
+    var rightmost = right.Select(column => column.TheoryCell.Column).DefaultIfEmpty(CommonZone.Left + CommonZone.Width - 1).Max();
+    var zoneRight = CommonZone.Left + CommonZone.Width - 1;
+    if (rightmost > zoneRight)
+    {
+      CommonZone = CommonZone with { Width = rightmost - CommonZone.Left + 1 };
+      CommonZoneChanged?.Invoke(CommonZone);
+    }
+
+    return Place(card, new Cell(boundary, row), player);
+  }
+
   private static void MoveCells<T>(IDictionary<Cell, T> values, IReadOnlyList<(Cell From, Cell To)> moves)
   {
     var moved = moves.Where(move => values.ContainsKey(move.From)).Select(move => (move.To, values[move.From])).ToList();
@@ -2428,6 +2639,11 @@ public sealed class PlayingField
       cells.Add(to);
   }
 
+  /// <summary>
+  /// Сколько $ стоит одна единица суммарного убеждения теории, чтобы присоединить к ней карточку без теории.
+  /// </summary>
+  public const int JoiningPricePerInfluence = 2;
+
   private PlacementCheck CheckJoining(Cell cell, Player player, PersonCard person)
   {
     if (_theoryColumns.Count == 0)
@@ -2437,7 +2653,7 @@ public sealed class PlayingField
     if (column is null)
       return PlacementCheck.Deny("Карточку без теории можно положить только сверху стопки одной из теорий.");
 
-    var cost = Math.Max(0, column.Influence - person.JoiningDiscount);
+    var cost = Math.Max(0, JoiningPricePerInfluence * column.Influence - person.JoiningDiscount);
     return player.CanAfford(cost)
       ? PlacementCheck.Allow(cost, column)
       : PlacementCheck.Deny($"Недостаточно денег: чтобы присоединиться к теории «{column.Theory}», нужно {cost}$, а у вас {player.Money}$.");

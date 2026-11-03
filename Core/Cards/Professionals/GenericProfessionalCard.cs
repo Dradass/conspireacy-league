@@ -116,7 +116,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Scientist => new PlayOwnCardEffect(),
     Profession.Psychic => new ChooseOneEffect(new PeekHiddenCardEffect(), new GainMoneyEffect(7)),
     Profession.Policeman => new InspectionEffect(),
-    Profession.Driver => new ChooseOneEffect(new MoveAdeptEffect(), new TakeToHandEffect()),
+    Profession.Driver => new ChooseOneEffect(new MoveAdeptEffect(), new QuickEffect(new TakeToHandEffect(reward: 2))),
     Profession.Coach => new ChooseOneEffect(new TrainEffect(), new OpenMarketCardsEffect(2, 3)),
     Profession.Actor => new ChooseOneEffect(
       new CopyRivalCardEffect(),

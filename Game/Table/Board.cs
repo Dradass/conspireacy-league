@@ -1,6 +1,7 @@
 using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Core.Theories;
 using ConspiracyLeague.Game.Cards;
 using ConspiracyLeague.Game.Ui;
 using Godot;
@@ -73,7 +74,24 @@ public partial class Board : Node2D
   private static readonly Color MarketDeckColor = new("5a4a7a");
 
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
+
+  /// <summary>
+  /// Перегородка, в которую можно вставить теорию: номер столбца справа от неё, или <c>null</c>.
+  /// </summary>
+  private int? _wall;
+
+  /// <summary>
+  /// Половина ширины перегородки между столбцами, px: в таком расстоянии от границы столбцов считается, что карточка в перегородке.
+  /// </summary>
+  private const float WallHalfWidth = 10f;
+
+  private static readonly Color WallColor = new(0.55f, 0.95f, 0.6f, 0.8f);
   private readonly Dictionary<Vector2I, CardView> _views = new();
+
+  /// <summary>
+  /// Все виды карточек на столе: ячейка, по которой они лежат в словаре, и вид. Для отладки (<see cref="DebugStateDumper"/>).
+  /// </summary>
+  public IEnumerable<(Vector2I Cell, CardView View)> AllViews => _views.Select(pair => (pair.Key, pair.Value));
   private readonly Dictionary<TheoryColumn, AdeptsView> _adepts = new();
   private readonly Dictionary<Vector2I, AdeptsView> _cardAdepts = new();
   private readonly Dictionary<TheoryColumn, List<MeepleView>> _leaderMeeples = new();
@@ -156,6 +174,8 @@ public partial class Board : Node2D
     Field.LeaderMeeplesRemoved += OnLeaderMeeplesRemoved;
     Field.HiddenCardRevealed += OnHiddenCardRevealed;
     Field.HiddenCardPeeked += OnHiddenCardPeeked;
+    Field.HiddenCardPlaced += OnHiddenCardPlaced;
+    Field.TheoryEarned += OnTheoryEarned;
     Field.TheoryCardRemoved += OnTheoryCardRemoved;
     Field.CardReplaced += OnCardReplaced;
     Field.CardsSwapped += OnCardsSwapped;
@@ -190,6 +210,8 @@ public partial class Board : Node2D
     Field.LeaderMeeplesRemoved -= OnLeaderMeeplesRemoved;
     Field.HiddenCardRevealed -= OnHiddenCardRevealed;
     Field.HiddenCardPeeked -= OnHiddenCardPeeked;
+    Field.HiddenCardPlaced -= OnHiddenCardPlaced;
+    Field.TheoryEarned -= OnTheoryEarned;
     Field.TheoryCardRemoved -= OnTheoryCardRemoved;
     Field.CardReplaced -= OnCardReplaced;
     Field.CardsSwapped -= OnCardsSwapped;
@@ -278,6 +300,12 @@ public partial class Board : Node2D
       DrawRect(slot, color with { A = AvailableFillAlpha });
       DrawRect(slot.Grow(-AvailableBorderWidth / 2), color with { A = AvailableBorderAlpha }, filled: false, width: AvailableBorderWidth);
     }
+
+    if (_wall is { } boundary)
+    {
+      var top = CellOrigin(new Vector2I(0, Field.CommonZone.BottomRow - 1)).Y;
+      DrawRect(new Rect2(boundary * CellSize.X - WallHalfWidth, top, WallHalfWidth * 2, CellSize.Y), WallColor);
+    }
   }
 
   /// <summary>
@@ -295,6 +323,29 @@ public partial class Board : Node2D
   /// Подсветить ячейки, которые можно выбрать целью действия.
   /// </summary>
   public void ShowTargets(IEnumerable<Cell> cells) => ShowAvailable(cells.Select(cell => (cell, PlacementCheck.Allowed)));
+
+  /// <summary>
+  /// Подсветить перегородку между столбцами <paramref name="boundary"/> - 1 и <paramref name="boundary"/>,
+  /// или убрать подсветку, если <c>null</c>.
+  /// </summary>
+  public void ShowWall(int? boundary)
+  {
+    _wall = boundary;
+    QueueRedraw();
+  }
+
+  /// <summary>
+  /// Перегородка между столбцами в ряду дочерних теорий под точкой стола, или <c>null</c>, если точка не в перегородке.
+  /// </summary>
+  /// <returns>Номер столбца справа от перегородки.</returns>
+  public int? WallAt(Vector2 point)
+  {
+    var local = ToLocal(point);
+    var boundary = Mathf.RoundToInt(local.X / CellSize.X);
+    var row = Mathf.FloorToInt(local.Y / CellSize.Y);
+    var inWall = Mathf.Abs(local.X - boundary * CellSize.X) <= WallHalfWidth;
+    return inWall && row == Field.CommonZone.BottomRow - 1 ? boundary : null;
+  }
 
   /// <summary>
   /// Убрать подсветку доступных ячеек.
@@ -580,12 +631,15 @@ public partial class Board : Node2D
     QueueRedraw();
   }
 
-  private void OnCardEarned(Cell cell, int amount, int bonus)
+  private void OnCardEarned(Cell cell, int amount, int scientistBonus, int theoryBonus)
   {
     var center = CellCenter(cell.ToVector2I());
     SpawnFloatingText($"+{amount}$", PlayerPalette.MainOf(Session.CurrentPlayer.Color), IncomeFontSize, center, 0);
-    if (bonus > 0)
-      SpawnFloatingText($"(Учёные: +{bonus}$)", ScientistBonusColor, ScientistBonusFontSize, center + new Vector2(0, IncomeFontSize), 0);
+    var line = 1;
+    if (scientistBonus > 0)
+      SpawnFloatingText($"(Учёные: +{scientistBonus}$)", ScientistBonusColor, ScientistBonusFontSize, center + new Vector2(0, IncomeFontSize * line++), 0);
+    if (theoryBonus > 0)
+      SpawnFloatingText($"(Бонусы теорий: +{theoryBonus}$)", ScientistBonusColor, ScientistBonusFontSize, center + new Vector2(0, IncomeFontSize * line), 0);
   }
 
   /// <summary>
@@ -703,6 +757,18 @@ public partial class Board : Node2D
   /// <summary>
   /// В теорию поставлен мипл-лидер: он падает под карточку теории, остальные миплы раздвигаются.
   /// </summary>
+  /// <summary>
+  /// Облик фигурок теории: инопланетяне — в теории «Инопланетяне среди нас» и её подтеориях,
+  /// люди в мантиях — в «Тайном правительстве» и её подтеориях.
+  /// </summary>
+  private static MeepleView.MeepleLook LookOf(TheoryColumn column)
+  {
+    var root = column.Theory.Parent ?? column.Theory;
+    if (root == TheoryCatalog.AliensAmongUs)
+      return MeepleView.MeepleLook.Alien;
+    return root == TheoryCatalog.SecretGovernment ? MeepleView.MeepleLook.Robed : MeepleView.MeepleLook.Wooden;
+  }
+
   private void OnLeaderMeepleAdded(TheoryColumn column, Player player)
   {
     if (!_leaderMeeples.TryGetValue(column, out var meeples))
@@ -712,6 +778,7 @@ public partial class Board : Node2D
     {
       Name = "LeaderMeeple",
       Color = PlayerPalette.MainOf(player.Color),
+      Look = LookOf(column),
       Scale = Vector2.One * LeaderMeepleScale,
       Height = LeaderMeepleDropHeight,
     };
@@ -886,6 +953,26 @@ public partial class Board : Node2D
   private void OnHiddenCardRevealed(Cell cell) => ViewAt(cell.ToVector2I())?.QueueRedraw();
 
   /// <summary>
+  /// Закрытую карточку выложили в стопку теории: она выезжает из-под верхней карточки стопки и отмечается миплом владельца.
+  /// </summary>
+  private void OnHiddenCardPlaced(Cell cell, Player owner)
+  {
+    var view = CardView.Create(Field.CardAt(cell)!);
+    view.CardOwner = owner;
+    view.Position = CellCenter(cell.Below.ToVector2I());
+    Place(view, cell.ToVector2I());
+  }
+
+  /// <summary>
+  /// Карточка теории принесла деньги: сумма всплывает над ней цветом владельца.
+  /// </summary>
+  private void OnTheoryEarned(OwnedTheoryCard owned, int amount)
+  {
+    var center = CellCenter(owned.Cell.ToVector2I()) - Vector2.Up * CellSize.Y / 2;
+    SpawnFloatingText($"+{amount}$", PlayerPalette.MainOf(owned.Owner.Color), IncomeFontSize, center, 0);
+  }
+
+  /// <summary>
   /// Игрок посмотрел в закрытую карточку: её лицевая сторона видна ему <see cref="PeekShowDuration"/> секунды,
   /// дальше — когда он наводит на неё мышь.
   /// </summary>
@@ -953,7 +1040,7 @@ public partial class Board : Node2D
   {
     if (!_adepts.TryGetValue(column, out var view))
     {
-      view = new AdeptsView { Name = $"Adepts{column.Theory.Name}", Position = CellCenter(column.TheoryCell.ToVector2I()) };
+      view = new AdeptsView { Name = $"Adepts{column.Theory.Name}", Position = CellCenter(column.TheoryCell.ToVector2I()), Look = LookOf(column) };
       _adeptsLayer.AddChild(view);
       _adepts[column] = view;
     }

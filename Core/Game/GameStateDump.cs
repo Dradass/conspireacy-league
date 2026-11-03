@@ -15,15 +15,17 @@ public static class GameStateDump
   /// <summary>
   /// Снимок партии в виде JSON.
   /// </summary>
-  public static string ToJson(GameSession session) =>
+  /// <param name="session">Партия.</param>
+  /// <param name="boardViews">Виды карточек на столе (<see cref="DumpView"/>); пусто — раздел не выводится.</param>
+  public static string ToJson(GameSession session, IEnumerable<DumpView>? boardViews = null) =>
     JsonSerializer.Serialize(
-      Create(session),
+      Create(session, boardViews),
       new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
   /// <summary>
   /// Снимок партии как объект.
   /// </summary>
-  public static DumpState Create(GameSession session)
+  public static DumpState Create(GameSession session, IEnumerable<DumpView>? boardViews = null)
   {
     var field = session.Field;
     var players = session.Players.Select(player => new DumpPlayer(
@@ -68,6 +70,12 @@ public static class GameStateDump
       pair.Value.Cost,
       pair.Value.Influence)).ToList();
 
+    var views = (boardViews ?? []).Select(view => new DumpBoardView(
+      CellText(new Cell(view.Column, view.Row)),
+      view.Name,
+      view.Position,
+      field.CardAt(new Cell(view.Column, view.Row)) is { } fieldCard ? fieldCard.Name : null)).ToList();
+
     return new DumpState(
       session.Round,
       session.Phase.ToString(),
@@ -80,7 +88,8 @@ public static class GameStateDump
       zones,
       theories,
       theoryCards,
-      market);
+      market,
+      views);
   }
 
   private static DumpCard DescribeCard(PlayingField field, Cell cell, string zoneOwner)
@@ -118,7 +127,22 @@ public static class GameStateDump
     IReadOnlyList<DumpCard> PersonalZones,
     IReadOnlyList<DumpTheory> Theories,
     IReadOnlyList<DumpTheoryCard> TheoryCards,
-    IReadOnlyList<DumpMarketCard> Market);
+    IReadOnlyList<DumpMarketCard> Market,
+    IReadOnlyList<DumpBoardView> BoardViews);
+
+  /// <summary>
+  /// Вид карточки на столе (то, что нарисовано), берётся из доски.
+  /// </summary>
+  /// <param name="Column">Колонка ячейки, где вид должен стоять.</param>
+  /// <param name="Row">Ряд ячейки.</param>
+  /// <param name="Name">Название карточки, которую рисует вид.</param>
+  /// <param name="Position">Где вид нарисован сейчас, в координатах стола.</param>
+  public sealed record DumpView(int Column, int Row, string Name, string Position);
+
+  /// <summary>
+  /// Вид на столе и карточка в данных поля в его ячейке: если они расходятся, вид лишний или стоит не там.
+  /// </summary>
+  public sealed record DumpBoardView(string Cell, string Name, string Position, string? FieldCard);
 
   /// <summary>
   /// Игрок: деньги и карточки в руке.

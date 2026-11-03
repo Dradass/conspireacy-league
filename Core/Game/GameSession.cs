@@ -179,16 +179,28 @@ public sealed class GameSession
   /// </summary>
   /// <returns>Условия, на которых карточка положена.</returns>
   /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
-  public PlacementCheck PlaceFromHand(Card card, Cell cell)
+  public PlacementCheck PlaceFromHand(Card card, Cell cell) =>
+    PlaceCardFromHand(card, () => Field.Place(card, cell, CurrentPlayer));
+
+  /// <summary>
+  /// Игрок, который сейчас ходит, вставляет дочернюю теорию с руки в перегородку между столбцами
+  /// (см. <see cref="PlayingField.CheckInWall"/>). Это действие.
+  /// </summary>
+  /// <returns>Условия, на которых карточка положена.</returns>
+  /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
+  public PlacementCheck PlaceInWallFromHand(Card card, int boundary) =>
+    PlaceCardFromHand(card, () => Field.PlaceInWall(card, boundary, CurrentPlayer));
+
+  private PlacementCheck PlaceCardFromHand(Card card, Func<PlacementCheck> place)
   {
     RequireAction();
     var hand = CurrentPlayer.Hand;
     if (!hand.Contains(card))
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
 
-    var check = Field.Place(card, cell, CurrentPlayer);
+    var check = place();
     // Выложенная теория могла сдвинуться в соседний столбец вместе с карточкой — берём её актуальную ячейку.
-    var placedCell = Field.CellOf(card) ?? cell;
+    var placedCell = Field.CellOf(card) ?? throw new InvalidOperationException("Карточка не легла на поле.");
     hand.Remove(card);
     if (Field.ColumnAt(placedCell) is { } theory && card is PersonCard { OnPlacedInHeadquarters: { RequiresTargetCell: true } effect })
     {
@@ -460,7 +472,21 @@ public sealed class GameSession
 
     // Пассивные способности карточек теорий срабатывают в конце раунда, уже после закрытия штабов.
     foreach (var owned in Field.TheoryCards.ToList())
-      owned.Card.HandleEvent(new RoundEnded(), new GameContext(owned.Owner, Field, _random, Market));
+    {
+      var earned = 0;
+      void OnEarned(Player _, int amount) => earned += amount;
+
+      owned.Owner.Earned += OnEarned;
+      try
+      {
+        owned.Card.HandleEvent(new RoundEnded(), new GameContext(owned.Owner, Field, _random, Market));
+      }
+      finally
+      {
+        owned.Owner.Earned -= OnEarned;
+      }
+      Field.ReportTheoryEarned(owned, earned);
+    }
 
     EnqueueActiveTheories(column => column.Adepts > 0);
     SetPhase(GamePhase.AdeptIncome);
@@ -469,8 +495,8 @@ public sealed class GameSession
 
   /// <summary>
   /// Адепты следующей действующей теории приносят деньги её лидерам (<see cref="TheoryIncome"/>).
-  /// Когда все теории получили доход, миплов-лидеров (<see cref="TheoryColumn.LeaderMeeples"/>) снимают
-  /// и начинается обновление карточек, а в итоговом подсчёте партия завершается.
+  /// Когда все теории получили доход, в обычном раунде миплов-лидеров (<see cref="TheoryColumn.LeaderMeeples"/>) снимают
+  /// и начинается обновление карточек; в итоговом подсчёте миплы остаются, и партия завершается.
   /// </summary>
   /// <returns>Доход теории или <c>null</c>, если все теории уже получили доход.</returns>
   public TheoryIncome? PayNextTheoryIncome()
@@ -479,7 +505,9 @@ public sealed class GameSession
       throw new InvalidOperationException($"Доход от адептов нельзя получить в фазе {Phase}.");
     if (!_unpaidTheories.TryDequeue(out var column))
     {
-      Field.RemoveLeaderMeeples();
+      // Миплы-лидеры снимаются после дохода от адептов в обычном раунде; в итоговом подсчёте остаются.
+      if (Phase == GamePhase.AdeptIncome)
+        Field.RemoveLeaderMeeples();
       SetPhase(Phase == GamePhase.AdeptIncome ? GamePhase.CardsRefresh : GamePhase.GameOver);
       return null;
     }
@@ -511,6 +539,8 @@ public sealed class GameSession
     RequirePhase(GamePhase.MarketRefresh);
     if (Market.DeckCount == 0)
     {
+      // Перед итоговым подсчётом все закрытые карточки раскрываются: их владельцы получают бонусы или карточки уходят.
+      Field.RevealAllHiddenCards();
       EnqueueActiveTheories(column => true);
       SetPhase(GamePhase.FinalLeadersBonus);
       return false;
@@ -642,7 +672,8 @@ public sealed class GameSession
   private void EnqueueActiveTheories(Func<TheoryColumn, bool> predicate)
   {
     _unpaidTheories.Clear();
-    foreach (var column in Field.TheoryColumns.Where(column => !column.IsClosed && predicate(column)))
+    // Слева направо: деньги за теории выплачиваются от левого края поля к правому.
+    foreach (var column in Field.TheoryColumns.Where(column => !column.IsClosed && predicate(column)).OrderBy(column => column.TheoryCell.Column))
       _unpaidTheories.Enqueue(column);
   }
 
