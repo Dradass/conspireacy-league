@@ -350,8 +350,11 @@ public sealed class GameSession
   public void SelectTriggerHandCard(Card card)
   {
     var trigger = RequirePendingTheoryTrigger();
-    if (!trigger.Effect.RequiresHandCard || !trigger.Owner.Hand.Contains(card))
+    var effect = trigger.Effect;
+    if (!(effect.RequiresHandCard || effect.AcceptsHandCardTarget) || !trigger.Owner.Hand.Contains(card))
       throw new InvalidOperationException("Эту карточку выбрать нельзя.");
+    if (!effect.RequiresHandCard && effect.CheckHandCard(card, trigger.Context) is { IsAllowed: false } denied)
+      throw new InvalidOperationException(denied.Reason);
     trigger.HandCard = card;
     ContinueTheoryTrigger(trigger);
   }

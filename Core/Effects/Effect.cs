@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 
@@ -88,6 +89,19 @@ public abstract class Effect
   /// Нужно ли перед выполнением выбрать карточку на поле (<see cref="GameContext.TargetCell"/>).
   /// </summary>
   public virtual bool RequiresTargetCell => false;
+
+  /// <summary>
+  /// Вместо карточки на поле можно выбрать карточку в руке (<see cref="GameContext.HandCard"/>), если она подходит
+  /// (<see cref="CheckHandCard"/>). Тогда цель на поле не нужна.
+  /// </summary>
+  public virtual bool AcceptsHandCardTarget => false;
+
+  /// <summary>
+  /// Можно ли выбрать карточку в руке вместо карточки на поле (<see cref="AcceptsHandCardTarget"/>).
+  /// </summary>
+  /// <param name="card">Карточка в руке.</param>
+  /// <param name="context">Контекст партии.</param>
+  public virtual PlacementCheck CheckHandCard(Card card, GameContext context) => PlacementCheck.Allowed;
 
   /// <summary>
   /// Нужно ли после первой карточки на поле выбрать вторую (<see cref="GameContext.SecondTargetCell"/>).

@@ -56,7 +56,7 @@ public sealed class TheoryTrigger
   public bool IsComplete =>
     (!Effect.RequiresHandCard || HandCard is not null)
     && (!Effect.RequiresTheory || Theory is not null)
-    && (!Effect.RequiresTargetCell || Cell is not null);
+    && (!Effect.RequiresTargetCell || Cell is not null || HandCard is not null && Effect.AcceptsHandCardTarget);
 
   /// <summary>
   /// Контекст действия для владельца с уже выбранными целями.

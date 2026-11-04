@@ -112,8 +112,13 @@ public partial class CardUseController : Node
     public bool PicksTargetCell =>
       PicksBorrowedCell
       || PicksCopiedCell
-      || Active.RequiresTargetCell && !Active.BorrowsTargetCard && TargetCell is null
+      || Active.RequiresTargetCell && !Active.BorrowsTargetCard && TargetCell is null && !HandTargetPicked
       || PicksSecondTargetCell;
+
+    /// <summary>
+    /// Вместо карточки на поле выбрана карточка в руке (<see cref="Effect.AcceptsHandCardTarget"/>).
+    /// </summary>
+    public bool HandTargetPicked => Active.AcceptsHandCardTarget && HandCard is not null;
 
     /// <summary>
     /// Копирование выбрано через чужое действие: теперь выбирают карточку, действие которой скопируют.
@@ -338,7 +343,10 @@ public partial class CardUseController : Node
       // Подсвечиваем карточки, которые можно выбрать, — с ценой, как при выкладывании с руки.
       var picker = targeting.CellPicker;
       _board.ShowAvailable(picker.TargetCells(ContextFor(targeting)).Where(target => target.Check.IsAllowed));
-      var which = targeting.PicksSecondTargetCell ? "вторую карточку" : "подсвеченную карточку";
+      // Карточку в руке тоже можно выбрать вместо карточки на поле.
+      var handToo = picker.AcceptsHandCardTarget && targeting.HandCard is null;
+      _hand.Picking = handToo;
+      var which = targeting.PicksSecondTargetCell ? "вторую карточку" : handToo ? "подсвеченную карточку или в руке" : "подсвеченную карточку";
       Hint?.Invoke(targeting.Placement is not null
         ? $"«{targeting.View.Card.Name}»: {Lowercase(picker.Description)}. Выберите {which}. Esc или щелчок мимо карточек — пропустить."
         : $"Выберите {which}: {Lowercase(picker.Description)}. Esc или щелчок мимо карточек — отмена.");
@@ -449,6 +457,8 @@ public partial class CardUseController : Node
       return null;
     if (option.RequiresTargetCell)
     {
+      if (option.AcceptsHandCardTarget && _session.CurrentPlayer.Hand.Cards.Any(card => option.CheckHandCard(card, context).IsAllowed))
+        return null;
       var targetChecks = option.TargetCells(context).Select(target => target.Check).ToList();
       if (targetChecks.Count == 0)
         return $"На поле нет подходящих карточек — действие «{option.Description}» некуда применить.";
@@ -568,6 +578,14 @@ public partial class CardUseController : Node
     if (_targeting is null)
       return;
 
+    // Карточку в руке вместо карточки на поле проверяем сразу, чтобы игрок выбрал другую.
+    var active = _targeting.Active;
+    if (active.AcceptsHandCardTarget && !active.RequiresHandCard && active.CheckHandCard(card, ContextFor(_targeting)) is { IsAllowed: false } denied)
+    {
+      UseDenied?.Invoke(denied.Reason ?? "Эту карточку выбрать нельзя.");
+      return;
+    }
+
     _targeting = _targeting with { HandCard = card };
     _hand.SelectedCard = card;
     Advance();
@@ -600,10 +618,12 @@ public partial class CardUseController : Node
     var owner = trigger.Owner;
     var name = $"«{trigger.Parent.Card.Name}» ({owner})";
     var prefix = $"Сработал эффект теории: \"{trigger.Parent.Card.Theory}\". ";
-    _hand.Picking = effect.RequiresHandCard && trigger.HandCard is null;
+    // Карточку в руке можно выбрать, если действие требует её или принимает вместо карточки на поле.
+    var handPick = (effect.RequiresHandCard || effect.AcceptsHandCardTarget) && trigger.HandCard is null;
+    _hand.Picking = handPick;
     _hand.SelectedCard = trigger.HandCard;
 
-    if (_hand.Picking)
+    if (effect.RequiresHandCard && trigger.HandCard is null)
     {
       Hint?.Invoke(prefix + $"Основная теория {name}: выберите карточку в руке. Esc — пропустить действие.");
       return;
@@ -617,7 +637,8 @@ public partial class CardUseController : Node
     if (effect.RequiresTargetCell && trigger.Cell is null)
     {
       _board.ShowAvailable(effect.TargetCells(trigger.Context).Where(target => target.Check.IsAllowed));
-      Hint?.Invoke(prefix + $"Основная теория {name}: выберите подсвеченную карточку. Esc — пропустить действие.");
+      var which = handPick ? "подсвеченную карточку или карточку в руке" : "подсвеченную карточку";
+      Hint?.Invoke(prefix + $"Основная теория {name}: выберите {which}. Esc — пропустить действие.");
     }
   }
 
@@ -835,30 +856,40 @@ public partial class CardUseController : Node
   private void Borrow(Cell cell)
   {
     var card = _board.Field.CardAt(cell)!;
-    var options = BorrowableOptions(card);
-    if (options.Count == 0)
+    // Копирование не копирует копирование: его выбирают через карточку, которую уже копируют.
+    var copying = _targeting!.Option is CopyRivalCardEffect;
+    var usable = copying ? CopyableOptions(card) : BorrowableOptions(card);
+    if (usable.Count == 0)
     {
-      UseDenied?.Invoke($"Действие «{card.Name}» использовать нельзя. Выберите другую карточку или нажмите Esc.");
+      UseDenied?.Invoke(copying
+        ? $"Действие «{card.Name}» скопировать нельзя. Выберите другую карточку или нажмите Esc."
+        : $"Действие «{card.Name}» использовать нельзя. Выберите другую карточку или нажмите Esc.");
       return;
     }
 
     _targeting = _targeting! with { BorrowedCell = cell };
     _board.HideAvailable();
-    // Копирование не копирует копирование: его выбирают через карточку, которую уже копируют.
-    if (_targeting!.Option is CopyRivalCardEffect)
-      options = options.Where(option => option is not CopyRivalCardEffect).ToList();
-    if (options.Count == 0)
-    {
-      UseDenied?.Invoke($"Действие «{card.Name}» скопировать нельзя. Выберите другую карточку или нажмите Esc.");
-      return;
-    }
+    var options = card.OnPlayFromHand.Options;
     if (options.Count == 1)
     {
       ChooseBorrowed(options[0]);
       return;
     }
 
-    ShowOptionMenu(card, options, option => ContextFor(_targeting! with { BorrowedOption = option }));
+    // Все варианты видны: недоступные — серыми, с причиной.
+    ShowOptionMenu(card, options, option => ContextFor(_targeting! with { BorrowedOption = option }), option => UnusableReason(option, copying));
+  }
+
+  /// <summary>
+  /// Почему вариант действия чужой карточки нельзя выполнить через другого персонажа, или <c>null</c>, если можно.
+  /// </summary>
+  private static string? UnusableReason(Effect option, bool copying)
+  {
+    if (copying && option is CopyRivalCardEffect)
+      return "Копирование не копирует копирование.";
+    if (!option.CanBeBorrowed)
+      return "Через другого персонажа нельзя сыграть действие, которое само использует чужую карточку.";
+    return null;
   }
 
   /// <summary>
@@ -868,8 +899,7 @@ public partial class CardUseController : Node
   private void BorrowCopied(Cell cell)
   {
     var card = _board.Field.CardAt(cell)!;
-    var options = CopyableOptions(card);
-    if (options.Count == 0)
+    if (CopyableOptions(card).Count == 0)
     {
       UseDenied?.Invoke($"Действие «{card.Name}» скопировать нельзя. Выберите другую карточку или нажмите Esc.");
       return;
@@ -877,13 +907,14 @@ public partial class CardUseController : Node
 
     _targeting = _targeting! with { CopiedCell = cell };
     _board.HideAvailable();
+    var options = card.OnPlayFromHand.Options;
     if (options.Count == 1)
     {
       ChooseCopied(options[0]);
       return;
     }
 
-    ShowOptionMenu(card, options, option => ContextFor(_targeting! with { CopiedOption = option }));
+    ShowOptionMenu(card, options, option => ContextFor(_targeting! with { CopiedOption = option }), option => UnusableReason(option, copying: true));
   }
 
   /// <summary>
@@ -892,14 +923,15 @@ public partial class CardUseController : Node
   /// <param name="card">Карточка, чьи варианты показываем.</param>
   /// <param name="options">Варианты.</param>
   /// <param name="contextFor">Контекст, если выбран этот вариант.</param>
-  private void ShowOptionMenu(Card card, IReadOnlyList<Effect> options, Func<Effect, GameContext> contextFor)
+  /// <param name="unusable">Причина, почему вариант нельзя взять через эту карточку, или <c>null</c>.</param>
+  private void ShowOptionMenu(Card card, IReadOnlyList<Effect> options, Func<Effect, GameContext> contextFor, Func<Effect, string?> unusable)
   {
     _borrowMenu.Clear();
     _borrowMenu.AddSeparator(card.Name);
     for (var i = 0; i < options.Count; i++)
     {
       _borrowMenu.AddItem(options[i].Description, i);
-      if (DenialOf(options[i], contextFor(options[i])) is { } reason)
+      if ((unusable(options[i]) ?? DenialOf(options[i], contextFor(options[i]))) is { } reason)
       {
         var index = _borrowMenu.GetItemIndex(i);
         _borrowMenu.SetItemDisabled(index, true);
@@ -925,9 +957,9 @@ public partial class CardUseController : Node
   private void OnBorrowMenuIdPressed(long id)
   {
     if (_targeting is { CopiedCell: { } copied, CopiedOption: null })
-      ChooseCopied(CopyableOptions(_board.Field.CardAt(copied)!)[(int)id]);
+      ChooseCopied(_board.Field.CardAt(copied)!.OnPlayFromHand.Options[(int)id]);
     else if (_targeting is { BorrowedCell: { } cell })
-      ChooseBorrowed(BorrowableOptions(_board.Field.CardAt(cell)!)[(int)id]);
+      ChooseBorrowed(_board.Field.CardAt(cell)!.OnPlayFromHand.Options[(int)id]);
   }
 
   /// <summary>

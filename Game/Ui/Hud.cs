@@ -1,10 +1,11 @@
+using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Интерфейс поверх стола: раунд и фаза, игроки с балансами, кнопки «Пас» и «Переход хода» слева внизу, рука игрока справа внизу
+/// Интерфейс поверх стола: раунд и фаза, игроки с балансами, кнопку «Пас» (и «Не играть действие теории» при выборе основной теории) слева внизу, рука игрока справа внизу
 /// и сообщения сверху. Когда партия завершена — итоги (<see cref="ResultsPanel"/>).
 /// </summary>
 public partial class Hud : CanvasLayer
@@ -21,7 +22,7 @@ public partial class Hud : CanvasLayer
   private Label _turn = null!;
   private Label _actions = null!;
   private Button _pass = null!;
-  private Button _endTurn = null!;
+  private Button _skipTheory = null!;
   private PanelContainer _messagePanel = null!;
   private Label _message = null!;
   private Tween? _messageTween;
@@ -49,6 +50,7 @@ public partial class Hud : CanvasLayer
     root.AddChild(CreatePlayers());
     root.AddChild(CreateHand());
     root.AddChild(CreateMessage());
+    root.AddChild(new GameMenu { Name = "GameMenu" });
 
     foreach (var player in Turns.Players)
     {
@@ -64,6 +66,7 @@ public partial class Hud : CanvasLayer
     Session.AutoPassed += OnAutoPassed;
     Session.PendingCheckChanged += OnPendingCheckChanged;
     Session.PendingPlacementChanged += OnPendingPlacementChanged;
+    Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
     OnPhaseChanged(Session.Phase);
   }
 
@@ -79,6 +82,7 @@ public partial class Hud : CanvasLayer
     Session.AutoPassed -= OnAutoPassed;
     Session.PendingCheckChanged -= OnPendingCheckChanged;
     Session.PendingPlacementChanged -= OnPendingPlacementChanged;
+    Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
   }
 
   /// <summary>
@@ -140,10 +144,11 @@ public partial class Hud : CanvasLayer
     _pass.Pressed += Session.Pass;
     buttons.AddChild(_pass);
 
-    _endTurn = new Button { Name = "EndTurn", Text = "Переход хода", FocusMode = Control.FocusModeEnum.None };
-    _endTurn.AddThemeFontSizeOverride("font_size", 20);
-    _endTurn.Pressed += Session.EndTurn;
-    buttons.AddChild(_endTurn);
+    // Появляется, только когда владелец основной теории может сыграть её действие после побочной карточки.
+    _skipTheory = new Button { Name = "SkipTheory", Text = "Не играть действие теории", FocusMode = Control.FocusModeEnum.None, Visible = false };
+    _skipTheory.AddThemeFontSizeOverride("font_size", 20);
+    _skipTheory.Pressed += Session.SkipTheoryTrigger;
+    buttons.AddChild(_skipTheory);
     return panel;
   }
 
@@ -214,14 +219,22 @@ public partial class Hud : CanvasLayer
 
   private void OnPendingPlacementChanged(PlacementChoice? choice) => UpdateButtons();
 
+  private void OnPendingTheoryTriggerChanged(TheoryTrigger? trigger)
+  {
+    UpdateButtons();
+    RefreshTurn();
+  }
+
   /// <summary>
-  /// Пасовать и передавать ход можно только во время ходов игроков и не посреди проверки успеха.
+  /// Пасовать можно только во время ходов игроков и не посреди проверки успеха или выбора.
+  /// Пока ждём решения владельца основной теории, вместо этого доступна кнопка «Не играть действие теории».
   /// </summary>
   private void UpdateButtons()
   {
-    var canAct = Session.Phase == GamePhase.PlayerTurns && Session.PendingCheck is null && Session.PendingPlacement is null;
+    var canAct = Session.Phase == GamePhase.PlayerTurns && Session.PendingCheck is null
+      && Session.PendingPlacement is null && Session.PendingTheoryTrigger is null;
     _pass.Disabled = !canAct;
-    _endTurn.Disabled = !canAct;
+    _skipTheory.Visible = Session.PendingTheoryTrigger is not null;
   }
 
   private void OnPhaseChanged(GamePhase phase)
@@ -231,7 +244,7 @@ public partial class Hud : CanvasLayer
     OnActionsLeftChanged(Session.ActionsLeft);
     foreach (var player in Turns.Players)
       OnMoneyChanged(player);
-    OnTurnChanged(Turns.CurrentPlayer);
+    RefreshTurn();
     if (phase == GamePhase.GameOver)
       _root.AddChild(new ResultsPanel { Name = "Results", Session = Session });
   }
@@ -250,16 +263,23 @@ public partial class Hud : CanvasLayer
     _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null),
   };
 
-  private void OnTurnChanged(Player current)
+  private void OnTurnChanged(Player _) => RefreshTurn();
+
+  /// <summary>
+  /// Показать, чьё действие сейчас ожидается: обычно это игрок, который ходит, но пока владелец основной теории
+  /// выбирает действие после дочерней карточки (даже если ход у другого игрока), ожидается его выбор.
+  /// </summary>
+  private void RefreshTurn()
   {
+    var actor = Session.PendingTheoryTrigger?.Owner ?? Turns.CurrentPlayer;
     _turn.Text = Session.Phase switch
     {
-      GamePhase.PlayerTurns => $"Ходит: {current.Name}",
+      GamePhase.PlayerTurns => $"Ходит: {actor.Name}",
       GamePhase.FinalLeadersBonus or GamePhase.FinalAdeptIncome or GamePhase.GameOver => "Итоговый подсчёт",
       _ => "Конец раунда",
     };
-    _turn.AddThemeColorOverride("font_color", PlayerPalette.MainOf(current.Color));
+    _turn.AddThemeColorOverride("font_color", PlayerPalette.MainOf(actor.Color));
     foreach (var (player, balance) in _balances)
-      balance.Modulate = player == current ? Colors.White : Colors.White with { A = WaitingPlayerAlpha };
+      balance.Modulate = player == actor ? Colors.White : Colors.White with { A = WaitingPlayerAlpha };
   }
 }

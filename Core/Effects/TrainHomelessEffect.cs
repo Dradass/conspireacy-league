@@ -1,4 +1,3 @@
-using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 
@@ -7,18 +6,23 @@ namespace ConspiracyLeague.Core.Effects;
 /// <summary>
 /// При выкладывании в штаб теории (<see cref="GameContext.TargetTheory"/>): обучить бездомного в этой теории
 /// (<see cref="GameContext.TargetCell"/>) до гражданина — его заменяет первый гражданин из колоды рынка с той же теорией
-/// или без теории, а бездомный уходит из игры. Затем получить <see cref="MoneyPerCitizen"/>$ за каждого гражданина
-/// в теории (закрытые карты тоже граждане).
+/// или без теории, а бездомный уходит из игры. За обучение игрок получает деньги: <see cref="OwnMoney"/>$, если бездомный
+/// его, и <see cref="ForeignMoney"/>$, если чужой. Без обучения денег нет.
 /// </summary>
 public sealed class TrainHomelessEffect : Effect
 {
   /// <summary>
-  /// Сколько $ за каждого гражданина в теории.
+  /// Сколько $ за обучение своего персонажа.
   /// </summary>
-  public const int MoneyPerCitizen = 2;
+  public const int OwnMoney = 2;
+
+  /// <summary>
+  /// Сколько $ за обучение чужого персонажа.
+  /// </summary>
+  public const int ForeignMoney = 4;
 
   public override string Description =>
-    $"Обучить бездомного в теории до гражданина; получить {MoneyPerCitizen}$ за каждого гражданина в теории";
+    $"Обучить бездомного в теории до гражданина; получить {OwnMoney}$ за своего и {ForeignMoney}$ за чужого";
 
   public override bool RequiresTargetCell => true;
 
@@ -33,11 +37,16 @@ public sealed class TrainHomelessEffect : Effect
   public override void Execute(GameContext context)
   {
     var theory = Theory(context);
-    if (context.TargetCell is { } cell)
-      context.Field.TrainHomeless(cell, theory, Market(context));
+    if (context.TargetCell is not { } cell)
+      return;
 
-    var citizens = theory.Cards.Count(card => card is CitizenCard or HiddenCard);
-    context.Field.EarnAt(context.SourceCell, context.CurrentPlayer, citizens * MoneyPerCitizen);
+    // Владелец обучаемого персонажа определяет награду: до обучения карточка ещё в стопке.
+    var trainedOwner = theory.OwnerAt(cell)
+      ?? throw new InvalidOperationException("В ячейке нет обучаемого персонажа.");
+    context.Field.TrainHomeless(cell, theory, Market(context));
+
+    var money = trainedOwner == context.CurrentPlayer ? OwnMoney : ForeignMoney;
+    context.Field.EarnAt(context.SourceCell, context.CurrentPlayer, money);
   }
 
   private static TheoryColumn Theory(GameContext context) =>

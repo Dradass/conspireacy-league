@@ -11,7 +11,7 @@ public static class MarketDeck
   /// <summary>
   /// Сколько бездомных, граждан и профессионалов попадает в колоду на каждого игрока.
   /// </summary>
-  public const int CardsOfEachKindPerPlayer = 8;
+  public const int CardsOfEachKindPerPlayer = 7;
 
   /// <summary>
   /// Собрать стартовую колоду рынка: случайные бездомные, граждане и профессионалы из состава игры

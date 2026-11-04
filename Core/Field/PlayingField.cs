@@ -341,12 +341,28 @@ public sealed class PlayingField
   /// Сколько $ добавляют учёные (<see cref="ScientistPassive"/>) к деньгам, которые приносит карточка личного штаба:
   /// каждый учёный рядом с ней (по горизонтали, вертикали или диагонали) в том же личном штабе.
   /// </summary>
-  public int MoneyBonusAt(Cell cell) =>
+  public int MoneyBonusAt(Cell cell) => ScientistBaseMoneyAt(cell) + ScientistBoostMoneyAt(cell);
+
+  /// <summary>
+  /// Базовый бонус учёных рядом с карточкой (<see cref="ScientistPassive.MoneyBonus"/>, $).
+  /// </summary>
+  private int ScientistBaseMoneyAt(Cell cell) =>
+    ScientistNeighboursAt(cell).Count() * ScientistPassive.MoneyBonus;
+
+  /// <summary>
+  /// Бонус «Технологий от инопланетян» (<see cref="ScientistBoostPassive.MoneyBonus"/>, $) от учёных рядом с карточкой.
+  /// </summary>
+  private int ScientistBoostMoneyAt(Cell cell) =>
+    ScientistNeighboursAt(cell)
+      .Count(scientist => HoldsPassive<ScientistBoostPassive>(OwnerOfCell(scientist))) * ScientistBoostPassive.MoneyBonus;
+
+  /// <summary>
+  /// Учёные рядом с ячейкой в том же личном штабе.
+  /// </summary>
+  private IEnumerable<Cell> ScientistNeighboursAt(Cell cell) =>
     _playerZones.Values.FirstOrDefault(zone => zone.Contains(cell)) is { } zone
-      ? cell.Surrounding
-        .Where(neighbor => zone.Contains(neighbor) && CardAt(neighbor)?.Passive is ScientistPassive)
-        .Sum(scientist => ScientistMoneyBonusOf(scientist))
-      : 0;
+      ? cell.Surrounding.Where(neighbor => zone.Contains(neighbor) && CardAt(neighbor)?.Passive is ScientistPassive)
+      : [];
 
   /// <summary>
   /// Сколько % к успеху соседу даёт ученый в ячейке: базовый бонус учёного и, если владелец держит
@@ -357,13 +373,6 @@ public sealed class PlayingField
     HoldsPassive<ScientistBoostPassive>(OwnerOfCell(scientist))
       ? ScientistBoostPassive.SuccessBonus
       : ScientistPassive.NeighborSuccessBonus;
-
-  /// <summary>
-  /// Сколько $ добавляет ученый в ячейке к деньгам соседа: базовый бонус учёного и, если владелец держит
-  /// «Технологии от инопланетян», ещё бонус <see cref="ScientistBoostPassive.MoneyBonus"/>.
-  /// </summary>
-  private int ScientistMoneyBonusOf(Cell scientist) =>
-    ScientistPassive.MoneyBonus + (HoldsPassive<ScientistBoostPassive>(OwnerOfCell(scientist)) ? ScientistBoostPassive.MoneyBonus : 0);
 
   /// <summary>
   /// Сколько учёных на поле у игрока: в его личном штабе и в теориях, где он выложил учёного.
@@ -411,6 +420,27 @@ public sealed class PlayingField
     CardAt(cell) is HomelessCard && OwnerOfCell(cell) is not null
       ? PlacementCheck.Allowed
       : PlacementCheck.Deny("Здесь нет бездомного в личном штабе.");
+
+  /// <summary>
+  /// Проверить, можно ли превратить бездомного из руки игрока в гражданина.
+  /// </summary>
+  public PlacementCheck CheckTransformHandHomeless(Card card, Player player) =>
+    card is HomelessCard && player.Hand.Contains(card)
+      ? PlacementCheck.Allowed
+      : PlacementCheck.Deny("В руке нет бездомного.");
+
+  /// <summary>
+  /// Превратить бездомного из руки игрока в гражданина той же теории; он остаётся на своём месте в руке.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Превратить нельзя.</exception>
+  public void TransformHandHomeless(Card card, Player player)
+  {
+    var check = CheckTransformHandHomeless(card, player);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    player.Hand.Replace(card, new CitizenCard(((HomelessCard)card).Theory));
+  }
 
   /// <summary>
   /// Превратить бездомного в личном штабе в гражданина той же теории (владелец карточки остаётся прежним).
@@ -901,7 +931,12 @@ public sealed class PlayingField
       RequireTheoryTarget(option, context);
     if (option.RequiresHandCard && (context.HandCard is not { } handCard || !context.CurrentPlayer.Hand.Contains(handCard)))
       throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку в руке.", nameof(context));
-    if (option.RequiresTargetCell && (option.BorrowsTargetCard ? context.BorrowedCell : context.TargetCell) is null)
+    if (option.AcceptsHandCardTarget && context.HandCard is { } targetInHand)
+    {
+      if (!context.CurrentPlayer.Hand.Contains(targetInHand) || !option.CheckHandCard(targetInHand, context).IsAllowed)
+        throw new ArgumentException($"Для действия «{option}» нельзя выбрать эту карточку в руке.", nameof(context));
+    }
+    else if (option.RequiresTargetCell && (option.BorrowsTargetCard ? context.BorrowedCell : context.TargetCell) is null)
       throw new ArgumentException($"Для действия «{option}» нужно выбрать карточку на поле.", nameof(context));
     if (option.RequiresTargetPlayer && (context.TargetPlayer is not { } target || target == context.CurrentPlayer))
       throw new ArgumentException($"Для действия «{option}» нужно выбрать другого игрока.", nameof(context));
@@ -941,8 +976,9 @@ public sealed class PlayingField
     // Бонус дают учёные рядом с карточкой, принёсшей деньги, если она в личном штабе игрока; иначе (чужую карточку
     // использовали или скопировали) — учёные рядом с карточкой, которая действовала.
     var bonusCell = _playerZones[player].Contains(source) ? source : cell;
-    var scientistBonus = MoneyBonusAt(bonusCell);
-    var theoryBonus = ProfessionMoneyBonusAt(source) + HomelessMoneyBonusAt(source) + PoliticianMoneyBonusAt(source);
+    // Бонус учёных — их базовые $; всё, что дают теории (в том числе «Технологии от инопланетян»), — бонус теорий.
+    var scientistBonus = ScientistBaseMoneyAt(bonusCell);
+    var theoryBonus = ScientistBoostMoneyAt(bonusCell) + ProfessionMoneyBonusAt(source) + HomelessMoneyBonusAt(source) + PoliticianMoneyBonusAt(source);
     player.Earn(scientistBonus + theoryBonus);
     // Деньги всплывают над карточкой, которая выполнила действие (своей у текущего игрока), даже если действие
     // было за чужую карточку.
@@ -1244,7 +1280,11 @@ public sealed class PlayingField
     foreach (var column in columns)
       column.ClearLeaderMeeples();
     if (columns.Count > 0)
+    {
       LeaderMeeplesRemoved?.Invoke(columns);
+      // Снятые миплы могли быть единственным влиянием владельца теории: пересчитываем владельцев и карточки теорий.
+      UpdateTheoryCards();
+    }
   }
 
   /// <summary>
@@ -1522,7 +1562,9 @@ public sealed class PlayingField
     var owner = trigger.Owner;
     return (!effect.RequiresHandCard || owner.Hand.Cards.Count > 0)
       && (!effect.RequiresTheory || _theoryColumns.Any(column => effect.CanTargetTheory(column, owner)))
-      && (!effect.RequiresTargetCell || effect.TargetCells(trigger.Context).Any(target => target.Check.IsAllowed));
+      && (!effect.RequiresTargetCell
+        || effect.TargetCells(trigger.Context).Any(target => target.Check.IsAllowed)
+        || effect.AcceptsHandCardTarget && owner.Hand.Cards.Any(card => effect.CheckHandCard(card, trigger.Context).IsAllowed));
   }
 
   /// <summary>
@@ -2620,6 +2662,75 @@ public sealed class PlayingField
 
     return Place(card, new Cell(boundary, row), player);
   }
+
+  /// <summary>
+  /// Граница для вставки дочерней теории, если её кладут поверх соседней карточки в ряду дочерних теорий
+  /// (справа или слева от семейства теорий): сама карточка и все теории на её стороне сдвигаются на 1 столбец
+  /// (см. <see cref="PlaceInWall"/>).
+  /// </summary>
+  /// <returns>Граница (номер столбца справа от неё) или <c>null</c>, если над этой ячейкой так класть нельзя.</returns>
+  public int? NeighbourBoundary(Card card, Cell cell)
+  {
+    if (card is not PersonCard { Theory: { Parent: { } parentTheory } }
+      || !_cards.ContainsKey(cell)
+      || cell.Row != CommonZone.BottomRow - 1
+      || ColumnOf(parentTheory) is not { } parent)
+    {
+      return null;
+    }
+
+    var family = FamilyColumns(parent, parentTheory);
+    if (FamilyContains(family, cell))
+      return null;
+    if (FamilyContains(family, cell.Right))
+      return cell.Column + 1;
+    if (FamilyContains(family, cell.Left))
+      return cell.Column;
+    return null;
+  }
+
+  /// <summary>
+  /// Стрелки над местами, куда можно положить дочернюю теорию этого семейства: слева от крайней левой и справа
+  /// от крайней правой теории семейства в ряду дочерних теорий (<see cref="ArrowTargets"/>).
+  /// </summary>
+  /// <returns>Ячейка и сторона: <c>true</c> — слева от семейства.</returns>
+  public IEnumerable<(Cell Cell, bool ToLeft)> ArrowTargets(Card card, Player player)
+  {
+    if (card is not PersonCard { Theory: { Parent: { } parentTheory } }
+      || ColumnOf(parentTheory) is not { } parent)
+    {
+      return [];
+    }
+
+    var row = CommonZone.BottomRow - 1;
+    var anchors = FamilyColumns(parent, parentTheory).SelectMany(column => column.Cells).Where(cell => cell.Row == row).ToList();
+    if (anchors.Count == 0)
+      return [];
+
+    var left = new Cell(anchors.Min(cell => cell.Column) - 1, row);
+    var right = new Cell(anchors.Max(cell => cell.Column) + 1, row);
+    return new[] { (left, true), (right, false) }
+      .Where(target => ArrowTargetAllowed(card, target.Item1, player))
+      .Select(target => (target.Item1, target.Item2));
+  }
+
+  private bool ArrowTargetAllowed(Card card, Cell cell, Player player)
+  {
+    if (_cards.ContainsKey(cell))
+      return NeighbourBoundary(card, cell) is { } boundary && CheckInWall(card, boundary, player).IsAllowed;
+    return Check(card, cell, player).IsAllowed;
+  }
+
+  /// <summary>
+  /// Проверка для карточки, которую тащат над ячейкой: если это соседняя карточка семейства, то условия вставки, иначе обычные.
+  /// </summary>
+  public PlacementCheck CheckDrop(Card card, Cell cell, Player player) =>
+    NeighbourBoundary(card, cell) is { } boundary ? CheckInWall(card, boundary, player) : Check(card, cell, player);
+
+  private List<TheoryColumn> FamilyColumns(TheoryColumn parent, Theory parentTheory) =>
+    _theoryColumns.Where(column => column == parent || column.Theory.Parent == parentTheory).ToList();
+
+  private static bool FamilyContains(IEnumerable<TheoryColumn> family, Cell cell) => family.Any(column => column.Cells.Contains(cell));
 
   private static void MoveCells<T>(IDictionary<Cell, T> values, IReadOnlyList<(Cell From, Cell To)> moves)
   {

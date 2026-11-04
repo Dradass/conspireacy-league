@@ -37,4 +37,17 @@ public sealed class Hand
       throw new InvalidOperationException($"Карточки «{card}» нет в руке.");
     Changed?.Invoke();
   }
+
+  /// <summary>
+  /// Заменить карточку в руке на другую на том же месте.
+  /// </summary>
+  internal void Replace(Card card, Card replacement)
+  {
+    ArgumentNullException.ThrowIfNull(replacement);
+    var index = _cards.IndexOf(card);
+    if (index < 0)
+      throw new InvalidOperationException($"Карточки «{card}» нет в руке.");
+    _cards[index] = replacement;
+    Changed?.Invoke();
+  }
 }

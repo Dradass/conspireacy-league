@@ -18,11 +18,16 @@ public partial class Main : Node2D
   /// </summary>
   public int PlayerCount { get; init; } = 4;
 
+  /// <summary>
+  /// Имена игроков по порядку; введены в стартовом меню. Если не заданы — «Игрок N».
+  /// </summary>
+  public IReadOnlyList<string>? PlayerNames { get; init; }
+
   public override void _Ready()
   {
 	var session = new GameSession(Enum.GetValues<PlayerColor>()
 	  .Take(PlayerCount)
-	  .Select((color, index) => new Player($"Игрок {index + 1}", color, GameSession.StartingMoney)));
+	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)));
 
 	var board = new Board { Name = "Board", Session = session };
 	AddChild(board);

@@ -63,8 +63,19 @@ public partial class StartMenu : Control
     column.AddChild(_players);
     UpdatePlayersLabel();
 
-    column.AddChild(CreateButton("Start", "Начать", StartGame));
+    column.AddChild(CreateButton("Network", "Сетевая игра", ShowNetworkNotice));
+    column.AddChild(CreateButton("Local", "Локальная игра", () => StartLocalGame()));
     column.AddChild(CreateButton("Quit", "Выйти", () => GetTree().Quit()));
+  }
+
+  /// <summary>
+  /// Сетевая игра пока не реализована: сообщаем об этом.
+  /// </summary>
+  private void ShowNetworkNotice()
+  {
+    var notice = new AcceptDialog { DialogText = "Сетевая игра пока не реализована." };
+    AddChild(notice);
+    notice.PopupCentered();
   }
 
   private int PlayerCount => (int)_players.Value;
@@ -86,12 +97,25 @@ public partial class StartMenu : Control
   }
 
   /// <summary>
-  /// Заменить меню партией с выбранным количеством игроков.
+  /// Локальная игра: каждый игрок по очереди вводит имя, затем начинается партия.
   /// </summary>
-  private void StartGame()
+  private async void StartLocalGame()
+  {
+    var count = PlayerCount;
+    var names = new List<string>();
+    for (var number = 1; number <= count; number++)
+      names.Add(await NameDialog.Ask(this, number));
+
+    StartGame(names);
+  }
+
+  /// <summary>
+  /// Заменить меню партией с выбранным количеством игроков и их именами.
+  /// </summary>
+  private void StartGame(IReadOnlyList<string> names)
   {
     var tree = GetTree();
-    var game = new Main { Name = "Main", PlayerCount = PlayerCount };
+    var game = new Main { Name = "Main", PlayerCount = names.Count, PlayerNames = names };
     tree.Root.AddChild(game);
     tree.CurrentScene = game;
     QueueFree();

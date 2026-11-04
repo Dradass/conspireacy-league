@@ -49,8 +49,6 @@ public partial class Board : Node2D
 
   private static readonly Color TableColor = new("26342c");
   private static readonly Color SlotColor = new("2c3d33");
-  private static readonly Color CommonZoneColor = new("2f4a3a");
-  private static readonly Color CommonSlotColor = new("37574a");
   private static readonly Color CommonBorderColor = new("6f9c80");
   private static readonly Color MoneyColor = new("e0b84f");
   private static readonly Color AllowedColor = new(0.55f, 0.95f, 0.6f, 0.35f);
@@ -76,16 +74,10 @@ public partial class Board : Node2D
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
 
   /// <summary>
-  /// Перегородка, в которую можно вставить теорию: номер столбца справа от неё, или <c>null</c>.
+  /// Зелёные стрелки над местами, куда можно положить дочернюю теорию семейства (во время перетаскивания).
   /// </summary>
-  private int? _wall;
+  private readonly NeighbourArrows _arrows = new() { Name = "NeighbourArrows" };
 
-  /// <summary>
-  /// Половина ширины перегородки между столбцами, px: в таком расстоянии от границы столбцов считается, что карточка в перегородке.
-  /// </summary>
-  private const float WallHalfWidth = 10f;
-
-  private static readonly Color WallColor = new(0.55f, 0.95f, 0.6f, 0.8f);
   private readonly Dictionary<Vector2I, CardView> _views = new();
 
   /// <summary>
@@ -151,6 +143,8 @@ public partial class Board : Node2D
     _highlight.AddChild(_highlightCost);
     AddChild(_highlight);
 
+    // Подсветка теорий лежит на поле, под карточками: карточки её перекрывают.
+    AddChild(new TheoryHighlights { Name = "TheoryHighlights", Session = Session });
     _cardsLayer = new Node2D { Name = "Cards" };
     AddChild(_cardsLayer);
     _adeptsLayer = new Node2D { Name = "Adepts" };
@@ -160,6 +154,9 @@ public partial class Board : Node2D
     _firstPlayerToken.MoveTo(FirstPlayerTokenPosition(Session.Turns.FirstPlayer), animate: false);
     _effectsLayer = new Node2D { Name = "Effects" };
     AddChild(_effectsLayer);
+    // Подсказки рынка рисуются поверх карточек: добавлены последними среди слоёв карточек.
+    _effectsLayer.AddChild(new MarketTheoryHints { Name = "MarketTheoryHints", Session = Session });
+    _effectsLayer.AddChild(_arrows);
 
     Field.AdeptsAdded += OnAdeptsAdded;
     Field.CardAdeptsAdded += OnCardAdeptsAdded;
@@ -270,7 +267,7 @@ public partial class Board : Node2D
   public override void _Draw()
   {
     DrawRect(new Rect2(Vector2.Zero, Size), TableColor);
-    DrawZone(Field.CommonZone, CommonZoneColor, CommonBorderColor);
+    DrawZoneOutline(Field.CommonZone, CommonBorderColor);
     DrawZone(Market.Zone, MarketZoneColor, MarketBorderColor);
     foreach (var (player, zone) in Field.PlayerZones)
     {
@@ -301,11 +298,6 @@ public partial class Board : Node2D
       DrawRect(slot.Grow(-AvailableBorderWidth / 2), color with { A = AvailableBorderAlpha }, filled: false, width: AvailableBorderWidth);
     }
 
-    if (_wall is { } boundary)
-    {
-      var top = CellOrigin(new Vector2I(0, Field.CommonZone.BottomRow - 1)).Y;
-      DrawRect(new Rect2(boundary * CellSize.X - WallHalfWidth, top, WallHalfWidth * 2, CellSize.Y), WallColor);
-    }
   }
 
   /// <summary>
@@ -325,27 +317,15 @@ public partial class Board : Node2D
   public void ShowTargets(IEnumerable<Cell> cells) => ShowAvailable(cells.Select(cell => (cell, PlacementCheck.Allowed)));
 
   /// <summary>
-  /// Подсветить перегородку между столбцами <paramref name="boundary"/> - 1 и <paramref name="boundary"/>,
-  /// или убрать подсветку, если <c>null</c>.
+  /// Показать зелёные стрелки: <c>ToLeft</c> — место слева от семейства теорий, иначе справа.
   /// </summary>
-  public void ShowWall(int? boundary)
-  {
-    _wall = boundary;
-    QueueRedraw();
-  }
+  public void ShowArrows(IEnumerable<(Cell Cell, bool ToLeft)> arrows) =>
+    _arrows.Show(arrows.Select(arrow => (new Vector2I(arrow.Cell.Column, arrow.Cell.Row), arrow.ToLeft)).ToList());
 
   /// <summary>
-  /// Перегородка между столбцами в ряду дочерних теорий под точкой стола, или <c>null</c>, если точка не в перегородке.
+  /// Убрать зелёные стрелки.
   /// </summary>
-  /// <returns>Номер столбца справа от перегородки.</returns>
-  public int? WallAt(Vector2 point)
-  {
-    var local = ToLocal(point);
-    var boundary = Mathf.RoundToInt(local.X / CellSize.X);
-    var row = Mathf.FloorToInt(local.Y / CellSize.Y);
-    var inWall = Mathf.Abs(local.X - boundary * CellSize.X) <= WallHalfWidth;
-    return inWall && row == Field.CommonZone.BottomRow - 1 ? boundary : null;
-  }
+  public void HideArrows() => _arrows.Show([]);
 
   /// <summary>
   /// Убрать подсветку доступных ячеек.
@@ -637,7 +617,7 @@ public partial class Board : Node2D
     SpawnFloatingText($"+{amount}$", PlayerPalette.MainOf(Session.CurrentPlayer.Color), IncomeFontSize, center, 0);
     var line = 1;
     if (scientistBonus > 0)
-      SpawnFloatingText($"(Учёные: +{scientistBonus}$)", ScientistBonusColor, ScientistBonusFontSize, center + new Vector2(0, IncomeFontSize * line++), 0);
+      SpawnFloatingText($"(Бонус ученого: +{scientistBonus}$)", ScientistBonusColor, ScientistBonusFontSize, center + new Vector2(0, IncomeFontSize * line++), 0);
     if (theoryBonus > 0)
       SpawnFloatingText($"(Бонусы теорий: +{theoryBonus}$)", ScientistBonusColor, ScientistBonusFontSize, center + new Vector2(0, IncomeFontSize * line), 0);
   }
@@ -774,11 +754,13 @@ public partial class Board : Node2D
     if (!_leaderMeeples.TryGetValue(column, out var meeples))
       _leaderMeeples[column] = meeples = [];
 
+    // Миплы-лидеры всегда цвета владельца: инопланетянин зелёный, поэтому для них остаётся деревянный облик.
+    var look = LookOf(column);
     var meeple = new MeepleView
     {
       Name = "LeaderMeeple",
       Color = PlayerPalette.MainOf(player.Color),
-      Look = LookOf(column),
+      Look = look == MeepleView.MeepleLook.Alien ? MeepleView.MeepleLook.Wooden : look,
       Scale = Vector2.One * LeaderMeepleScale,
       Height = LeaderMeepleDropHeight,
     };
@@ -1156,15 +1138,18 @@ public partial class Board : Node2D
 
   private void DrawZone(Zone zone, Color fill, Color border)
   {
+    DrawRect(ZoneRect(zone), fill);
+    DrawZoneOutline(zone, border);
+  }
+
+  private void DrawZoneOutline(Zone zone, Color border)
+  {
     var rect = ZoneRect(zone);
-    DrawRect(rect, fill);
     DrawRect(rect.Grow(-ZoneBorderWidth / 2), border, filled: false, width: ZoneBorderWidth);
   }
 
   private Color SlotColorOf(Cell cell)
   {
-    if (Field.CommonZone.Contains(cell))
-      return CommonSlotColor;
     if (Market.Contains(cell))
       return MarketSlotColor;
 
