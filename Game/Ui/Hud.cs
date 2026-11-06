@@ -13,6 +13,7 @@ public partial class Hud : CanvasLayer
   private const float Margin = 24f;
   private const double MessageDuration = 3;
   private const double MessageFade = 0.4;
+  private const float ReminderOffset = 64f;
 
   private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.85f);
   private const float WaitingPlayerAlpha = 0.55f;
@@ -26,6 +27,8 @@ public partial class Hud : CanvasLayer
   private PanelContainer _messagePanel = null!;
   private Label _message = null!;
   private Tween? _messageTween;
+  private PanelContainer _reminderPanel = null!;
+  private Label _reminder = null!;
   private Control _root = null!;
 
   /// <summary>
@@ -50,6 +53,7 @@ public partial class Hud : CanvasLayer
     root.AddChild(CreatePlayers());
     root.AddChild(CreateHand());
     root.AddChild(CreateMessage());
+    root.AddChild(CreateReminder());
     var theoryGraph = new TheoryGraphPanel { Name = "TheoryGraph" };
     var gameMenu = new GameMenu { Name = "GameMenu" };
     gameMenu.TheoriesRequested += theoryGraph.Open;
@@ -104,6 +108,33 @@ public partial class Hud : CanvasLayer
     _messageTween.TweenInterval(MessageDuration);
     _messageTween.TweenProperty(_messagePanel, "modulate:a", 0f, MessageFade);
     _messageTween.TweenCallback(Callable.From(() => _messagePanel.Visible = false));
+  }
+
+  /// <summary>
+  /// Напоминание о действии основной теории, которое нужно сыграть сейчас. В отличие от <see cref="ShowMessage"/>
+  /// не гаснет само: висит, пока его не сменят или не уберут (<c>null</c>).
+  /// </summary>
+  public void ShowReminder(string? text)
+  {
+    _reminderPanel.Visible = text is not null;
+    if (text is not null)
+      _reminder.Text = text;
+  }
+
+  private Control CreateReminder()
+  {
+    _reminderPanel = CreatePanel("Reminder");
+    _reminderPanel.Visible = false;
+    _reminderPanel.AnchorLeft = 0.5f;
+    _reminderPanel.AnchorRight = 0.5f;
+    // Под сообщениями, чтобы они не перекрывали друг друга.
+    _reminderPanel.OffsetTop = Margin + ReminderOffset;
+    _reminderPanel.GrowHorizontal = Control.GrowDirection.Both;
+
+    _reminder = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+    _reminder.AddThemeFontSizeOverride("font_size", 18);
+    _reminderPanel.AddChild(_reminder);
+    return _reminderPanel;
   }
 
   private Control CreatePlayers()

@@ -722,7 +722,7 @@ public sealed class PlayingField
   /// Персонаж прикрыт шапочкой из фольги: карточка лежит на нём лицевой стороной вверх.
   /// Такой персонаж имеет 100% успеха и защищён от любых эффектов.
   /// </summary>
-  private bool IsFoiled(Cell cell) =>
+  public bool IsFoiled(Cell cell) =>
     CardAt(cell) is PersonCard
     && _theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell && !owned.IsUsed);
 
@@ -1684,6 +1684,11 @@ public sealed class PlayingField
     _rotatedCells.Clear();
     if (cells.Count > 0)
       UsedCardsRefreshed?.Invoke(cells);
+
+    // Шапочка из фольги действует только до конца раунда: в конце раунда её снимают с персонажа.
+    // Карточка остаётся у владельца и может быть выложена снова.
+    foreach (var foil in _theoryCards.Where(card => card.Card.Passive is TinFoilPassive && card.AttachedTo is not null))
+      foil.AttachedTo = null;
 
     var theoryCards = _theoryCards.Where(card => card.IsUsed).ToList();
     foreach (var card in theoryCards)

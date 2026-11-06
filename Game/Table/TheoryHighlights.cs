@@ -73,14 +73,18 @@ public partial class TheoryHighlights : Node2D
   }
 
   /// <summary>
-  /// Все ячейки столбца теории в общей зоне: от верхней строки зоны до нижней, в столбце, где лежит её стопка.
+  /// Ячейки стопки теории: её карточки и ячейка над верхней, куда ляжет следующая.
   /// </summary>
   private IEnumerable<Vector2I> ColumnCells(TheoryColumn column)
   {
     var zone = Session.Field.CommonZone;
     var x = column.TheoryCell.Column;
-    for (var y = zone.Top; y <= zone.BottomRow; y++)
-      yield return new Vector2I(x, y);
+    for (var k = 0; k <= column.Members.Count; k++)
+    {
+      var y = column.TheoryCell.Row - k;
+      if (y >= zone.Top)
+        yield return new Vector2I(x, y);
+    }
   }
 
   /// <summary>
@@ -96,10 +100,10 @@ public partial class TheoryHighlights : Node2D
     }
   }
 
-  private static Rect2 CellRect(Vector2I cell)
+  private Rect2 CellRect(Vector2I cell)
   {
     var inset = new Vector2(CellInset, CellInset);
-    return new Rect2(Board.CellCenter(cell) - Board.CellSize / 2 + inset, Board.CellSize - inset * 2);
+    return new Rect2(Board.CardCenter(Session.Field, cell) - Board.CellSize / 2 + inset, Board.CellSize - inset * 2);
   }
 
   /// <summary>

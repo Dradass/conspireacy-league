@@ -44,6 +44,8 @@ public static class CardPainter
   private static readonly Color BonusColor = new("3fa34d");
   private static readonly Color ShieldColor = new("2f6fd1");
   private static readonly Color ShieldEdgeColor = new("fdfaf2");
+  private static readonly Color FoilColor = new("d9e2ea");
+  private static readonly Color FoilEdgeColor = new("5b6b78");
 
   /// <summary>
   /// Фон карточек теорий: им же подписывают теорию в других окнах.
@@ -248,6 +250,38 @@ public static class CardPainter
     var center = topLeft + new Vector2(width / 2, height * 0.42f);
     canvas.DrawLine(center + new Vector2(0, -height * 0.25f), center + new Vector2(0, height * 0.3f), ShieldEdgeColor, 2);
     canvas.DrawLine(center + new Vector2(-width * 0.25f, 0), center + new Vector2(width * 0.25f, 0), ShieldEdgeColor, 2);
+  }
+
+  /// <summary>
+  /// Нарисовать значок шапочки из фольги в правом верхнем углу карточки: остроконечная шапочка с полями.
+  /// Значок ставится под значком чипа, чтобы их не перекрывать.
+  /// </summary>
+  /// <param name="canvas">Где рисовать.</param>
+  /// <param name="rect">Прямоугольник карточки.</param>
+  public static void DrawTinFoilHat(CanvasItem canvas, Rect2 rect)
+  {
+    var width = rect.Size.X * 0.2f;
+    var height = width * 0.9f;
+    var centerX = rect.End.X - rect.Size.X * 0.14f;
+    var baseY = rect.Position.Y + rect.Size.Y * 0.36f;
+
+    // Конус шапочки и поля.
+    Vector2[] cone =
+    [
+      new(centerX - width * 0.35f, baseY),
+      new(centerX + width * 0.35f, baseY),
+      new(centerX, baseY - height),
+    ];
+    canvas.DrawColoredPolygon(cone, FoilColor);
+    canvas.DrawPolyline([.. cone, cone[0]], FoilEdgeColor, 1.5f, antialiased: true);
+
+    var brim = new Rect2(centerX - width / 2, baseY, width, height * 0.14f);
+    canvas.DrawRect(brim, FoilColor);
+    canvas.DrawRect(brim, FoilEdgeColor, filled: false, width: 1.5f);
+
+    // Складки фольги: две короткие линии на конусе.
+    canvas.DrawLine(new Vector2(centerX - width * 0.12f, baseY - height * 0.3f), new Vector2(centerX + width * 0.1f, baseY - height * 0.55f), FoilEdgeColor, 1);
+    canvas.DrawLine(new Vector2(centerX + width * 0.05f, baseY - height * 0.15f), new Vector2(centerX - width * 0.1f, baseY - height * 0.4f), FoilEdgeColor, 1);
   }
 
   /// <summary>

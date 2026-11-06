@@ -224,6 +224,23 @@ public partial class CardView : Node2D
 
   private bool _chipped;
   private bool _wheeled;
+  private bool _foiled;
+
+  /// <summary>
+  /// На персонажа положена шапочка из фольги (<see cref="Core.Field.PlayingField.IsFoiled"/>): значок в правом верхнем углу.
+  /// </summary>
+  public bool Foiled
+  {
+    get => _foiled;
+    set
+    {
+      if (_foiled == value)
+        return;
+
+      _foiled = value;
+      QueueRedraw();
+    }
+  }
 
   /// <summary>
   /// На персонажа положили фишку чипа (<see cref="Core.Field.PlayingField.Chips"/>).
@@ -281,6 +298,8 @@ public partial class CardView : Node2D
       DrawChip(rect);
     if (_wheeled)
       DrawWheel(rect);
+    if (_foiled)
+      CardPainter.DrawTinFoilHat(this, rect);
   }
 
   /// <summary>

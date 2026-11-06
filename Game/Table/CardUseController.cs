@@ -60,6 +60,12 @@ public partial class CardUseController : Node
   public event Action<string>? Hint;
 
   /// <summary>
+  /// Напоминание о действии основной теории, которое нужно сыграть сейчас: остаётся на экране, пока его не сыграют
+  /// или не отменят. <c>null</c> — напоминание убрать.
+  /// </summary>
+  public event Action<string?>? Reminder;
+
+  /// <summary>
   /// Карточка, для которой открыто меню выбора действия.
   /// </summary>
   /// <param name="View">Карточка.</param>
@@ -324,6 +330,8 @@ public partial class CardUseController : Node
       UseDenied?.Invoke(error.Message);
       return;
     }
+    // Карточка из личного штаба, сыгранная теорией (например, «Ленин — гриб»), переворачивается сразу же.
+    _board.ShowPlayStates();
     // Если основная теория ждёт выбора владельца, подсказку выставит выбор.
     if (_session.PendingTheoryTrigger is null)
     {
@@ -609,6 +617,7 @@ public partial class CardUseController : Node
     _board.HideAvailable();
     if (trigger is null)
     {
+      Reminder?.Invoke(null);
       _hand.Picking = false;
       _hand.SelectedCard = null;
       _hand.ShowHandOf(_session.CurrentPlayer);
@@ -631,6 +640,8 @@ public partial class CardUseController : Node
       _board.FlashTheoryCard(trigger.Parent);
     }
 
+    // Пока выбор не сделан, напоминание висит на экране; без выбора (действие уже выполнено) — убираем.
+    Reminder?.Invoke(null);
     var effect = trigger.Effect;
     var owner = trigger.Owner;
     var name = $"«{trigger.Parent.Card.Name}» ({owner})";
@@ -642,20 +653,20 @@ public partial class CardUseController : Node
 
     if (effect.RequiresHandCard && trigger.HandCard is null)
     {
-      Hint?.Invoke(prefix + $"Основная теория {name}: выберите карточку в руке. Esc — пропустить действие.");
+      Reminder?.Invoke(prefix + $"Основная теория {name}: выберите карточку в руке. Esc — пропустить действие.");
       return;
     }
     if (effect.RequiresTheory && trigger.Theory is null)
     {
       _board.ShowTargets(_board.Field.TheoryColumns.Where(theory => effect.CanTargetTheory(theory, owner)).SelectMany(theory => theory.Cells));
-      Hint?.Invoke(prefix + $"Основная теория {name}: выберите теорию. Esc — пропустить действие.");
+      Reminder?.Invoke(prefix + $"Основная теория {name}: выберите теорию. Esc — пропустить действие.");
       return;
     }
     if (effect.RequiresTargetCell && trigger.Cell is null)
     {
       _board.ShowAvailable(effect.TargetCells(trigger.Context).Where(target => target.Check.IsAllowed));
       var which = handPick ? "подсвеченную карточку или карточку в руке" : "подсвеченную карточку";
-      Hint?.Invoke(prefix + $"Основная теория {name}: выберите {which}. Esc — пропустить действие.");
+      Reminder?.Invoke(prefix + $"Основная теория {name}: выберите {which}. Esc — пропустить действие.");
     }
   }
 

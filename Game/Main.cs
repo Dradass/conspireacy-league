@@ -78,6 +78,7 @@ public partial class Main : Node2D
 	useController.Initialize(board, session, hand);
 	useController.UseDenied += hud.ShowMessage;
 	useController.Hint += hud.ShowMessage;
+	useController.Reminder += hud.ShowReminder;
 
 	var roundController = new RoundController { Name = "RoundController" };
 	AddChild(roundController);
