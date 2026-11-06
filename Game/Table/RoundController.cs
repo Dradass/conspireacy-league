@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using Godot;
 
@@ -29,6 +30,11 @@ public partial class RoundController : Node
   public event Action<string>? Hint;
 
   /// <summary>
+  /// Начался новый раунд: нужно показать сводку конца прошлого раунда (доход от адептов, закрытые и открытые теории).
+  /// </summary>
+  public event Action<IReadOnlyList<TheoryIncome>, SolvencyChanges>? IncomeSummaryRequested;
+
+  /// <summary>
   /// Настроить контроллер.
   /// </summary>
   /// <param name="board">Стол.</param>
@@ -56,10 +62,16 @@ public partial class RoundController : Node
     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
     _camera.FocusOn(Board.ZoneCenter(_session.Field.CommonZone));
-    var closed = _session.CloseInsolventTheories();
-    Hint?.Invoke(closed.Count == 0
+    var changes = _session.CloseInsolventTheories();
+    var closed = changes.Closed;
+    var reopened = changes.Reopened;
+    Hint?.Invoke(closed.Count == 0 && reopened.Count == 0
       ? "Все спасовали. Проверка штабов теорий: все штабы состоятельны."
-      : $"Все спасовали. Закрыты несостоятельные штабы: {string.Join(", ", closed.Select(column => $"«{column.Theory}»"))}.");
+      : $"Все спасовали. {string.Join(" ", new[]
+      {
+        closed.Count == 0 ? null : $"Закрыты несостоятельные штабы: {string.Join(", ", closed.Select(column => $"«{column.Theory}»"))}.",
+        reopened.Count == 0 ? null : $"Открыты обратно: {string.Join(", ", reopened.Select(column => $"«{column.Theory}»"))}.",
+      }.OfType<string>())}");
     await Pause(StepPause);
 
     while (_session.PayNextTheoryIncome() is { } income)
@@ -81,6 +93,12 @@ public partial class RoundController : Node
     await Pause(CameraPause);
     if (!_session.RefreshMarket())
     {
+      if (_session.Mode == GameMode.TheoryDevelopment)
+      {
+        // Очки считаются по итоговому состоянию поля: выплат в конце нет, партия сразу завершается.
+        Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Закрытые карточки раскрыты. Подсчёт очков.");
+        return;
+      }
       Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Закрытые карточки раскрываются. Итоговый подсчёт денег.");
       await Pause(StepPause);
       await PlayFinalScoring();
@@ -91,6 +109,9 @@ public partial class RoundController : Node
 
     _session.StartNextRound();
     Hint?.Invoke($"Раунд {_session.Round}. Ходит {_session.CurrentPlayer}.");
+    var solvency = _session.SolvencyOfRound;
+    if (_session.IncomeOfRound.Count > 0 || solvency.Closed.Count > 0 || solvency.Reopened.Count > 0)
+      IncomeSummaryRequested?.Invoke(_session.IncomeOfRound, solvency);
   }
 
   /// <summary>

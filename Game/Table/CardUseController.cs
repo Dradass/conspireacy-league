@@ -45,6 +45,11 @@ public partial class CardUseController : Node
   private Targeting? _targeting;
 
   /// <summary>
+  /// Последний триггер основной теории, для которого уже подсвечена её карточка.
+  /// </summary>
+  private TheoryTrigger? _flashedTrigger;
+
+  /// <summary>
   /// Карточку не удалось использовать; аргумент — причина.
   /// </summary>
   public event Action<string>? UseDenied;
@@ -321,7 +326,12 @@ public partial class CardUseController : Node
     }
     // Если основная теория ждёт выбора владельца, подсказку выставит выбор.
     if (_session.PendingTheoryTrigger is null)
+    {
+      // Эффект основной теории сработал без выбора: подсвечиваем её карточку.
+      if (BaseCardOf(owned.Card.Theory) is { } baseCard)
+        _board.FlashTheoryCard(baseCard);
       Hint?.Invoke(TheoryTriggerPrefix(owned.Card.Theory) + $"Применена карточка теории «{owned.Card.Name}»: {owned.Card.OnPlayFromHand.Description}.");
+    }
   }
 
   /// <summary>
@@ -614,10 +624,17 @@ public partial class CardUseController : Node
   /// </summary>
   private void ShowTheoryTrigger(TheoryTrigger trigger)
   {
+    // Основная теория срабатывает один раз на триггер: подсвечиваем её при первом показе, а не на каждом шаге выбора.
+    if (!ReferenceEquals(_flashedTrigger, trigger))
+    {
+      _flashedTrigger = trigger;
+      _board.FlashTheoryCard(trigger.Parent);
+    }
+
     var effect = trigger.Effect;
     var owner = trigger.Owner;
     var name = $"«{trigger.Parent.Card.Name}» ({owner})";
-    var prefix = $"Сработал эффект теории: \"{trigger.Parent.Card.Theory}\". ";
+    var prefix = CallToAction(trigger.Parent.Card.Theory, effect.Description);
     // Карточку в руке можно выбрать, если действие требует её или принимает вместо карточки на поле.
     var handPick = (effect.RequiresHandCard || effect.AcceptsHandCardTarget) && trigger.HandCard is null;
     _hand.Picking = handPick;
@@ -643,12 +660,24 @@ public partial class CardUseController : Node
   }
 
   /// <summary>
-  /// Начало подсказки, если эффект базовой теории сработал от дочерней карточки; иначе пусто.
+  /// Карточка базовой теории дочерней теории, если она лежит на поле.
+  /// </summary>
+  private OwnedTheoryCard? BaseCardOf(Theory theory) =>
+    theory.Parent is { } parent ? _board.Field.TheoryCards.FirstOrDefault(owned => owned.Card.Theory == parent) : null;
+
+  /// <summary>
+  /// Начало подсказки, если действие базовой теории сработало от дочерней карточки; иначе пусто.
   /// </summary>
   private string TheoryTriggerPrefix(Theory theory) =>
-    theory.Parent is { } parent && _board.Field.TheoryCards.Any(owned => owned.Card.Theory == parent)
-      ? $"Сработал эффект теории: \"{parent}\". "
+    theory.Parent is { } parent && _board.Field.TheoryCards.FirstOrDefault(owned => owned.Card.Theory == parent) is { } baseCard
+      ? CallToAction(parent, baseCard.Card.OnPlayFromHand.Description)
       : string.Empty;
+
+  /// <summary>
+  /// Призыв к действию сверху подсказки: какое действие базовой теории нужно сыграть.
+  /// </summary>
+  private static string CallToAction(Theory theory, string effect) =>
+    $"Сыграйте действие теории \"{theory}\": \"{effect}\". ";
 
   /// <summary>
   /// Щелчок или Esc, пока владелец основной теории выбирает цель её действия.
@@ -795,6 +824,8 @@ public partial class CardUseController : Node
       context = context.WithSourceTheory(source);
     if (targeting.BorrowedCell is { } borrowed)
       context = context.WithBorrowedCell(borrowed);
+    if (targeting.HandCard is { } handCard)
+      context = context.WithHandCard(handCard);
     if (targeting.TargetCell is { } target)
       context = context.WithTargetCell(target);
     if (targeting.SecondTargetCell is { } second)

@@ -1,4 +1,5 @@
 using ConspiracyLeague.Core.Field;
+using ConspiracyLeague.Core.Game;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
@@ -25,6 +26,13 @@ public partial class StartMenu : Control
 
   private Label _playersLabel = null!;
   private HSlider _players = null!;
+  private OptionButton _mode = null!;
+  private CheckButton _failureConsequences = null!;
+
+  /// <summary>
+  /// Выбранный режим партии.
+  /// </summary>
+  private GameMode SelectedMode => (GameMode)_mode.GetSelectedId();
 
   public override void _Ready()
   {
@@ -43,6 +51,27 @@ public partial class StartMenu : Control
     title.AddThemeColorOverride("font_color", TitleColor);
     column.AddChild(title);
     column.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24) });
+
+    var modeLabel = new Label { Text = "Режим игры", HorizontalAlignment = HorizontalAlignment.Center };
+    modeLabel.AddThemeFontSizeOverride("font_size", LabelFontSize);
+    column.AddChild(modeLabel);
+
+    _mode = new OptionButton { Name = "Mode", FocusMode = FocusModeEnum.None };
+    _mode.AddThemeFontSizeOverride("font_size", LabelFontSize);
+    _mode.AddItem("Заработок денег", (int)GameMode.Money);
+    _mode.AddItem("Развитие теорий", (int)GameMode.TheoryDevelopment);
+    _mode.Selected = _mode.GetItemIndex((int)GameMode.TheoryDevelopment);
+    column.AddChild(_mode);
+
+    _failureConsequences = new CheckButton
+    {
+      Name = "FailureConsequences",
+      Text = "Провал: бездомный уходит, гражданин понижается",
+      ButtonPressed = true,
+      FocusMode = FocusModeEnum.None,
+    };
+    _failureConsequences.AddThemeFontSizeOverride("font_size", LabelFontSize);
+    column.AddChild(_failureConsequences);
 
     _playersLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
     _playersLabel.AddThemeFontSizeOverride("font_size", LabelFontSize);
@@ -64,7 +93,11 @@ public partial class StartMenu : Control
     UpdatePlayersLabel();
 
     column.AddChild(CreateButton("Network", "Сетевая игра", ShowNetworkNotice));
-    column.AddChild(CreateButton("Local", "Локальная игра", () => StartLocalGame()));
+    var localRow = new HBoxContainer();
+    localRow.AddThemeConstantOverride("separation", 12);
+    column.AddChild(localRow);
+    localRow.AddChild(CreateButton("Local", "Локальная игра", () => StartLocalGame()));
+    localRow.AddChild(CreateButton("Dev", "Режим разработчика", () => StartLocalGame(devMode: true)));
     column.AddChild(CreateButton("Quit", "Выйти", () => GetTree().Quit()));
   }
 
@@ -99,23 +132,34 @@ public partial class StartMenu : Control
   /// <summary>
   /// Локальная игра: каждый игрок по очереди вводит имя, затем начинается партия.
   /// </summary>
-  private async void StartLocalGame()
+  /// <param name="devMode">Запустить с режимом разработчика.</param>
+  private async void StartLocalGame(bool devMode = false)
   {
     var count = PlayerCount;
+    var mode = SelectedMode;
+    var consequences = _failureConsequences.ButtonPressed;
     var names = new List<string>();
     for (var number = 1; number <= count; number++)
       names.Add(await NameDialog.Ask(this, number));
 
-    StartGame(names);
+    StartGame(names, devMode, mode, consequences);
   }
 
   /// <summary>
-  /// Заменить меню партией с выбранным количеством игроков и их именами.
+  /// Заменить меню партией с выбранным количеством игроков, их именами и режимом.
   /// </summary>
-  private void StartGame(IReadOnlyList<string> names)
+  private void StartGame(IReadOnlyList<string> names, bool devMode, GameMode mode, bool failureConsequences)
   {
     var tree = GetTree();
-    var game = new Main { Name = "Main", PlayerCount = names.Count, PlayerNames = names };
+    var game = new Main
+    {
+      Name = "Main",
+      PlayerCount = names.Count,
+      PlayerNames = names,
+      DevMode = devMode,
+      Mode = mode,
+      FailureConsequences = failureConsequences,
+    };
     tree.Root.AddChild(game);
     tree.CurrentScene = game;
     QueueFree();

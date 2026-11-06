@@ -50,9 +50,10 @@ public sealed class GenericProfessionalCard : ProfessionalCard
   }
 
   /// <summary>
-  /// На карточку Мастера теорий в личном штабе можно приводить адептов, и каждый раз приходит на одного больше.
+  /// На карточку Мастера теорий в личном штабе можно приводить адептов; сверх приведённых он сам адептов не даёт
+  /// (после паса Мастер приводит адептов за соседних профессионалов, см. <see cref="PlayingField.AddMasterAdepts"/>).
   /// </summary>
-  public override int? AdeptsBonus => Profession == Profession.TheoryMaster ? 1 : null;
+  public override int? AdeptsBonus => Profession == Profession.TheoryMaster ? 0 : null;
 
   /// <summary>
   /// Актёр без теории присоединяется к теории со скидкой.
@@ -69,7 +70,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
   private static int CostOf(Profession profession) => profession switch
   {
     Profession.Bandit => 7,
-    Profession.Driver => 7,
+    Profession.Driver => 8,
     Profession.Policeman => 9,
     Profession.Journalist => 9,
     Profession.Scientist => 9,
@@ -77,7 +78,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Actor => 11,
     Profession.SpecialAgent => 11,
     Profession.TheoryMaster => 12,
-    Profession.Politician => 15,
+    Profession.Politician => 18,
     _ => 6,
   };
 
@@ -95,6 +96,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Scientist => new ScientistPassive(),
     Profession.Policeman => new PolicemanPassive(),
     Profession.TheoryMaster => new TheoryMasterPassive(),
+    Profession.Coach => new CoachPassive(),
     _ => null,
   };
 
@@ -116,8 +118,8 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Scientist => new PlayOwnCardEffect(),
     Profession.Psychic => new ChooseOneEffect(new PeekHiddenCardEffect(), new GainMoneyEffect(7)),
     Profession.Policeman => new InspectionEffect(),
-    Profession.Driver => new ChooseOneEffect(new MoveAdeptEffect(), new QuickEffect(new TakeToHandEffect(reward: 2))),
-    Profession.Coach => new ChooseOneEffect(new TrainEffect(), new OpenMarketCardsEffect(2, 3)),
+    Profession.Driver => new ChooseOneEffect(new MoveAdeptEffect(), new MarkForReturnEffect(reward: 2)),
+    Profession.Coach => new TrainEffect(),
     Profession.Actor => new ChooseOneEffect(
       new CopyRivalCardEffect(),
       new QuickEffect(new AddAdeptsEffect(2, AdeptDestination.Theory))),

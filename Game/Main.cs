@@ -23,19 +23,37 @@ public partial class Main : Node2D
   /// </summary>
   public IReadOnlyList<string>? PlayerNames { get; init; }
 
+  /// <summary>
+  /// Режим разработчика: под рынком панель со всеми персонажами, которых можно поставить в личный штаб.
+  /// </summary>
+  public bool DevMode { get; init; }
+
+  /// <summary>
+  /// Режим партии: заработок денег или развитие теорий (победные очки); выбирается в стартовом меню.
+  /// </summary>
+  public GameMode Mode { get; init; } = GameMode.TheoryDevelopment;
+
+  /// <summary>
+  /// Последствия провала проверки на низких гранях (бездомный уходит, гражданин понижается); выбирается в стартовом меню.
+  /// </summary>
+  public bool FailureConsequences { get; init; } = true;
+
   public override void _Ready()
   {
 	var session = new GameSession(Enum.GetValues<PlayerColor>()
 	  .Take(PlayerCount)
-	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)));
+	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)), mode: Mode);
+	session.Field.FailureConsequences = FailureConsequences;
 
 	var board = new Board { Name = "Board", Session = session };
 	AddChild(board);
+	if (DevMode)
+	  board.AddChild(new DevCardPalette { Name = "DevCardPalette", Board = board });
 
 	var camera = new TableCamera
 	{
 	  Name = "Camera",
-	  Bounds = new Rect2(Vector2.Zero, board.Size),
+	  Bounds = new Rect2(Vector2.Zero, board.Size + (DevMode ? new Vector2(0, DevCardPalette.Gap + DevCardPalette.Height) : Vector2.Zero)),
 	  Position = CameraTarget(session, session.CurrentPlayer),
 	  Zoom = Vector2.One * StartZoom,
 	};
@@ -65,6 +83,18 @@ public partial class Main : Node2D
 	AddChild(roundController);
 	roundController.Initialize(board, session, camera);
 	roundController.Hint += hud.ShowMessage;
+
+	var infoLayer = new CanvasLayer { Name = "CardInfoLayer", Layer = 3 };
+	AddChild(infoLayer);
+	var infoPanel = new CardInfoPanel { Name = "CardInfo" };
+	infoLayer.AddChild(infoPanel);
+	var infoController = new CardInfoController { Name = "CardInfoController" };
+	AddChild(infoController);
+	infoController.Initialize(board, session, infoPanel, hand);
+
+	var incomeSummary = new IncomeSummaryPanel { Name = "IncomeSummary" };
+	infoLayer.AddChild(incomeSummary);
+	roundController.IncomeSummaryRequested += incomeSummary.Open;
 
 	var debugDumper = new DebugStateDumper { Name = "DebugStateDumper", Session = session, Board = board };
 	AddChild(debugDumper);

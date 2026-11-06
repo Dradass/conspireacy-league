@@ -93,6 +93,11 @@ public sealed class TheoryColumn
   internal IReadOnlyCollection<Player> DoubleHomelessOwners { get; set; } = [];
 
   /// <summary>
+  /// Владельцы, чьи закрытые карточки в этом штабе считаются бездомными (пассивная способность «Иллюминатов»).
+  /// </summary>
+  internal IReadOnlyCollection<Player> IlluminatiHiddenOwners { get; set; } = [];
+
+  /// <summary>
   /// Адептов в штабе нельзя перевести или убрать: на них не действуют никакие эффекты (шапочка из фольги).
   /// </summary>
   public bool AdeptsShielded { get; internal set; }
@@ -126,14 +131,20 @@ public sealed class TheoryColumn
         return false;
 
       // Бездомный владельца «Коммунистов в Антарктиде» считается за два.
-      var homeless = _members.Where(member => member.Card is HomelessCard)
+      var homeless = _members.Where(CountsAsHomeless)
         .Sum(member => DoubleHomelessOwners.Contains(member.Owner) ? 2 : 1);
-      var others = _members.Count(member => member.Card is not HomelessCard);
+      var others = _members.Count(member => !CountsAsHomeless(member));
       // Каждый учёный в штабе делает закрытие сложнее (пассивная способность учёного в штабе теории).
       var scientists = _members.Count(member => member.Card.Passive is ScientistPassive);
       return homeless > others + SolvencyMargin + scientists * ScientistPassive.SolvencyBonus;
     }
   }
+
+  /// <summary>
+  /// Считается ли персонаж бездомным при проверке штаба: настоящий бездомный или закрытая карточка владельца «Иллюминатов».
+  /// </summary>
+  private bool CountsAsHomeless(TheoryMember member) =>
+    member.Card is HomelessCard || member.Card is HiddenCard && IlluminatiHiddenOwners.Contains(member.Owner);
 
   /// <summary>
   /// Ячейка карточки теории — нижней в стопке. На неё ставятся фигурки адептов.
@@ -259,6 +270,11 @@ public sealed class TheoryColumn
   internal void ClearLeaderMeeples() => _leaderMeeples.Clear();
 
   internal void Close() => IsClosed = true;
+
+  /// <summary>
+  /// Штаб снова состоятелен: его открывают обратно (см. <see cref="PlayingField.ReopenSolventTheories"/>).
+  /// </summary>
+  internal void Reopen() => IsClosed = false;
 
   public override string ToString() => Theory.Name;
 }

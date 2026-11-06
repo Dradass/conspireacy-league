@@ -5,7 +5,7 @@ namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
 /// Быстрое действие: навсегда повысить вероятность успеха персонажа в личном штабе (<see cref="GameContext.TargetCell"/>)
-/// на <see cref="Bonus"/>%. Если персонаж чужой, игрок получает <see cref="RivalReward"/>$.
+/// на <see cref="Bonus"/>%. Если персонаж чужой, игрок получает <see cref="RivalReward"/>$, если свой — <see cref="OwnReward"/>$.
 /// Чужих персонажей под защитой полицейского выбрать нельзя.
 /// </summary>
 public sealed class TrainEffect : Effect
@@ -20,8 +20,13 @@ public sealed class TrainEffect : Effect
   /// </summary>
   public const int RivalReward = 4;
 
+  /// <summary>
+  /// Сколько $ получает игрок, если тренирует своего персонажа.
+  /// </summary>
+  public const int OwnReward = 2;
+
   public override string Description =>
-    $"Быстрое: навсегда +{Bonus}% успеха любому персонажу (чужому — и +{RivalReward}$)";
+    $"Быстрое: навсегда +{Bonus}% успеха любому персонажу (чужому — +{RivalReward}$, своему — +{OwnReward}$)";
 
   public override bool IsQuick => true;
 
@@ -36,7 +41,8 @@ public sealed class TrainEffect : Effect
   public override void Execute(GameContext context)
   {
     var cell = context.TargetCell ?? throw new InvalidOperationException("Не выбран персонаж.");
-    if (context.Field.Train(cell, context.CurrentPlayer, Bonus))
-      context.CurrentPlayer.Earn(RivalReward);
+    var rival = context.Field.Train(cell, context.CurrentPlayer, Bonus);
+    // Деньги уходят через текущий игрок-заработок: над карточкой тренера всплывает сумма (см. PlayingField.Use).
+    context.CurrentPlayer.Earn(rival ? RivalReward : OwnReward);
   }
 }

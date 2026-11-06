@@ -50,7 +50,13 @@ public partial class Hud : CanvasLayer
     root.AddChild(CreatePlayers());
     root.AddChild(CreateHand());
     root.AddChild(CreateMessage());
-    root.AddChild(new GameMenu { Name = "GameMenu" });
+    var theoryGraph = new TheoryGraphPanel { Name = "TheoryGraph" };
+    var gameMenu = new GameMenu { Name = "GameMenu" };
+    gameMenu.TheoriesRequested += theoryGraph.Open;
+    root.AddChild(gameMenu);
+    // Граф поверх меню и интерфейса, но под окном информации о карточке (слой 3).
+    theoryGraph.BackRequested += gameMenu.ShowMenu;
+    root.AddChild(theoryGraph);
 
     foreach (var player in Turns.Players)
     {

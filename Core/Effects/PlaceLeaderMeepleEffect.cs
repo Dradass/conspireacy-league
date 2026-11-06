@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 
 namespace ConspiracyLeague.Core.Effects;
@@ -10,6 +11,12 @@ public sealed class PlaceLeaderMeepleEffect : Effect
   public override string Description => "Добавить мипла влияния в теорию";
 
   public override bool RequiresTheory => true;
+
+  /// <summary>
+  /// Мипла нельзя поставить в защищённую полицейским теорию.
+  /// </summary>
+  public override bool CanTargetTheory(TheoryColumn column, Player player) =>
+    base.CanTargetTheory(column, player) && !column.IsProtected();
 
   public override void Execute(GameContext context)
   {

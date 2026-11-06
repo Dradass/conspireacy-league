@@ -42,6 +42,14 @@ public sealed record TheoryIncome(TheoryColumn Column, IReadOnlyList<MemberIncom
       .Select(group => (group.Key, group.Sum(income => income.Amount)));
 
   /// <summary>
+  /// Доход только одного игрока: остальные лидеры ничего не получают.
+  /// </summary>
+  public TheoryIncome OnlyFor(Player player) =>
+    new(Column,
+      Members.Where(member => member.Member.Owner == player).ToList(),
+      Meeples.Where(meeple => meeple.Owner == player).ToList());
+
+  /// <summary>
   /// Посчитать доход теории.
   /// </summary>
   public static TheoryIncome Of(TheoryColumn column)

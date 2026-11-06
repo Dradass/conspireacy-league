@@ -16,7 +16,7 @@ public sealed class ScientistPassive : PassiveAbility
   /// <summary>
   /// На сколько процентов учёный повышает вероятность успеха соседних персонажей в личном штабе.
   /// </summary>
-  public const int NeighborSuccessBonus = 10;
+  public const int NeighborSuccessBonus = 5;
 
   /// <summary>
   /// На сколько сложнее закрыть штаб теории за каждого учёного в нём: бездомных должно быть больше остальных
@@ -30,7 +30,7 @@ public sealed class ScientistPassive : PassiveAbility
   public const int MoneyBonus = 1;
 
   public override string Description =>
-    $"Соседи в личном штабе: +{NeighborSuccessBonus}% успеха и +{MoneyBonus}$ к деньгам, которые они приносят";
+    $"Соседи в личном штабе: +{NeighborSuccessBonus}% успеха и +{MoneyBonus}$ к деньгам, которые они приносят (пока учёный открыт)";
 
   public override void Handle(GameEvent gameEvent, GameContext context)
   {

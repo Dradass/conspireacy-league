@@ -5,8 +5,8 @@ using ConspiracyLeague.Core.Theories;
 namespace ConspiracyLeague.Core.Cards.Theories;
 
 /// <summary>
-/// Карточка теории «Иллюминаты»: выложить персонажа взакрытую бесплатно; владелец соседнего чужого лидера
-/// платит 1$. Пассивно — когда в теорию с вашим закрытым персонажем приходит чужой лидер, вы получаете 5$
+/// Карточка теории «Иллюминаты»: выложить персонажа взакрытую бесплатно. Пассивно — вы получаете деньги за закрытые
+/// теории, где вы лидер, а ваши закрытые карты при закрытии теории считаются бездомными
 /// (<see cref="IlluminatiPassive"/>).
 /// </summary>
 public sealed class IlluminatiCard : TheoryCard
@@ -17,8 +17,7 @@ public sealed class IlluminatiCard : TheoryCard
       TheoryCatalog.Illuminati,
       new PlaceHiddenCardEffect(
         bonusPerHiddenCard: 0,
-        joiningDiscount: PlaceHiddenCardEffect.FreeDiscount,
-        neighbourPays: true),
+        joiningDiscount: PlaceHiddenCardEffect.FreeDiscount),
       new IlluminatiPassive())
   {
   }

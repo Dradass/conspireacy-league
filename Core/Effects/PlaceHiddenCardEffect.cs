@@ -10,8 +10,7 @@ namespace ConspiracyLeague.Core.Effects;
 /// Закрытая карточка (<see cref="HiddenCard"/>) считается гражданином без теории, поэтому за неё платят,
 /// как за присоединение гражданина без теории, — суммарное влияние стопки минус <see cref="JoiningDiscount"/>.
 /// После этого игрок получает <see cref="BonusPerHiddenCard"/> за каждого своего закрытого персонажа на поле,
-/// включая только что выложенного. Если <see cref="NeighbourPays"/>, владелец лидера, лежавшего сверху стопки
-/// до выкладывания, платит игроку <see cref="NeighbourPayment"/>$, если он чужой.
+/// включая только что выложенного.
 /// </summary>
 public sealed class PlaceHiddenCardEffect : Effect
 {
@@ -25,21 +24,14 @@ public sealed class PlaceHiddenCardEffect : Effect
   /// </summary>
   public const int FreeDiscount = int.MaxValue;
 
-  /// <summary>
-  /// Сколько $ платит владелец соседнего чужого лидера.
-  /// </summary>
-  public const int NeighbourPayment = 1;
-
   /// <param name="bonusPerHiddenCard">Сколько $ за каждого своего закрытого персонажа на поле.</param>
   /// <param name="joiningDiscount">Скидка на выкладывание, $.</param>
-  /// <param name="neighbourPays">Владелец соседнего чужого лидера платит игроку.</param>
-  public PlaceHiddenCardEffect(int bonusPerHiddenCard = DefaultBonusPerHiddenCard, int joiningDiscount = 0, bool neighbourPays = false)
+  public PlaceHiddenCardEffect(int bonusPerHiddenCard = DefaultBonusPerHiddenCard, int joiningDiscount = 0)
   {
     ArgumentOutOfRangeException.ThrowIfNegative(bonusPerHiddenCard);
     ArgumentOutOfRangeException.ThrowIfNegative(joiningDiscount);
     BonusPerHiddenCard = bonusPerHiddenCard;
     JoiningDiscount = joiningDiscount;
-    NeighbourPays = neighbourPays;
   }
 
   /// <summary>
@@ -52,11 +44,6 @@ public sealed class PlaceHiddenCardEffect : Effect
   /// </summary>
   public int JoiningDiscount { get; }
 
-  /// <summary>
-  /// Владелец соседнего чужого лидера платит игроку.
-  /// </summary>
-  public bool NeighbourPays { get; }
-
   public override string Description
   {
     get
@@ -68,8 +55,6 @@ public sealed class PlaceHiddenCardEffect : Effect
         text += $" со скидкой {JoiningDiscount}$";
       if (BonusPerHiddenCard > 0)
         text += $" и получить {BonusPerHiddenCard}$ за каждого своего закрытого персонажа на поле";
-      if (NeighbourPays)
-        text += $". Владелец соседнего чужого лидера платит вам {NeighbourPayment}$";
       return text;
     }
   }
@@ -91,16 +76,8 @@ public sealed class PlaceHiddenCardEffect : Effect
     if (!player.Hand.Contains(card))
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {player}.");
 
-    // Лидер, лежавший сверху стопки до выкладывания, — сосед закрытой карточки.
-    var neighbour = theory.Members.Count > 0 ? theory.Members[^1] : null;
     context.Field.PlaceHidden(card, theory, player, JoiningDiscount);
     player.Hand.Remove(card);
-
-    if (NeighbourPays && neighbour is { } leader && leader.Owner != player && leader.Owner.CanAfford(NeighbourPayment))
-    {
-      leader.Owner.Spend(NeighbourPayment);
-      player.Earn(NeighbourPayment);
-    }
     player.Earn(BonusPerHiddenCard * context.Field.HiddenCardsOf(player).Count());
   }
 }

@@ -34,6 +34,11 @@ public partial class TheoryHighlights : Node2D
   private static readonly Dictionary<Theory, Style> Styles = CreateStyles();
 
   /// <summary>
+  /// Цвет подсветки теории на общем поле (он же её фон) или <c>null</c>, если для теории цвет не задан.
+  /// </summary>
+  public static Color? ColorOf(Theory theory) => Styles.TryGetValue(theory, out var style) ? style.Color : null;
+
+  /// <summary>
   /// Сессия игры: поле, на котором стоят стопки теорий.
   /// </summary>
   public GameSession Session { get; init; } = null!;

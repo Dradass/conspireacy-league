@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Cards.Professionals;
 using ConspiracyLeague.Core.Theories;
 
@@ -105,6 +106,43 @@ public static class GameCardSet
   /// </summary>
   /// <param name="theory">Теория.</param>
   public static TheoryCardSet? Of(Theory theory) => WithTheories.FirstOrDefault(set => set.Theory == theory);
+
+  /// <summary>
+  /// Сколько карточек вида есть в игре: бездомных, граждан или профессионалов указанной профессии (с любой теорией и без).
+  /// </summary>
+  /// <param name="kind">Вид персонажа.</param>
+  /// <param name="profession">Профессия, если вид — профессионал.</param>
+  public static int CountOf(PersonKind kind, Profession? profession = null) =>
+    All.Sum(set => CountIn(set, kind, profession));
+
+  /// <summary>
+  /// Теории (<c>null</c> — без теории), в составах которых есть карточки вида.
+  /// </summary>
+  /// <param name="kind">Вид персонажа.</param>
+  /// <param name="profession">Профессия, если вид — профессионал.</param>
+  public static IReadOnlyList<Theory?> TheoriesOf(PersonKind kind, Profession? profession = null) =>
+    All.Where(set => CountIn(set, kind, profession) > 0).Select(set => set.Theory).ToList();
+
+  /// <summary>
+  /// Создать карточку вида с теорией (<c>null</c> — без теории).
+  /// </summary>
+  /// <param name="kind">Вид персонажа.</param>
+  /// <param name="theory">Теория или <c>null</c>.</param>
+  /// <param name="profession">Профессия, если вид — профессионал.</param>
+  /// <exception cref="ArgumentException">Для профессионала не указана профессия.</exception>
+  public static PersonCard Create(PersonKind kind, Theory? theory, Profession? profession = null) => kind switch
+  {
+    PersonKind.Homeless => new HomelessCard(theory),
+    PersonKind.Citizen => new CitizenCard(theory),
+    _ => new GenericProfessionalCard(profession ?? throw new ArgumentException("Нужна профессия.", nameof(profession)), theory),
+  };
+
+  private static int CountIn(TheoryCardSet set, PersonKind kind, Profession? profession) => kind switch
+  {
+    PersonKind.Homeless => set.Homeless,
+    PersonKind.Citizen => set.Citizens,
+    _ => set.Professionals.Count(entry => entry.Profession == profession),
+  };
 
   private static TheoryCardSet Set(Theory theory, int homeless, int citizens, params ProfessionalEntry[] professionals) =>
     new(theory, homeless, citizens, professionals);

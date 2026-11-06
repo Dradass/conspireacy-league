@@ -152,6 +152,39 @@ public partial class CardDragController : Node
 
   private void DropFromHand(HandDrag drag)
   {
+    try
+    {
+      PlaceFromHand(drag);
+    }
+    catch (InvalidOperationException error)
+    {
+      GD.PrintErr($"Не удалось выложить «{drag.View.Card}»: {error.Message}");
+      PlacementDenied?.Invoke(error.Message);
+      // Если карточка на поле не легла, она возвращается в руку, а не остаётся висеть над столом.
+      if (_board.Field.CellOf(drag.View.Card) is null)
+        ReturnToHand(drag);
+    }
+    finally
+    {
+      SettleDrag(drag);
+    }
+  }
+
+  /// <summary>
+  /// Карточка легла на поле, но её вид всё ещё в слое перетаскивания (например, из-за ошибки): переносим его в ячейку.
+  /// </summary>
+  private void SettleDrag(HandDrag drag)
+  {
+    var view = drag.View;
+    if (view.GetParent() != _dragLayer || _board.Field.CellOf(view.Card) is not { } cell)
+      return;
+
+    _dragLayer.RemoveChild(view);
+    _board.Place(view, cell.ToVector2I());
+  }
+
+  private void PlaceFromHand(HandDrag drag)
+  {
     if (_board.CellAt(drag.View.Position) is not { } cell)
     {
       ReturnToHand(drag);

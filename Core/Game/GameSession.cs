@@ -35,7 +35,13 @@ public sealed class GameSession
   public const int ActionsPerTurn = 2;
 
   private readonly Queue<TheoryColumn> _unpaidTheories = new();
+  private readonly List<TheoryIncome> _incomeOfRound = [];
   private readonly Random _random;
+
+  /// <summary>
+  /// Режим партии: как определяется победитель.
+  /// </summary>
+  public GameMode Mode { get; }
 
   /// <summary>
   /// Игроки и очерёдность их ходов.
@@ -125,8 +131,10 @@ public sealed class GameSession
   /// </summary>
   /// <param name="players">Игроки в порядке хода.</param>
   /// <param name="random">Источник случайности; по умолчанию — общий.</param>
-  public GameSession(IEnumerable<Player> players, Random? random = null)
+  /// <param name="mode">Режим партии: как определяется победитель (<see cref="Ranking"/>).</param>
+  public GameSession(IEnumerable<Player> players, Random? random = null, GameMode mode = GameMode.TheoryDevelopment)
   {
+    Mode = mode;
     Turns = new TurnOrder(players);
     Field = new PlayingField(FieldLayout.Columns, FieldLayout.Rows, FieldLayout.CommonZone(Players.Count));
     for (var i = 0; i < Players.Count; i++)
@@ -179,6 +187,11 @@ public sealed class GameSession
   /// </summary>
   /// <returns>Условия, на которых карточка положена.</returns>
   /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
+  /// <summary>
+  /// Режим разработчика: положить карточку в руку игрока без действия и оплаты.
+  /// </summary>
+  public void AddToHandForDeveloper(Player player, Card card) => player.Hand.Add(card);
+
   public PlacementCheck PlaceFromHand(Card card, Cell cell) =>
     PlaceCardFromHand(card, () => Field.Place(card, cell, CurrentPlayer));
 
@@ -198,6 +211,7 @@ public sealed class GameSession
     if (!hand.Contains(card))
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
 
+    using var scope = CurrentPlayer.EarningFrom($"Выкладывание: {card.Name}");
     var check = place();
     // Выложенная теория могла сдвинуться в соседний столбец вместе с карточкой — берём её актуальную ячейку.
     var placedCell = Field.CellOf(card) ?? throw new InvalidOperationException("Карточка не легла на поле.");
@@ -296,13 +310,18 @@ public sealed class GameSession
     var check = PendingCheck ?? throw new InvalidOperationException("Сначала нужно провести проверку успеха.");
     SetPendingCheck(null);
     RequireAction();
-    if (check.Succeeded)
-      Field.Use(check.Cell, option, context);
-    else
-      Field.Waste(check.Cell, CurrentPlayer, option.IsQuick);
+    var source = Field.CardAt(check.Cell)?.Name ?? "Действие";
+    using (CurrentPlayer.EarningFrom(source))
+    {
+      if (check.Succeeded)
+        Field.Use(check.Cell, option, context);
+      else
+        Field.Waste(check.Cell, CurrentPlayer, option.IsQuick, check.Die);
+    }
     // Быстрое действие не тратит действие игрока, пока карточка только поворачивается. Если же она перевернулась
     // рубашкой вверх (второе быстрое действие), действие игрока тратится.
-    if (!option.IsQuick || Field.IsUsed(check.Cell))
+    // Карточку, ушедшую из игры, больше не сыграть — действие тоже тратится.
+    if (!option.IsQuick || Field.IsUsed(check.Cell) || Field.CardAt(check.Cell) is null)
       CompleteAction();
     return check;
   }
@@ -451,6 +470,8 @@ public sealed class GameSession
   {
     RequireNoPendingCheck();
     RequirePhase(GamePhase.PlayerTurns);
+    // Мастера теорий приводят адептов после паса, пока игрок ещё текущий.
+    Field.AddMasterAdepts(CurrentPlayer);
     PassCurrent();
     AutoPass();
   }
@@ -468,10 +489,13 @@ public sealed class GameSession
   /// После этого адепты действующих теорий приносят деньги.
   /// </summary>
   /// <returns>Штабы, закрытые сейчас.</returns>
-  public IReadOnlyList<TheoryColumn> CloseInsolventTheories()
+  public SolvencyChanges CloseInsolventTheories()
   {
+    _incomeOfRound.Clear();
     RequirePhase(GamePhase.HeadquartersCheck);
     var closed = Field.CloseInsolventTheories();
+    var reopened = Field.ReopenSolventTheories();
+    SolvencyOfRound = new SolvencyChanges(closed, reopened);
 
     // Пассивные способности карточек теорий срабатывают в конце раунда, уже после закрытия штабов.
     foreach (var owned in Field.TheoryCards.ToList())
@@ -482,7 +506,8 @@ public sealed class GameSession
       owned.Owner.Earned += OnEarned;
       try
       {
-        owned.Card.HandleEvent(new RoundEnded(), new GameContext(owned.Owner, Field, _random, Market));
+        using (owned.Owner.EarningFrom($"Пассивно: «{owned.Card.Name}»"))
+          owned.Card.HandleEvent(new RoundEnded(), new GameContext(owned.Owner, Field, _random, Market));
       }
       finally
       {
@@ -491,10 +516,21 @@ public sealed class GameSession
       Field.ReportTheoryEarned(owned, earned);
     }
 
-    EnqueueActiveTheories(column => column.Adepts > 0);
+    EnqueueIncomeTheories();
     SetPhase(GamePhase.AdeptIncome);
-    return closed;
+    return new SolvencyChanges(closed, reopened);
   }
+
+  /// <summary>
+  /// Доход от адептов за конец раунда: теории, которые принесли деньги, в порядке выплаты. Заполняется при выплатах
+  /// (<see cref="PayNextTheoryIncome"/>) и показывается в начале следующего раунда.
+  /// </summary>
+  public IReadOnlyList<TheoryIncome> IncomeOfRound => _incomeOfRound;
+
+  /// <summary>
+  /// Какие штабы теорий закрылись и открылись при последней проверке штабов (в конце раунда).
+  /// </summary>
+  public SolvencyChanges SolvencyOfRound { get; private set; } = new(Array.Empty<TheoryColumn>(), Array.Empty<TheoryColumn>());
 
   /// <summary>
   /// Адепты следующей действующей теории приносят деньги её лидерам (<see cref="TheoryIncome"/>).
@@ -515,9 +551,16 @@ public sealed class GameSession
       return null;
     }
 
+    // Закрытая теория приносит доход только владельцу «Иллюминатов», если он в ней лидер.
     var income = TheoryIncome.Of(column);
+    income = Field.IlluminatiBeneficiary(column) is { } beneficiary ? income.OnlyFor(beneficiary) : income;
     foreach (var (player, amount) in income.ByPlayer)
-      player.Earn(amount);
+    {
+      using (player.EarningFrom($"Адепты: «{column.Theory}»"))
+        player.Earn(amount);
+    }
+    if (income.Total > 0)
+      _incomeOfRound.Add(income);
     return income;
   }
 
@@ -544,6 +587,15 @@ public sealed class GameSession
     {
       // Перед итоговым подсчётом все закрытые карточки раскрываются: их владельцы получают бонусы или карточки уходят.
       Field.RevealAllHiddenCards();
+      // Раскрытие могло сделать штаб несостоятельным (или наоборот): проверяем штабы, как в конце раунда.
+      Field.CloseInsolventTheories();
+      Field.ReopenSolventTheories();
+      // В режиме развития теорий денег за лидеров и повторного дохода от адептов нет: очки считаются по состоянию поля.
+      if (Mode == GameMode.TheoryDevelopment)
+      {
+        SetPhase(GamePhase.GameOver);
+        return false;
+      }
       EnqueueActiveTheories(column => true);
       SetPhase(GamePhase.FinalLeadersBonus);
       return false;
@@ -563,20 +615,29 @@ public sealed class GameSession
     RequirePhase(GamePhase.FinalLeadersBonus);
     if (!_unpaidTheories.TryDequeue(out var column))
     {
-      EnqueueActiveTheories(column => column.Adepts > 0);
+      EnqueueIncomeTheories();
       SetPhase(GamePhase.FinalAdeptIncome);
       return null;
     }
 
     var bonus = LeadersBonus.Of(column);
-    bonus.Owner.Earn(bonus.Amount);
+    using (bonus.Owner.EarningFrom($"Лидеры: «{column.Theory}»"))
+      bonus.Owner.Earn(bonus.Amount);
     return bonus;
   }
 
   /// <summary>
-  /// Итоги партии: игроки от самого богатого к самому бедному. При равенстве денег — в порядке хода.
+  /// Итоги партии: в режиме денег — от самого богатого к самому бедному; в режиме развития теорий — по победным очкам
+  /// (при равенстве — по деньгам). При полном равенстве — в порядке хода.
   /// </summary>
-  public IReadOnlyList<Player> Ranking => Players.OrderByDescending(player => player.Money).ToList();
+  public IReadOnlyList<Player> Ranking => Mode == GameMode.Money
+    ? Players.OrderByDescending(player => player.Money).ToList()
+    : Players.OrderByDescending(player => ScoreOf(player).Total).ThenByDescending(player => player.Money).ToList();
+
+  /// <summary>
+  /// Победные очки игрока (режим развития теорий, <see cref="VictoryScore"/>) по текущему состоянию поля.
+  /// </summary>
+  public VictoryScore ScoreOf(Player player) => VictoryPoints.Of(player, Field);
 
   /// <summary>
   /// Начать следующий раунд: пасы сброшены, первым ходит игрок с жетоном первого игрока. В первом раунде
@@ -636,7 +697,10 @@ public sealed class GameSession
 
   private void PassCurrent()
   {
+    var passing = CurrentPlayer;
     Turns.Pass();
+    // Персонажи со значком руля возвращаются к игроку, который спасовал.
+    Field.ReturnWheeledCards(passing);
     if (Turns.AllPassed)
       SetPhase(GamePhase.HeadquartersCheck);
   }
@@ -677,6 +741,19 @@ public sealed class GameSession
     _unpaidTheories.Clear();
     // Слева направо: деньги за теории выплачиваются от левого края поля к правому.
     foreach (var column in Field.TheoryColumns.Where(column => !column.IsClosed && predicate(column)).OrderBy(column => column.TheoryCell.Column))
+      _unpaidTheories.Enqueue(column);
+  }
+
+  /// <summary>
+  /// Поставить в очередь теории, которые приносят доход от адептов: открытые с адептами и закрытые,
+  /// где есть владелец «Иллюминатов» в роли лидера.
+  /// </summary>
+  private void EnqueueIncomeTheories()
+  {
+    _unpaidTheories.Clear();
+    foreach (var column in Field.TheoryColumns
+      .Where(column => column.Adepts > 0 && (!column.IsClosed || Field.IlluminatiBeneficiary(column) is not null))
+      .OrderBy(column => column.TheoryCell.Column))
       _unpaidTheories.Enqueue(column);
   }
 

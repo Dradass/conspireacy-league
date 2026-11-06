@@ -46,6 +46,11 @@ public static class CardPainter
   private static readonly Color ShieldEdgeColor = new("fdfaf2");
 
   /// <summary>
+  /// Фон карточек теорий: им же подписывают теорию в других окнах.
+  /// </summary>
+  public static readonly Color TheoryAccent = new("9e3f3f");
+
+  /// <summary>
   /// Цвет карточки по её типу.
   /// </summary>
   public static Color AccentOf(Card card) => card switch
@@ -53,7 +58,7 @@ public static class CardPainter
     HomelessCard => new Color("7a6a58"),
     CitizenCard => new Color("3f6e9e"),
     ProfessionalCard => new Color("8e4b8a"),
-    TheoryCard => new Color("9e3f3f"),
+    TheoryCard => TheoryAccent,
     _ => new Color("555555"),
   };
 

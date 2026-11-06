@@ -49,6 +49,16 @@ public partial class HandCardView : Control
   public event Action<HandCardView>? DragStarted;
 
   /// <summary>
+  /// Правую кнопку нажали на карточке (отсчёт удержания для описания).
+  /// </summary>
+  public event Action<HandCardView>? InfoPressed;
+
+  /// <summary>
+  /// Правую кнопку отпустили.
+  /// </summary>
+  public event Action<HandCardView>? InfoReleased;
+
+  /// <summary>
   /// Создать отображение карточки в руке.
   /// </summary>
   public static HandCardView Create(Card card) => new()
@@ -62,6 +72,19 @@ public partial class HandCardView : Control
 
   public override void _GuiInput(InputEvent @event)
   {
+    if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right })
+    {
+      AcceptEvent();
+      InfoPressed?.Invoke(this);
+      return;
+    }
+    if (@event is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Right })
+    {
+      AcceptEvent();
+      InfoReleased?.Invoke(this);
+      return;
+    }
+
     if (@event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
       return;
 

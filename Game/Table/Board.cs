@@ -42,10 +42,10 @@ public partial class Board : Node2D
   private const int IncomeFontSize = 34;
   private const int IncomeTitleFontSize = 26;
   private const float IncomeRise = 70f;
-  private const double IncomeStagger = 0.5;
-  private const double IncomeFadeIn = 0.3;
-  private const double IncomeHold = 2.2;
-  private const double IncomeFadeOut = 0.7;
+  private const double IncomeStagger = 0.25;
+  private const double IncomeFadeIn = 0.15;
+  private const double IncomeHold = 0.8;
+  private const double IncomeFadeOut = 0.25;
 
   private static readonly Color TableColor = new("26342c");
   private static readonly Color SlotColor = new("2c3d33");
@@ -59,7 +59,6 @@ public partial class Board : Node2D
   private static readonly Color ClosedAdeptsTint = new(0.6f, 0.6f, 0.6f);
   private static readonly Color ScientistBonusColor = new("4fd16a");
   private const int ScientistBonusFontSize = 20;
-  private const double PeekShowDuration = 2.0;
 
   private const float LeaderMeepleScale = 0.85f;
   private const float LeaderMeepleDropHeight = 70f;
@@ -91,7 +90,6 @@ public partial class Board : Node2D
   private readonly Dictionary<OwnedTheoryCard, CardView> _theoryViews = new();
   private int _marketCardsInFlight;
   private readonly HashSet<CardView> _peeked = [];
-  private readonly HashSet<CardView> _shownHidden = [];
   private ColorRect _highlight = null!;
   private Label _highlightCost = null!;
   private Node2D _cardsLayer = null!;
@@ -161,6 +159,7 @@ public partial class Board : Node2D
     Field.AdeptsAdded += OnAdeptsAdded;
     Field.CardAdeptsAdded += OnCardAdeptsAdded;
     Field.TheoryClosed += OnTheoryClosed;
+    Field.TheoryReopened += OnTheoryReopened;
     Field.CommonZoneChanged += OnCommonZoneChanged;
     Field.UsedCardsRefreshed += OnUsedCardsRefreshed;
     Field.LeaderMeepleAdded += OnLeaderMeepleAdded;
@@ -170,17 +169,19 @@ public partial class Board : Node2D
     Field.CardTakenToHand += OnCardTakenToHand;
     Field.LeaderMeeplesRemoved += OnLeaderMeeplesRemoved;
     Field.HiddenCardRevealed += OnHiddenCardRevealed;
-    Field.HiddenCardPeeked += OnHiddenCardPeeked;
     Field.HiddenCardPlaced += OnHiddenCardPlaced;
     Field.TheoryEarned += OnTheoryEarned;
     Field.TheoryCardRemoved += OnTheoryCardRemoved;
     Field.CardReplaced += OnCardReplaced;
+    Field.PersonalCardDestroyed += OnPersonalCardDestroyed;
+    Field.PersonalCardDemoted += OnPersonalCardDemoted;
     Field.CardsSwapped += OnCardsSwapped;
     Field.TheoryColumnMoved += OnTheoryColumnMoved;
     Field.TheoryCardGranted += OnTheoryCardGranted;
     Field.TheoryCardTransferred += OnTheoryCardTransferred;
     Field.CardRemoved += OnCardTakenToHand;
     Field.CharacterChipped += OnCharacterChipped;
+    Field.WheelMarked += OnWheelMarked;
     Field.TheoryCardUsed += OnTheoryCardUsed;
     Field.TheoryCardsRefreshed += OnTheoryCardsRefreshed;
     Field.AdeptsRemoved += OnAdeptsRemoved;
@@ -197,6 +198,7 @@ public partial class Board : Node2D
     Field.AdeptsAdded -= OnAdeptsAdded;
     Field.CardAdeptsAdded -= OnCardAdeptsAdded;
     Field.TheoryClosed -= OnTheoryClosed;
+    Field.TheoryReopened -= OnTheoryReopened;
     Field.CommonZoneChanged -= OnCommonZoneChanged;
     Field.UsedCardsRefreshed -= OnUsedCardsRefreshed;
     Field.LeaderMeepleAdded -= OnLeaderMeepleAdded;
@@ -206,17 +208,19 @@ public partial class Board : Node2D
     Field.CardTakenToHand -= OnCardTakenToHand;
     Field.LeaderMeeplesRemoved -= OnLeaderMeeplesRemoved;
     Field.HiddenCardRevealed -= OnHiddenCardRevealed;
-    Field.HiddenCardPeeked -= OnHiddenCardPeeked;
     Field.HiddenCardPlaced -= OnHiddenCardPlaced;
     Field.TheoryEarned -= OnTheoryEarned;
     Field.TheoryCardRemoved -= OnTheoryCardRemoved;
     Field.CardReplaced -= OnCardReplaced;
+    Field.PersonalCardDestroyed -= OnPersonalCardDestroyed;
+    Field.PersonalCardDemoted -= OnPersonalCardDemoted;
     Field.CardsSwapped -= OnCardsSwapped;
     Field.TheoryColumnMoved -= OnTheoryColumnMoved;
     Field.TheoryCardGranted -= OnTheoryCardGranted;
     Field.TheoryCardTransferred -= OnTheoryCardTransferred;
     Field.CardRemoved -= OnCardTakenToHand;
     Field.CharacterChipped -= OnCharacterChipped;
+    Field.WheelMarked -= OnWheelMarked;
     Field.TheoryCardUsed -= OnTheoryCardUsed;
     Field.TheoryCardsRefreshed -= OnTheoryCardsRefreshed;
     Field.AdeptsRemoved -= OnAdeptsRemoved;
@@ -230,13 +234,17 @@ public partial class Board : Node2D
 
   public override void _Process(double delta)
   {
+    ShowMissingPersonalViews();
+    // Бездомные рядом и замены карточек меняют вероятность успеха без отдельного события — держим метки в порядке.
+    UpdateSuccessModifiers();
     UpdateShields();
     // Игрок, который сейчас ходит, видит закрытую карточку, пока держит над ней мышь, если это его карточка
     // или он в неё уже смотрел. Только что подсмотренная карточка какое-то время видна и без мыши.
     var hovered = CellAt(GetGlobalMousePosition()) is { } cell ? ViewAt(cell) : null;
     var player = Session.CurrentPlayer;
     var known = hovered is { Card: HiddenCard hidden } && (hovered.CardOwner == player || hidden.IsKnownBy(player));
-    var peeked = new HashSet<CardView>(_shownHidden.Where(IsInstanceValid));
+    // Закрытые карточки, в которые игрок смотрел (подсмотрел или раскрыл), он видит всю игру — приглушённо.
+    var peeked = new HashSet<CardView>(_views.Values.Where(view => view.Card is HiddenCard { IsRevealed: false } seen && seen.IsKnownBy(player)));
     if (known)
       peeked.Add(hovered!);
     // Свою карточку, лежащую рубашкой вверх (сыгранную в личном штабе или перевёрнутую карточку теории), игрок видит,
@@ -364,6 +372,15 @@ public partial class Board : Node2D
   public OwnedTheoryCard? TheoryCardAt(Vector2I cell) => Field.TheoryCards.FirstOrDefault(owned => owned.Cell == cell.ToCell());
 
   /// <summary>
+  /// Подсветить карточку теории белым светом сверху вниз: её эффект сработал.
+  /// </summary>
+  public void FlashTheoryCard(OwnedTheoryCard owned)
+  {
+    if (TheoryViewOf(owned) is { } view)
+      CardSweep.Play(view);
+  }
+
+  /// <summary>
   /// Вид карточки теории на столе.
   /// </summary>
   public CardView? TheoryViewOf(OwnedTheoryCard owned) => _theoryViews.GetValueOrDefault(owned);
@@ -412,6 +429,9 @@ public partial class Board : Node2D
   /// </remarks>
   public void Place(CardView view, Vector2I cell)
   {
+    // Вид, который лежал в этой ячейке раньше, на столе больше не нужен: иначе он останется висеть на старом месте.
+    if (_views.TryGetValue(cell, out var previous) && previous != view)
+      previous.QueueFree();
     _views[cell] = view;
     // Перерисовываем итоги теорий под общей зоной.
     QueueRedraw();
@@ -426,7 +446,11 @@ public partial class Board : Node2D
   private void UpdateSuccessModifiers()
   {
     foreach (var (cell, view) in _views)
-      view.SuccessModifier = Field.SuccessModifierAt(cell.ToCell());
+    {
+      var modifier = Field.SuccessModifierAt(cell.ToCell());
+      if (view.SuccessModifier != modifier)
+        view.SuccessModifier = modifier;
+    }
   }
 
   private void SnapTo(CardView view, Vector2I cell)
@@ -534,6 +558,15 @@ public partial class Board : Node2D
   {
     if (ViewAt(cell.ToVector2I()) is { } view)
       view.Chipped = true;
+  }
+
+  /// <summary>
+  /// На персонажа в личном штабе поставили значок руля.
+  /// </summary>
+  private void OnWheelMarked(Cell cell)
+  {
+    if (ViewAt(cell.ToVector2I()) is { } view)
+      view.Wheeled = true;
   }
 
   /// <summary>
@@ -666,6 +699,22 @@ public partial class Board : Node2D
     ZoneRect(Field.PlayerZones[player]).Position + new Vector2(FirstPlayerToken.Radius, 0);
 
   private void OnCommonZoneChanged(Zone zone) => QueueRedraw();
+
+  /// <summary>
+  /// Штаб теории снова состоятелен: карточки и адепты возвращают свой цвет.
+  /// </summary>
+  private void OnTheoryReopened(TheoryColumn column)
+  {
+    foreach (var cell in column.Cells)
+    {
+      if (_views.TryGetValue(cell.ToVector2I(), out var view))
+        view.ClearClosed();
+    }
+
+    if (_adepts.TryGetValue(column, out var adepts))
+      adepts.Modulate = Colors.White;
+    QueueRedraw();
+  }
 
   /// <summary>
   /// Штаб теории закрыт: все его карточки сереют, на первой — лента «CLOSED».
@@ -840,20 +889,106 @@ public partial class Board : Node2D
   }
 
   /// <summary>
+  /// На поле есть карточка личного штаба, а её вида нет (он не зарегистрирован на столе): ячейка выглядела бы пустой,
+  /// хотя туда нельзя ничего положить. Такую карточку показываем на её месте.
+  /// </summary>
+  private void ShowMissingPersonalViews()
+  {
+    foreach (var zone in Field.PlayerZones.Values)
+    {
+      foreach (var cell in zone.Cells)
+      {
+        var key = cell.ToVector2I();
+        if (_views.ContainsKey(key) || Field.CardAt(cell) is not { } card)
+          continue;
+
+        var view = CardView.Create(card);
+        view.Chipped = Field.Chips.ContainsKey(cell);
+        view.Wheeled = Field.Wheels.ContainsKey(cell);
+        view.Rotated = Field.IsRotated(cell);
+        if (Field.IsUsed(cell))
+          view.FlipFaceDown();
+        Place(view, key);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Бездомный провалил проверку на низкой грани и ушёл из игры: карточка рассыпается сверху вниз и пропадает.
+  /// </summary>
+  private void OnPersonalCardDestroyed(Cell cell)
+  {
+    if (!_views.Remove(cell.ToVector2I(), out var view))
+      return;
+    CardDissolve.Play(view);
+    UpdateSuccessModifiers();
+  }
+
+  /// <summary>
+  /// Гражданин провалил проверку на грани 1 и стал бездомным: карточка сжимается в точку, а из неё вырастает
+  /// карточка бездомного.
+  /// </summary>
+  private void OnPersonalCardDemoted(Cell cell)
+  {
+    if (ViewAt(cell.ToVector2I()) is { } view)
+      PlayTransformation(view, cell);
+  }
+
+  /// <summary>
+  /// Превращение персонажа: карточка сжимается в точку, в этот момент показывается новый персонаж из ячейки,
+  /// и он вырастает из точки.
+  /// </summary>
+  private void PlayTransformation(CardView view, Cell cell)
+  {
+    var tween = view.CreateTween();
+    tween.TweenProperty(view, "scale", Vector2.One * DemoteDotScale, DemoteShrinkDuration)
+      .SetTrans(Tween.TransitionType.Back)
+      .SetEase(Tween.EaseType.In);
+    tween.TweenCallback(Callable.From(() => ApplyCardChange(view, cell)));
+    tween.TweenProperty(view, "scale", Vector2.One, DemoteGrowDuration)
+      .SetTrans(Tween.TransitionType.Back)
+      .SetEase(Tween.EaseType.Out);
+  }
+
+  /// <summary>
+  /// Во сколько раз карточка сжимается в точку при превращении гражданина в бездомного.
+  /// </summary>
+  private const float DemoteDotScale = 0.03f;
+
+  private const double DemoteShrinkDuration = 0.35;
+  private const double DemoteGrowDuration = 0.45;
+
+  /// <summary>
   /// Карточку в ячейке заменили другой: бездомного обучили, лидера закрыли.
   /// </summary>
   private void OnCardReplaced(Cell cell)
   {
     if (ViewAt(cell.ToVector2I()) is { } view && Field.CardAt(cell) is { } card)
     {
-      view.ShowCard(card);
-      view.Chipped = Field.Chips.ContainsKey(cell);
-      // Замененная карточка могла перейти другому игроку: владелец мипла — владелец новой карточки.
-      if (Field.ColumnAt(cell) is { } column)
-        view.CardOwner = column.OwnerAt(cell);
+      // Персонаж стал другим (бездомного обучили, гражданина понизили, карточку заменили): анимация превращения.
+      // Закрытие лидера (закрытая карточка) и смена владельца без новой карточки — без анимации.
+      if (!ReferenceEquals(view.Card, card) && view.Card is not HiddenCard && card is not HiddenCard)
+        PlayTransformation(view, cell);
+      else
+        ApplyCardChange(view, cell);
     }
     // Перерисовываем итоги теорий и колоду рынка: из неё могли взять карточку.
     QueueRedraw();
+  }
+
+  /// <summary>
+  /// Показать на карточке текущее состояние ячейки: новый персонаж, фишки, колесо, владелец мипла.
+  /// </summary>
+  private void ApplyCardChange(CardView view, Cell cell)
+  {
+    if (Field.CardAt(cell) is { } card)
+      view.ShowCard(card);
+    view.Chipped = Field.Chips.ContainsKey(cell);
+    view.Wheeled = Field.Wheels.ContainsKey(cell);
+    // Замененная карточка могла перейти другому игроку: владелец мипла — владелец новой карточки.
+    if (Field.ColumnAt(cell) is { } column)
+      view.CardOwner = column.OwnerAt(cell);
+    UpdateSuccessModifiers();
   }
 
   /// <summary>
@@ -912,6 +1047,9 @@ public partial class Board : Node2D
 
     foreach (var (to, view) in moved)
     {
+      // Вид, который стоял в ячейке назначения и не переехал, стал лишним: убираем его со стола.
+      if (views.TryGetValue(to, out var stale) && !ReferenceEquals(stale, view))
+        stale.QueueFree();
       views[to] = view;
       SlideView(view, CellCenter(to));
     }
@@ -952,19 +1090,6 @@ public partial class Board : Node2D
   {
     var center = CellCenter(owned.Cell.ToVector2I()) - Vector2.Up * CellSize.Y / 2;
     SpawnFloatingText($"+{amount}$", PlayerPalette.MainOf(owned.Owner.Color), IncomeFontSize, center, 0);
-  }
-
-  /// <summary>
-  /// Игрок посмотрел в закрытую карточку: её лицевая сторона видна ему <see cref="PeekShowDuration"/> секунды,
-  /// дальше — когда он наводит на неё мышь.
-  /// </summary>
-  private void OnHiddenCardPeeked(Cell cell, Player player)
-  {
-    if (ViewAt(cell.ToVector2I()) is not { } view)
-      return;
-
-    _shownHidden.Add(view);
-    GetTree().CreateTimer(PeekShowDuration).Timeout += () => _shownHidden.Remove(view);
   }
 
   /// <summary>

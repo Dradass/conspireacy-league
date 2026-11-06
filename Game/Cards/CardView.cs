@@ -17,6 +17,13 @@ public partial class CardView : Node2D
 
   private static readonly Vector2 LiftedScale = Vector2.One * 1.08f;
   private static readonly Color ClosedTint = new(0.6f, 0.6f, 0.6f);
+  private static readonly Color ChipGold = new("e0b84f");
+  private static readonly Color WheelColor = new("7fb6ff");
+  private const float WheelLineWidth = 3f;
+  private static readonly Color ChipBody = new("2b2b2b");
+  private static readonly Color ChipDie = new("4fd16a");
+  private static readonly float[] ChipPinFractions = [0.25f, 0.5f, 0.75f];
+  private const float ChipPinWidth = 2f;
 
   private bool _lifted;
   private bool _isHeadquarters;
@@ -139,6 +146,18 @@ public partial class CardView : Node2D
   }
 
   /// <summary>
+  /// Штаб теории снова открыт: карточка возвращает свой цвет и ленту «CLOSED» снимаем.
+  /// </summary>
+  public void ClearClosed()
+  {
+    _closed = false;
+    _closedRibbon = false;
+    if (_ownerMark is not null)
+      _ownerMark.Modulate = Colors.White;
+    QueueRedraw();
+  }
+
+  /// <summary>
   /// Карточку защищает полицейский: в углу нарисован щит.
   /// </summary>
   public bool Shielded
@@ -204,10 +223,21 @@ public partial class CardView : Node2D
   }
 
   private bool _chipped;
+  private bool _wheeled;
 
   /// <summary>
   /// На персонажа положили фишку чипа (<see cref="Core.Field.PlayingField.Chips"/>).
   /// </summary>
+  public bool Wheeled
+  {
+    get => _wheeled;
+    set
+    {
+      _wheeled = value;
+      QueueRedraw();
+    }
+  }
+
   public bool Chipped
   {
     get => _chipped;
@@ -249,17 +279,51 @@ public partial class CardView : Node2D
     DrawShieldIfNeeded(rect);
     if (_chipped)
       DrawChip(rect);
+    if (_wheeled)
+      DrawWheel(rect);
   }
 
   /// <summary>
-  /// Фишка чипа в правом верхнем углу карточки: её положили на персонажа («Чипирование»).
+  /// Значок руля в левом верхнем углу карточки: персонаж вернётся к владельцу на руку после его паса.
+  /// </summary>
+  private void DrawWheel(Rect2 rect)
+  {
+    var radius = rect.Size.X * 0.09f;
+    var center = new Vector2(rect.Position.X + rect.Size.X * 0.12f, rect.Position.Y + rect.Size.Y * 0.1f);
+    DrawArc(center, radius, 0, Mathf.Tau, 24, WheelColor, WheelLineWidth);
+    DrawCircle(center, radius * 0.25f, WheelColor);
+    // Три спицы: одна вверх и две вниз.
+    for (var spoke = 0; spoke < 3; spoke++)
+      DrawLine(center, center + Vector2.Up.Rotated(spoke * Mathf.Tau / 3) * radius, WheelColor, WheelLineWidth / 2);
+  }
+
+  /// <summary>
+  /// Значок компьютерного чипа в правом верхнем углу карточки: на персонажа положили чип («Чипирование»).
+  /// Корпус с выводами по четырём сторонам и кристаллом внутри.
   /// </summary>
   private void DrawChip(Rect2 rect)
   {
-    var radius = rect.Size.X * 0.09f;
-    var center = new Vector2(rect.End.X - rect.Size.X * 0.12f, rect.Position.Y + rect.Size.Y * 0.1f);
-    DrawCircle(center, radius, new Color("e0b84f"));
-    DrawArc(center, radius, 0, Mathf.Tau, 24, Colors.Black, 2f);
+    var size = rect.Size.X * 0.2f;
+    var center = new Vector2(rect.End.X - rect.Size.X * 0.14f, rect.Position.Y + rect.Size.Y * 0.14f);
+    var body = new Rect2(center - Vector2.One * size / 2, Vector2.One * size);
+    var pinLength = size * 0.22f;
+
+    // Выводы: по три на каждой стороне корпуса.
+    foreach (var fraction in ChipPinFractions)
+    {
+      var x = body.Position.X + body.Size.X * fraction;
+      var y = body.Position.Y + body.Size.Y * fraction;
+      DrawLine(new Vector2(x, body.Position.Y - pinLength), new Vector2(x, body.Position.Y), ChipGold, ChipPinWidth);
+      DrawLine(new Vector2(x, body.End.Y), new Vector2(x, body.End.Y + pinLength), ChipGold, ChipPinWidth);
+      DrawLine(new Vector2(body.Position.X - pinLength, y), new Vector2(body.Position.X, y), ChipGold, ChipPinWidth);
+      DrawLine(new Vector2(body.End.X, y), new Vector2(body.End.X + pinLength, y), ChipGold, ChipPinWidth);
+    }
+
+    DrawRect(body, ChipBody);
+    DrawRect(body, ChipGold, filled: false, width: ChipPinWidth);
+    // Кристалл в центре корпуса и метка первого вывода в углу.
+    DrawRect(body.Grow(-size * 0.25f), ChipDie);
+    DrawCircle(body.Position + Vector2.One * size * 0.14f, size * 0.07f, ChipGold);
   }
 
   private void DrawShieldIfNeeded(Rect2 rect)

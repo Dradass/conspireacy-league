@@ -26,6 +26,19 @@ public sealed class Player
   public Hand Hand { get; } = new();
 
   /// <summary>
+  /// Всё, что игрок получил за партию, по источникам: название карточки, теории или «Прочее».
+  /// </summary>
+  public IReadOnlyDictionary<string, int> EarnedFrom => _earnedFrom;
+
+  /// <summary>
+  /// Источник, который записывается в <see cref="EarnedFrom"/>, пока открыт <see cref="EarningFrom"/>.
+  /// </summary>
+  private const string OtherSource = "Прочее";
+
+  private readonly Dictionary<string, int> _earnedFrom = new();
+  private string? _source;
+
+  /// <summary>
   /// Баланс изменился.
   /// </summary>
   public event Action<Player>? MoneyChanged;
@@ -54,7 +67,7 @@ public sealed class Player
   public bool CanAfford(int amount) => Money >= amount;
 
   /// <summary>
-  /// Получить деньги.
+  /// Получить деньги. Сумма записывается в <see cref="EarnedFrom"/> под текущим источником.
   /// </summary>
   /// <param name="amount">Сумма в $.</param>
   public void Earn(int amount)
@@ -62,7 +75,38 @@ public sealed class Player
     ArgumentOutOfRangeException.ThrowIfNegative(amount);
     ChangeMoney(amount);
     if (amount > 0)
+    {
+      var source = _source ?? OtherSource;
+      _earnedFrom[source] = _earnedFrom.GetValueOrDefault(source) + amount;
       Earned?.Invoke(this, amount);
+    }
+  }
+
+  /// <summary>
+  /// Вернуть деньги, которые были списаны по ошибке (например, в режиме разработчика). Не считается доходом.
+  /// </summary>
+  /// <param name="amount">Сумма в $.</param>
+  public void Refund(int amount)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegative(amount);
+    ChangeMoney(amount);
+  }
+
+  /// <summary>
+  /// Все деньги, которые игрок получит, пока открыт результат, записываются под этим источником.
+  /// Закрывается через <c>using</c>; внутренние источники перекрывают внешние.
+  /// </summary>
+  /// <param name="source">Название источника: карточка, теория, «Адепты: …».</param>
+  public IDisposable EarningFrom(string source)
+  {
+    var previous = _source;
+    _source = source;
+    return new SourceScope(() => _source = previous);
+  }
+
+  private sealed class SourceScope(Action restore) : IDisposable
+  {
+    public void Dispose() => restore();
   }
 
   /// <summary>

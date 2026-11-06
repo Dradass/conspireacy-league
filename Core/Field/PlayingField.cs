@@ -46,6 +46,7 @@ public sealed class PlayingField
   private readonly List<TheoryColumn> _theoryColumns = [];
   private readonly List<OwnedTheoryCard> _theoryCards = [];
   private readonly Dictionary<Cell, Player> _chips = new();
+  private readonly Dictionary<Cell, Player> _wheels = new();
 
   /// <summary>
   /// Количество столбцов.
@@ -93,6 +94,11 @@ public sealed class PlayingField
   public event Action<TheoryColumn>? TheoryClosed;
 
   /// <summary>
+  /// Штаб теории снова состоятелен и открыт обратно.
+  /// </summary>
+  public event Action<TheoryColumn>? TheoryReopened;
+
+  /// <summary>
   /// Сыгранные карточки перевернулись лицевой стороной вверх; аргумент — их ячейки.
   /// </summary>
   public event Action<IReadOnlyList<Cell>>? UsedCardsRefreshed;
@@ -102,10 +108,6 @@ public sealed class PlayingField
   /// </summary>
   public event Action<Cell>? HiddenCardRevealed;
 
-  /// <summary>
-  /// Игрок посмотрел в закрытую карточку; аргументы — её ячейка и игрок.
-  /// </summary>
-  public event Action<Cell, Player>? HiddenCardPeeked;
 
   /// <summary>
   /// Закрытая карточка выложена в стопку теории; аргументы — её ячейка и владелец.
@@ -137,6 +139,33 @@ public sealed class PlayingField
   /// Вероятность успеха персонажа навсегда повышена (<see cref="Train"/>); аргумент — его ячейка.
   /// </summary>
   public event Action<Cell>? CardTrained;
+
+  /// <summary>
+  /// Бездомный в личном штабе провалил проверку на низкой грани (<see cref="HomelessDestroyDie"/>) и ушёл из игры;
+  /// аргумент — его ячейка (карточки в ней уже нет).
+  /// </summary>
+  public event Action<Cell>? PersonalCardDestroyed;
+
+  /// <summary>
+  /// Гражданин в личном штабе провалил проверку на грани 1 (<see cref="CitizenDemoteDie"/>) и стал бездомным;
+  /// аргумент — его ячейка (карточка в ней уже бездомный).
+  /// </summary>
+  public event Action<Cell>? PersonalCardDemoted;
+
+  /// <summary>
+  /// Применяются ли последствия провала на низких гранях: бездомный уходит из игры, гражданин становится бездомным.
+  /// </summary>
+  public bool FailureConsequences { get; set; } = true;
+
+  /// <summary>
+  /// Наибольшая грань, на которой проваленный бездомный уходит из игры.
+  /// </summary>
+  public const int HomelessDestroyDie = 2;
+
+  /// <summary>
+  /// Грань, на которой проваленный гражданин превращается в бездомного.
+  /// </summary>
+  public const int CitizenDemoteDie = 1;
 
   /// <summary>
   /// Адептов перевели из одной теории в другую; аргументы — откуда, куда и сколько.
@@ -194,6 +223,11 @@ public sealed class PlayingField
   /// На персонажа положили фишку; аргумент — его ячейка.
   /// </summary>
   public event Action<Cell>? CharacterChipped;
+
+  /// <summary>
+  /// На персонажа в личном штабе поставили значок руля.
+  /// </summary>
+  public event Action<Cell>? WheelMarked;
 
   /// <summary>
   /// Карточку теории применили; аргумент — карточка.
@@ -281,7 +315,7 @@ public sealed class PlayingField
       return 0;
 
     return cell.Surrounding
-      .Where(neighbor => zone.Contains(neighbor) && CardAt(neighbor)?.Passive is ScientistPassive)
+      .Where(neighbor => zone.Contains(neighbor) && CardAt(neighbor)?.Passive is ScientistPassive && !IsUsed(neighbor))
       .Sum(scientist => ScientistSuccessBonusOf(scientist))
       + _trainedBonuses.GetValueOrDefault(cell);
   }
@@ -300,6 +334,30 @@ public sealed class PlayingField
       return PlacementCheck.Deny("У этого персонажа уже 100% успеха.");
 
     return PlacementCheck.Allowed;
+  }
+
+  /// <summary>
+  /// Пустые ячейки во всех личных штабах: отладочный режим ставит туда персонажей.
+  /// </summary>
+  public IEnumerable<Cell> EmptyPersonalCells() =>
+    _playerZones.Values.SelectMany(zone => zone.Cells).Where(cell => !_cards.ContainsKey(cell));
+
+  /// <summary>
+  /// Положить персонажа в режиме разработчика: в пустую ячейку личного штаба — без проверок правил;
+  /// в общую зону — по обычным правилам, но без оплаты.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Ячейка занята или сюда карточку нельзя положить.</exception>
+  public PlacementCheck PlaceForDeveloper(Cell cell, PersonCard card, Player player)
+  {
+    if (EmptyPersonalCells().Contains(cell))
+    {
+      _cards[cell] = card;
+      return PlacementCheck.Allowed;
+    }
+
+    var check = Place(card, cell, player);
+    player.Refund(check.Cost);
+    return check;
   }
 
   /// <summary>
@@ -335,7 +393,70 @@ public sealed class PlayingField
   /// Итоговое изменение вероятности успеха персонажа в ячейке: повышение (<see cref="SuccessBonusAt"/>)
   /// минус снижение (<see cref="SuccessPenaltyAt"/>).
   /// </summary>
-  public int SuccessModifierAt(Cell cell) => SuccessBonusAt(cell) - SuccessPenaltyAt(cell);
+  public int SuccessModifierAt(Cell cell) => SuccessBonusAt(cell) + CoachBonusAt(cell) - SuccessPenaltyAt(cell);
+
+  /// <summary>
+  /// Вероятность успеха без бонуса тренера (<see cref="CoachPassive"/>): по ней тренер выбирает, кого поддержать,
+  /// поэтому расчёт не зависит от самого бонуса тренера.
+  /// </summary>
+  private int BaseSuccessChanceAt(Cell cell) =>
+    CardAt(cell) is PersonCard person
+      ? IsFoiled(cell)
+        ? SuccessCheck.MaxChance
+        : Math.Clamp(person.SuccessChancePercent + SuccessBonusAt(cell) - SuccessPenaltyAt(cell), 0, SuccessCheck.MaxChance)
+      : 0;
+
+  /// <summary>
+  /// На сколько процентов пассивный тренер (<see cref="CoachPassive"/>) повышает вероятность успеха персонажа в ячейке.
+  /// Каждый тренер в личном штабе поддерживает одного соседа (см. <see cref="CoachTargets"/>).
+  /// </summary>
+  public int CoachBonusAt(Cell cell)
+  {
+    if (CardAt(cell) is not PersonCard || _playerZones.FirstOrDefault(pair => pair.Value.Contains(cell)) is not { Value: { } zone } pair)
+      return 0;
+
+    return CoachTargets(pair.Key, zone).Count(target => target == cell) * CoachPassive.SuccessBonus;
+  }
+
+  /// <summary>
+  /// Персонажи, которых поддерживают тренеры личного штаба: каждый тренер — один сосед с самой низкой вероятностью
+  /// успеха (из равных — случайный, но постоянный для ячейки).
+  /// </summary>
+  private IEnumerable<Cell> CoachTargets(Player owner, Zone zone) =>
+    zone.Cells
+      .Where(cell => CardAt(cell)?.Passive is CoachPassive)
+      .Select(coach => CoachTargetOf(coach, zone))
+      .Where(target => target is not null)
+      .Select(target => target!.Value);
+
+  private Cell? CoachTargetOf(Cell coach, Zone zone)
+  {
+    var candidates = coach.Surrounding
+      .Where(neighbour => zone.Contains(neighbour) && CardAt(neighbour) is PersonCard && BaseSuccessChanceAt(neighbour) < SuccessCheck.MaxChance)
+      .ToList();
+    if (candidates.Count == 0)
+      return null;
+
+    var lowest = candidates.Min(BaseSuccessChanceAt);
+    return candidates.Where(cell => BaseSuccessChanceAt(cell) == lowest).MinBy(TieBreakOf);
+  }
+
+  /// <summary>
+  /// Случайный, но постоянный для ячейки приоритет при равенстве шансов у соседей тренера.
+  /// </summary>
+  private int TieBreakOf(Cell cell)
+  {
+    if (!_tieBreaks.TryGetValue(cell, out var value))
+    {
+      value = _tieBreakRandom.Next();
+      _tieBreaks[cell] = value;
+    }
+
+    return value;
+  }
+
+  private readonly Dictionary<Cell, int> _tieBreaks = new();
+  private readonly Random _tieBreakRandom = new();
 
   /// <summary>
   /// Сколько $ добавляют учёные (<see cref="ScientistPassive"/>) к деньгам, которые приносит карточка личного штаба:
@@ -361,7 +482,7 @@ public sealed class PlayingField
   /// </summary>
   private IEnumerable<Cell> ScientistNeighboursAt(Cell cell) =>
     _playerZones.Values.FirstOrDefault(zone => zone.Contains(cell)) is { } zone
-      ? cell.Surrounding.Where(neighbor => zone.Contains(neighbor) && CardAt(neighbor)?.Passive is ScientistPassive)
+      ? cell.Surrounding.Where(neighbor => zone.Contains(neighbor) && CardAt(neighbor)?.Passive is ScientistPassive && !IsUsed(neighbor))
       : [];
 
   /// <summary>
@@ -606,13 +727,65 @@ public sealed class PlayingField
     && _theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell && !owned.IsUsed);
 
   /// <summary>
-  /// Освободить ячейку от шапочки из фольги и фишки: карточка остаётся у владельца, но больше не лежит на персонаже.
+  /// Освободить ячейку от шапочки из фольги, фишки и руля: карточка остаётся у владельца, но больше не лежит на персонаже.
   /// </summary>
   private void ReleaseFoils(Cell cell)
   {
     foreach (var owned in _theoryCards.Where(owned => owned.AttachedTo == cell))
       owned.AttachedTo = null;
     _chips.Remove(cell);
+    _wheels.Remove(cell);
+  }
+
+  /// <summary>
+  /// Значки руля: персонаж в личном штабе и игрок, который поставил руль (он же владелец персонажа).
+  /// </summary>
+  public IReadOnlyDictionary<Cell, Player> Wheels => _wheels;
+
+  /// <summary>
+  /// Проверить, можно ли поставить значок руля на персонажа в личном штабе игрока.
+  /// </summary>
+  public PlacementCheck CheckWheel(Cell cell, Player player, IReadOnlyCollection<Cell> acting)
+  {
+    if (_wheels.ContainsKey(cell))
+      return PlacementCheck.Deny("На этом персонаже уже есть руль.");
+    return CheckTake(cell, player, acting);
+  }
+
+  /// <summary>
+  /// Персонажи личного штаба игрока, на которых можно поставить руль.
+  /// </summary>
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> WheelTargets(Player player, IReadOnlyCollection<Cell> acting) =>
+    _playerZones.TryGetValue(player, out var zone)
+      ? zone.Cells.Where(cell => CardAt(cell) is PersonCard).Select(cell => (cell, CheckWheel(cell, player, acting)))
+      : [];
+
+  /// <summary>
+  /// Поставить значок руля на персонажа личного штаба.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">На этого персонажа руль поставить нельзя.</exception>
+  public void MarkForReturn(Cell cell, Player player, IReadOnlyCollection<Cell> acting)
+  {
+    var check = CheckWheel(cell, player, acting);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    _wheels[cell] = player;
+    WheelMarked?.Invoke(cell);
+  }
+
+  /// <summary>
+  /// После паса игрока персонажи с его значком руля возвращаются к нему на руку.
+  /// Персонаж, которого нельзя забрать (например, под шапочкой из фольги), остаётся на месте с рулём.
+  /// </summary>
+  public void ReturnWheeledCards(Player player)
+  {
+    var cells = _wheels.Where(pair => pair.Value == player).Select(pair => pair.Key).ToList();
+    foreach (var cell in cells)
+    {
+      if (CheckTake(cell, player, Array.Empty<Cell>()).IsAllowed)
+        TakeToHand(cell, player, Array.Empty<Cell>());
+    }
   }
 
   /// <summary>
@@ -1048,7 +1221,8 @@ public sealed class PlayingField
     if (target == inspector || !_playerZones.TryGetValue(target, out var zone))
       throw new ArgumentException("Инспектировать можно только личный штаб другого игрока.", nameof(target));
 
-    var homeless = zone.Cells.Where(cell => CardAt(cell) is HomelessCard).ToList();
+    // Деньги платят только за открытых бездомных: лежащих рубашкой вверх не считаем.
+    var homeless = zone.Cells.Where(cell => CardAt(cell) is HomelessCard && !IsUsed(cell)).ToList();
     inspector.Earn(homeless.Count * moneyPerHomeless);
 
     var candidates = homeless.Where(cell => !IsUsed(cell) && !IsProtected(cell, inspector)).ToList();
@@ -1220,8 +1394,9 @@ public sealed class PlayingField
   /// <param name="cell">Ячейка карточки.</param>
   /// <param name="player">Игрок, который играл карточку.</param>
   /// <param name="quick">Это было быстрое действие (<see cref="Effect.IsQuick"/>).</param>
+  /// <param name="die">Выпавшая грань кубика: на низкой грани проваленная карточка может уйти из игры или понизиться.</param>
   /// <exception cref="InvalidOperationException">Карточку нельзя использовать.</exception>
-  public void Waste(Cell cell, Player player, bool quick = false)
+  public void Waste(Cell cell, Player player, bool quick, int die)
   {
     if (!CanUse(cell, player))
       throw new InvalidOperationException("Эту карточку нельзя использовать.");
@@ -1231,7 +1406,42 @@ public sealed class PlayingField
     if (mushrooms > 0)
       player.Earn(mushrooms * LeninMushroomPassive.MoneyPerFailure);
 
+    if (FailureConsequences)
+    {
+      switch (_cards[cell])
+      {
+        case HomelessCard when die <= HomelessDestroyDie:
+          DestroyFailedHomeless(cell);
+          return;
+        case CitizenCard when die == CitizenDemoteDie:
+          DemoteFailedCitizen(cell);
+          break;
+      }
+    }
+
     Play(cell, quick);
+  }
+
+  /// <summary>
+  /// Проваленный бездомный уходит из игры вместе с тем, что было связано с его местом.
+  /// </summary>
+  private void DestroyFailedHomeless(Cell cell)
+  {
+    DetachFromZone(cell);
+    _chips.Remove(cell);
+    _wheels.Remove(cell);
+    PersonalCardDestroyed?.Invoke(cell);
+  }
+
+  /// <summary>
+  /// Проваленный гражданин становится бездомным той же теории (владелец остаётся прежним).
+  /// </summary>
+  private void DemoteFailedCitizen(Cell cell)
+  {
+    var citizen = (CitizenCard)_cards[cell];
+    ReleaseFoils(cell);
+    _cards[cell] = new HomelessCard(citizen.Theory);
+    PersonalCardDemoted?.Invoke(cell);
   }
 
   /// <summary>
@@ -1249,13 +1459,15 @@ public sealed class PlayingField
   /// <summary>
   /// Поставить мипл-лидер игрока в теорию (<see cref="TheoryColumn.LeaderMeeples"/>).
   /// </summary>
-  /// <exception cref="InvalidOperationException">Штаб теории закрыт.</exception>
+  /// <exception cref="InvalidOperationException">Штаб теории закрыт или защищён полицейским.</exception>
   public void AddLeaderMeeple(TheoryColumn column, Player player)
   {
     if (!_theoryColumns.Contains(column))
       throw new ArgumentException($"Теория «{column}» не выложена на это поле.", nameof(column));
     if (column.IsClosed)
       throw new InvalidOperationException($"Штаб теории «{column}» закрыт.");
+    if (column.IsProtected())
+      throw new InvalidOperationException($"Теорию «{column}» защищает полицейский.");
 
     // Пассивная способность «Коммунистов на Луне» действует только на её владельца: он ставит два мипла.
     var meeples = HoldsPassive<CommunistsOnMoonPassive>(player)
@@ -1267,7 +1479,6 @@ public sealed class PlayingField
       LeaderMeepleAdded?.Invoke(column, player);
     }
     UpdateTheoryCards();
-    PayIlluminatiPassive(column, player);
     PayEbolaPassive(column, player);
   }
 
@@ -1444,6 +1655,25 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// После паса игрока его Мастера теорий в личном штабе приводят адептов на свою карточку: по одному за каждого
+  /// соседнего профессионала и ещё одного за самого Мастера.
+  /// </summary>
+  public void AddMasterAdepts(Player player)
+  {
+    if (!_playerZones.TryGetValue(player, out var zone))
+      return;
+
+    var masters = zone.Cells
+      .Where(cell => CardAt(cell) is GenericProfessionalCard { Profession: Profession.TheoryMaster })
+      .ToList();
+    foreach (var cell in masters)
+    {
+      var professionals = cell.Surrounding.Count(neighbor => zone.Contains(neighbor) && CardAt(neighbor) is ProfessionalCard);
+      AddAdepts(cell, professionals + 1, player);
+    }
+  }
+
+  /// <summary>
   /// Сыгранные карточки личных штабов переворачиваются лицевой стороной вверх, а повёрнутые возвращаются
   /// в обычное положение — их снова можно сыграть.
   /// </summary>
@@ -1486,7 +1716,12 @@ public sealed class PlayingField
   /// Проверить, может ли игрок применить карточку теории: только свою и ещё не применённую.
   /// </summary>
   public bool CanUseTheoryCard(OwnedTheoryCard card, Player player) =>
-    card.Owner == player && !card.IsUsed && card.Card.OnPlayFromHand != Effect.None;
+    card.Owner == player && !card.IsUsed && card.Card.OnPlayFromHand != Effect.None && !IsTheoryClosed(card.Card.Theory);
+
+  /// <summary>
+  /// Закрыт ли штаб теории: тогда её карточка эффекта недоступна, пока штаб не откроется снова.
+  /// </summary>
+  private bool IsTheoryClosed(Theory theory) => ColumnOf(theory) is { IsClosed: true };
 
   /// <summary>
   /// Применить карточку теории: выполнить её действие, после чего карточка переворачивается рубашкой вверх.
@@ -1526,7 +1761,8 @@ public sealed class PlayingField
 
     // Основная теория срабатывает для своего владельца; если её действию нужен выбор, владелец выберет позже.
     TheoryTrigger? pending = null;
-    if (card.Card.Theory.Parent is { } parent && TheoryCardOf(parent) is { } main)
+    // Закрытый штаб основной теории не срабатывает: её карточка эффекта недоступна.
+    if (card.Card.Theory.Parent is { } parent && TheoryCardOf(parent) is { } main && !IsTheoryClosed(parent))
     {
       var trigger = new TheoryTrigger(main, new GameContext(main.Owner, this, context.Random, context.Market));
       if (!NeedsChoice(main.Card.OnPlayFromHand))
@@ -1587,8 +1823,10 @@ public sealed class PlayingField
   {
     var antiVaccinationOwner = TheoryCardOf(TheoryCatalog.AntiVaccination)?.Owner;
     var antarcticaOwners = _theoryCards.Where(owned => owned.Card.Passive is AntarcticaPassive).Select(owned => owned.Owner).ToList();
+    var illuminatiOwners = _theoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).Select(owned => owned.Owner).ToList();
     foreach (var column in _theoryColumns)
     {
+      column.IlluminatiHiddenOwners = illuminatiOwners;
       column.FounderInfluenceBonus = TheoryCardOf(column.Theory)?.Card.Passive is FlatEarthPassive ? FlatEarthPassive.FounderBonus : 0;
       column.SolvencyMargin = antiVaccinationOwner is not null && column.IsHeadquarters && column.Owner == antiVaccinationOwner
         ? AntiVaccinationPassive.SolvencyBonus
@@ -1696,13 +1934,19 @@ public sealed class PlayingField
   /// Пассивная способность «Иллюминатов»: когда в теорию приходит чужой лидер, владелец закрытого персонажа
   /// в этой теории получает деньги из банка.
   /// </summary>
-  private void PayIlluminatiPassive(TheoryColumn column, Player newLeader)
+  /// <summary>
+  /// Владелец «Иллюминатов», если теория закрыта и он в ней лидер: адепты закрытой теории приносят деньги только ему
+  /// (пассивная способность <see cref="IlluminatiPassive"/>). Для открытых теорий и других игроков — <c>null</c>.
+  /// </summary>
+  public Player? IlluminatiBeneficiary(TheoryColumn column)
   {
-    foreach (var owned in _theoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).ToList())
-    {
-      if (owned.Owner != newLeader && column.Members.Any(member => member.Owner == owned.Owner && member.Card is HiddenCard))
-        EarnForTheory(owned, owned.Owner, IlluminatiPassive.Payment);
-    }
+    if (!column.IsClosed)
+      return null;
+
+    var owner = _theoryCards.FirstOrDefault(owned => owned.Card.Passive is IlluminatiPassive)?.Owner;
+    return owner is not null && (column.Members.Any(member => member.Owner == owner) || column.LeaderMeeples.Contains(owner))
+      ? owner
+      : null;
   }
 
   /// <summary>
@@ -1716,7 +1960,8 @@ public sealed class PlayingField
     if (amount <= 0)
       return;
 
-    player.Earn(amount);
+    using (player.EarningFrom($"Теория «{owned.Card.Name}»"))
+      player.Earn(amount);
     ReportTheoryEarned(owned, amount);
   }
 
@@ -1818,6 +2063,22 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Открыть обратно закрытые штабы, которые перестали быть несостоятельными (состав изменился).
+  /// </summary>
+  /// <returns>Штабы, открытые сейчас.</returns>
+  public IReadOnlyList<TheoryColumn> ReopenSolventTheories()
+  {
+    var reopened = _theoryColumns.Where(column => column.IsClosed && !column.IsInsolvent).ToList();
+    foreach (var column in reopened)
+    {
+      column.Reopen();
+      TheoryReopened?.Invoke(column);
+    }
+
+    return reopened;
+  }
+
+  /// <summary>
   /// Ячейка, где лежит карточка, или <c>null</c>, если её нет на поле.
   /// </summary>
   public Cell? CellOf(Card card) => _cards.FirstOrDefault(pair => pair.Value == card) is { Value: not null } pair ? pair.Key : null;
@@ -1888,7 +2149,6 @@ public sealed class PlayingField
       UpdateTheoryCards();
       if (check.Column is { } joinedColumn)
       {
-        PayIlluminatiPassive(joinedColumn, player);
         PayEbolaPassive(joinedColumn, player);
       }
     }
@@ -1971,7 +2231,6 @@ public sealed class PlayingField
       throw new InvalidOperationException(check.Reason);
 
     ((HiddenCard)_cards[cell]).ShowTo(player);
-    HiddenCardPeeked?.Invoke(cell, player);
   }
 
   /// <summary>
@@ -1995,8 +2254,15 @@ public sealed class PlayingField
     if (IsImmune(cell))
       return PlacementCheck.Deny("Персонажей этого игрока защищают рептилоиды.");
 
-    return PlacementCheck.Allowed;
+    return player.CanAfford(RevealCost)
+      ? PlacementCheck.Allow(RevealCost)
+      : PlacementCheck.Deny($"Недостаточно денег: раскрытие стоит {RevealCost}$, а у вас {player.Money}$.");
   }
+
+  /// <summary>
+  /// Сколько $ стоит раскрыть закрытую карточку другого игрока (действие журналиста).
+  /// </summary>
+  public const int RevealCost = 1;
 
   /// <summary>
   /// Закрытые карточки других игроков, которые игрок может раскрыть.
@@ -2017,6 +2283,11 @@ public sealed class PlayingField
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
+    // Деньги за раскрытие уходят владельцу раскрытой карточки; над ней всплывает сумма.
+    var owner = ColumnAt(cell)?.OwnerAt(cell) ?? throw new InvalidOperationException("У закрытой карточки нет владельца.");
+    player.Spend(check.Cost);
+    using (owner.EarningFrom("Раскрытие карточки"))
+      EarnAt(cell, owner, check.Cost);
     ((HiddenCard)_cards[cell]).Reveal();
     HiddenCardRevealed?.Invoke(cell);
     ResolveRevealed(cell);

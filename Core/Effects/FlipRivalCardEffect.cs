@@ -9,7 +9,9 @@ namespace ConspiracyLeague.Core.Effects;
 /// </summary>
 public sealed class FlipRivalCardEffect : Effect
 {
-  public override string Description => "Перевернуть карточку другого игрока, заплатив её влияние";
+  public override string Description => "Быстрое: перевернуть карточку другого игрока, заплатив её влияние";
+
+  public override bool IsQuick => true;
 
   public override bool RequiresTargetCell => true;
 

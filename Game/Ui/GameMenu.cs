@@ -20,6 +20,16 @@ public partial class GameMenu : VBoxContainer
 
   private PanelContainer _panel = null!;
 
+  /// <summary>
+  /// Нажата кнопка «Теории» — нужно открыть граф теорий.
+  /// </summary>
+  public event Action? TheoriesRequested;
+
+  /// <summary>
+  /// Раскрыть меню (например, после закрытия окна «Теории» кнопкой «Назад»).
+  /// </summary>
+  public void ShowMenu() => _panel.Visible = true;
+
   public override void _Ready()
   {
     SetAnchorsPreset(LayoutPreset.TopLeft);
@@ -50,6 +60,11 @@ public partial class GameMenu : VBoxContainer
 
     var column = new VBoxContainer();
     column.AddThemeConstantOverride("separation", 8);
+    column.AddChild(CreateButton("Theories", "Теории", () =>
+    {
+      _panel.Visible = false;
+      TheoriesRequested?.Invoke();
+    }));
     column.AddChild(CreateButton("Menu", "Выйти в главное меню", () => GetTree().ChangeSceneToFile(StartMenuScene)));
     column.AddChild(CreateButton("Quit", "Выйти", () => GetTree().Quit()));
     _panel.AddChild(column);

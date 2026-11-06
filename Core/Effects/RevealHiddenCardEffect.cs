@@ -8,7 +8,9 @@ namespace ConspiracyLeague.Core.Effects;
 /// </summary>
 public sealed class RevealHiddenCardEffect : Effect
 {
-  public override string Description => "Раскрыть закрытого персонажа другого игрока";
+  public override string Description => $"Быстрое: раскрыть закрытого персонажа другого игрока, заплатив {PlayingField.RevealCost}$ его владельцу";
+
+  public override bool IsQuick => true;
 
   public override bool RequiresTargetCell => true;
 

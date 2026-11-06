@@ -4,7 +4,7 @@ namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
 /// Инспекция: выбрать другого игрока (<see cref="GameContext.TargetPlayer"/>), получить
-/// <see cref="MoneyPerHomeless"/>$ за каждого бездомного в его личном штабе, а затем перевернуть рубашкой вверх
+/// <see cref="MoneyPerHomeless"/>$ за каждого открытого бездомного в его личном штабе, а затем перевернуть рубашкой вверх
 /// его незащищённого несыгранного бездомного с самой низкой вероятностью успеха (из равных — случайного).
 /// </summary>
 public sealed class InspectionEffect : Effect
@@ -14,7 +14,7 @@ public sealed class InspectionEffect : Effect
   /// </summary>
   public const int MoneyPerHomeless = 1;
 
-  public override string Description => "Инспекция: получить 1$ за каждого бездомного другого игрока и перевернуть одного";
+  public override string Description => "Инспекция: получить 1$ за каждого открытого бездомного другого игрока и перевернуть одного";
 
   public override bool RequiresTargetPlayer => true;
 

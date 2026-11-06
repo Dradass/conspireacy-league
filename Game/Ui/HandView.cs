@@ -39,6 +39,16 @@ public partial class HandView : PanelContainer
   public event Action<HandCardView>? CardDragStarted;
 
   /// <summary>
+  /// Правой кнопкой нажата карточка в руке; аргумент — карточка.
+  /// </summary>
+  public event Action<Card>? CardInfoPressed;
+
+  /// <summary>
+  /// Правую кнопку отпустили.
+  /// </summary>
+  public event Action? CardInfoReleased;
+
+  /// <summary>
   /// Игрок выбрал карточку в руке, пока идёт выбор (<see cref="Picking"/>).
   /// </summary>
   public event Action<Card>? CardPicked;
@@ -159,6 +169,8 @@ public partial class HandView : PanelContainer
       var view = HandCardView.Create(card);
       view.Selected = card == _selectedCard;
       view.DragStarted += OnCardPressed;
+      view.InfoPressed += source => CardInfoPressed?.Invoke(source.Card);
+      view.InfoReleased += _ => CardInfoReleased?.Invoke();
       _cards.AddChild(view);
     }
 
