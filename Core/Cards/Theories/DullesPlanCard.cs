@@ -4,7 +4,7 @@ using ConspiracyLeague.Core.Theories;
 namespace ConspiracyLeague.Core.Cards.Theories;
 
 /// <summary>
-/// Карточка теории «План Даллеса»: понизить любого персонажа в бездомного и получить 3$.
+/// Карточка теории «План Даллеса»: понизить любого персонажа в бездомного (денег не приносит).
 /// </summary>
 public sealed class DullesPlanCard : TheoryCard
 {

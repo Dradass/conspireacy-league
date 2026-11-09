@@ -16,7 +16,7 @@ namespace ConspiracyLeague.Core.Field;
 /// <list type="bullet">
 /// <item>в свою зону: первую карточку — куда угодно, остальные — вплотную к уже лежащим;</item>
 /// <item>новую родительскую теорию — в нижний ряд общей зоны, появляется штаб теории;</item>
-/// <item>новую дочернюю теорию — во второй ряд общей зоны, вплотную слева или справа от карточки родительской теории
+/// <item>новую дочернюю теорию — в третий ряд общей зоны (<see cref="SideTheoryLevel"/>), вплотную слева или справа от третьей карточки родительской теории
 /// или уже выложенной дочерней теории того же родителя;</item>
 /// <item>карточку уже выложенной теории — сверху её стопки;</item>
 /// <item>карточку без теории — сверху стопки любой теории, заплатив суммарное влияние персон этой стопки;</item>
@@ -1077,6 +1077,7 @@ public sealed class PlayingField
     try
     {
       RequireTargets(option, context);
+      PayPolicemanTolls(option, context);
       ExecuteWithMoneyBonus(cell, option, context);
       // Чипированного персонажа использовали как своего: по 1$ за каждого чипированного персонажа в игре.
       if (IsChippedBy(cell, context.CurrentPlayer))
@@ -1198,6 +1199,87 @@ public sealed class PlayingField
     var zone = _playerZones[owner];
     return cell.Surrounding.Any(neighbor =>
       zone.Contains(neighbor) && CardAt(neighbor)?.Passive is PolicemanPassive && !IsUsed(neighbor));
+  }
+
+  /// <summary>
+  /// Сколько $ платит владельцу полицейского игрок, который применяет к нему эффект (<see cref="PolicemanTollFor"/>).
+  /// </summary>
+  public const int PolicemanToll = 3;
+
+  /// <summary>
+  /// Плата за эффект, применённый к карточке: если в ячейке открытый полицейский (<see cref="PolicemanPassive"/>)
+  /// другого игрока — в личном штабе или в штабе теории, — действующий игрок платит его владельцу <see cref="PolicemanToll"/>$.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="player">Игрок, который применяет эффект.</param>
+  /// <returns>Владелец полицейского и сумма или <c>null</c>, если платить не нужно.</returns>
+  public (Player Owner, int Amount)? PolicemanTollFor(Cell cell, Player player)
+  {
+    if (CardAt(cell) is not PersonCard { Passive: PolicemanPassive })
+      return null;
+
+    var owner = ColumnAt(cell)?.OwnerAt(cell)
+      ?? _playerZones.Keys.FirstOrDefault(zonePlayer => _playerZones[zonePlayer].Contains(cell));
+    return owner is null || owner == player ? null : (owner, PolicemanToll);
+  }
+
+  /// <summary>
+  /// Добавить к условиям выбора карточки для действия плату владельцу полицейского (<see cref="PolicemanTollFor"/>):
+  /// она прибавляется к стоимости, а если денег не хватает — выбрать карточку нельзя.
+  /// </summary>
+  /// <param name="check">Условия выбора без платы.</param>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="effect">Действие.</param>
+  /// <param name="context">Контекст партии.</param>
+  public PlacementCheck WithPolicemanToll(PlacementCheck check, Cell cell, Effect effect, GameContext context)
+  {
+    if (!check.IsAllowed || PolicemanTollFor(cell, context.CurrentPlayer) is not { } toll)
+      return check;
+
+    // Вторая карточка выбирается, когда первая уже в контексте: за неё тоже придётся заплатить.
+    var pending = effect.RequiresSecondTargetCell && context.TargetCell is { } first && first != cell
+      ? PolicemanTollFor(first, context.CurrentPlayer)?.Amount ?? 0
+      : 0;
+    var player = context.CurrentPlayer;
+    var total = check.Cost + toll.Amount;
+    return player.CanAfford(total + pending)
+      ? PlacementCheck.Allow(total, check.Column, check.CreatesHeadquarters)
+      : PlacementCheck.Deny(
+        $"Это полицейский игрока {toll.Owner}: применить к нему действие стоит {toll.Amount}$ владельцу, а у вас {player.Money}$.");
+  }
+
+  /// <summary>
+  /// Заплатить владельцам чужих полицейских, к которым применяется действие (<see cref="PolicemanTollFor"/>):
+  /// к выбранной карточке на поле, второй карточке или карточке, которую используют как свою.
+  /// Вызывается после проверки целей, перед выполнением действия.
+  /// </summary>
+  /// <param name="effect">Действие.</param>
+  /// <param name="context">Контекст партии с выбранными целями.</param>
+  /// <exception cref="InvalidOperationException">Не хватает денег.</exception>
+  public void PayPolicemanTolls(Effect effect, GameContext context)
+  {
+    if (!effect.RequiresTargetCell)
+      return;
+
+    Cell?[] targets = effect.BorrowsTargetCard
+      ? [context.BorrowedCell]
+      : [context.TargetCell, effect.RequiresSecondTargetCell ? context.SecondTargetCell : null];
+    var player = context.CurrentPlayer;
+    var tolls = targets.OfType<Cell>().Distinct()
+      .Select(cell => (Cell: cell, Toll: PolicemanTollFor(cell, player)))
+      .Where(target => target.Toll is not null)
+      .Select(target => (target.Cell, target.Toll!.Value.Owner, target.Toll.Value.Amount))
+      .ToList();
+    var total = tolls.Sum(toll => toll.Amount);
+    if (!player.CanAfford(total))
+      throw new InvalidOperationException($"Недостаточно денег, чтобы заплатить владельцу полицейского: нужно {total}$, а у вас {player.Money}$.");
+
+    foreach (var (cell, owner, amount) in tolls)
+    {
+      player.Spend(amount);
+      using (owner.EarningFrom("Полицейский"))
+        EarnAt(cell, owner, amount);
+    }
   }
 
   /// <summary>
@@ -1380,6 +1462,7 @@ public sealed class PlayingField
     if (!option.CanBeBorrowed)
       throw new ArgumentException($"Действие «{option}» так выполнить нельзя.", nameof(context));
     RequireTargets(option, context);
+    PayPolicemanTolls(option, context);
 
     option.Execute(context);
     return option;
@@ -1759,6 +1842,7 @@ public sealed class PlayingField
     RequireTargets(effect, context);
     if (card.Card.Passive is TinFoilPassive && context.TargetCell is { } foilCell && CheckFoil(foilCell) is { IsAllowed: false } foilCheck)
       throw new InvalidOperationException(foilCheck.Reason);
+    PayPolicemanTolls(effect, context);
 
     // Все проверки пройдены. Если действие откажет на полпути, карточка всё равно считается применённой:
     // часть действия уже могла выполниться, и применить её второй раз нельзя.
@@ -1812,6 +1896,7 @@ public sealed class PlayingField
       throw new InvalidOperationException("Выбраны не все цели.");
 
     RequireTargets(trigger.Effect, trigger.Context);
+    PayPolicemanTolls(trigger.Effect, trigger.Context);
     trigger.Effect.Execute(trigger.Context);
   }
 
@@ -2427,7 +2512,7 @@ public sealed class PlayingField
 
   /// <summary>
   /// Перевернуть карточку другого игрока в его личном штабе рубашкой вверх, как будто она уже сыграна,
-  /// заплатив в банк её влияние.
+  /// заплатив её влияние владельцу карточки.
   /// </summary>
   /// <exception cref="InvalidOperationException">Карточку перевернуть нельзя.</exception>
   public void FlipRival(Cell cell, Player player)
@@ -2436,7 +2521,9 @@ public sealed class PlayingField
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
+    var owner = OwnerOfCell(cell)!;
     player.Spend(check.Cost);
+    owner.Earn(check.Cost);
     _rotatedCells.Remove(cell);
     _usedCells.Add(cell);
   }
@@ -2787,6 +2874,16 @@ public sealed class PlayingField
     return PlacementCheck.Deny("Карточку нужно положить вплотную к уже лежащим в вашей зоне — слева, справа, сверху или снизу.");
   }
 
+  /// <summary>
+  /// Дочерние (побочные) теории выкладываются рядом с этой по счёту карточкой стопки родительской теории.
+  /// </summary>
+  public const int SideTheoryLevel = 3;
+
+  /// <summary>
+  /// Ряд общей зоны, где лежат дочерние теории: на уровне <see cref="SideTheoryLevel"/>-й карточки родительской теории.
+  /// </summary>
+  private int SideTheoryRow => CommonZone.BottomRow - (SideTheoryLevel - 1);
+
   private PlacementCheck CheckTheoryCard(Theory theory, Cell cell)
   {
     if (ColumnOf(theory) is { } column)
@@ -2821,11 +2918,11 @@ public sealed class PlayingField
     // к стопке родительской теории или к стопке любой уже выложенной дочерней теории того же родителя.
     var family = _theoryColumns.Where(column => column == parent || column.Theory.Parent == parentTheory);
     var isNextToFamily = family.Any(column => column.Cells.Contains(cell.Left) || column.Cells.Contains(cell.Right));
-    if (cell.Row != CommonZone.BottomRow - 1 || !isNextToFamily)
+    if (cell.Row != SideTheoryRow || !isNextToFamily)
     {
       return PlacementCheck.Deny(
-        $"Дочернюю теорию «{theory}» можно выложить только во второй ряд общей зоны, вплотную слева или справа "
-        + $"от карточки родительской теории «{parentTheory}» или уже выложенной дочерней теории «{parentTheory}».");
+        $"Дочернюю теорию «{theory}» можно выложить только в {SideTheoryLevel}-й ряд общей зоны, вплотную слева или справа "
+        + $"от {SideTheoryLevel}-й карточки родительской теории «{parentTheory}» или уже выложенной дочерней теории «{parentTheory}».");
     }
     // Если в этом столбце стоит базовая теория, она сдвинется — нужно место, куда её сдвинуть.
     if (TheoryAtColumn(cell.Column) is { } baseTheory && FreeColumn(cell.Column, ConflictDirection(cell)) is null)
@@ -2925,7 +3022,7 @@ public sealed class PlayingField
     if (ColumnOf(parentTheory) is not { } parent || parent.IsClosed)
       return deny($"Родительская теория «{parentTheory}» не выложена или её штаб закрыт.");
 
-    var row = CommonZone.BottomRow - 1;
+    var row = SideTheoryRow;
     var leftCell = new Cell(boundary - 1, row);
     var rightCell = new Cell(boundary, row);
     var family = _theoryColumns.Where(column => column == parent || column.Theory.Parent == parentTheory).ToList();
@@ -2958,7 +3055,7 @@ public sealed class PlayingField
     if (!insertion.Check.IsAllowed)
       throw new InvalidOperationException(insertion.Check.Reason);
 
-    var row = CommonZone.BottomRow - 1;
+    var row = SideTheoryRow;
     if (insertion.ToLeft)
     {
       // Сдвигаем левые теории от ближней к дальней: их новые столбцы всегда свободны.
@@ -3003,7 +3100,7 @@ public sealed class PlayingField
   {
     if (card is not PersonCard { Theory: { Parent: { } parentTheory } }
       || !_cards.ContainsKey(cell)
-      || cell.Row != CommonZone.BottomRow - 1
+      || cell.Row != SideTheoryRow
       || ColumnOf(parentTheory) is not { } parent)
     {
       return null;
@@ -3032,7 +3129,7 @@ public sealed class PlayingField
       return [];
     }
 
-    var row = CommonZone.BottomRow - 1;
+    var row = SideTheoryRow;
     var anchors = FamilyColumns(parent, parentTheory).SelectMany(column => column.Cells).Where(cell => cell.Row == row).ToList();
     if (anchors.Count == 0)
       return [];

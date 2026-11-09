@@ -43,9 +43,9 @@ public sealed class QuickEffect : Effect
 
   public override bool BorrowsTargetCard => Inner.BorrowsTargetCard;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) => Inner.TargetCells(context);
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) => Inner.TargetCellsCore(context);
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) => Inner.CheckTargetCell(cell, context);
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) => Inner.CheckTargetCellCore(cell, context);
 
   public override void Execute(GameContext context) => Inner.Execute(context);
 }

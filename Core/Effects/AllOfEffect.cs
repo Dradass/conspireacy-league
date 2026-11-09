@@ -36,11 +36,11 @@ public sealed class AllOfEffect : Effect
 
   public override bool RequiresTargetCell => Effects.Any(e => e.RequiresTargetCell);
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
-    TargetCellEffect?.TargetCells(context) ?? [];
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
+    TargetCellEffect?.TargetCellsCore(context) ?? [];
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
-    TargetCellEffect?.CheckTargetCell(cell, context) ?? base.CheckTargetCell(cell, context);
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
+    TargetCellEffect?.CheckTargetCellCore(cell, context) ?? base.CheckTargetCellCore(cell, context);
 
   /// <summary>
   /// Действие, для которого выбирают карточку на поле.

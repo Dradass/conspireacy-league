@@ -73,6 +73,7 @@ public partial class Hud : CanvasLayer
     Session.PhaseChanged += OnPhaseChanged;
     Session.ActionsLeftChanged += OnActionsLeftChanged;
     Session.AutoPassed += OnAutoPassed;
+    Session.LastRoundDeclared += OnLastRoundDeclared;
     Session.PendingCheckChanged += OnPendingCheckChanged;
     Session.PendingPlacementChanged += OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
@@ -89,6 +90,7 @@ public partial class Hud : CanvasLayer
     Session.PhaseChanged -= OnPhaseChanged;
     Session.ActionsLeftChanged -= OnActionsLeftChanged;
     Session.AutoPassed -= OnAutoPassed;
+    Session.LastRoundDeclared -= OnLastRoundDeclared;
     Session.PendingCheckChanged -= OnPendingCheckChanged;
     Session.PendingPlacementChanged -= OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
@@ -273,13 +275,31 @@ public partial class Hud : CanvasLayer
   private void OnPhaseChanged(GamePhase phase)
   {
     UpdateButtons();
-    _round.Text = $"Раунд {Session.Round}: {NameOf(phase)}";
+    UpdateRound();
     OnActionsLeftChanged(Session.ActionsLeft);
     foreach (var player in Turns.Players)
       OnMoneyChanged(player);
     RefreshTurn();
     if (phase == GamePhase.GameOver)
       _root.AddChild(new ResultsPanel { Name = "Results", Session = Session });
+  }
+
+  /// <summary>
+  /// Номер раунда и фаза; в режиме гонки — пометка, что раунд последний.
+  /// </summary>
+  private void UpdateRound()
+  {
+    var last = Session.IsLastRound && Session.Phase != GamePhase.GameOver ? " (последний)" : "";
+    _round.Text = $"Раунд {Session.Round}{last}: {NameOf(Session.Phase)}";
+  }
+
+  /// <summary>
+  /// Режим гонки: теория дошла до финиша — раунд объявлен последним.
+  /// </summary>
+  private void OnLastRoundDeclared(TheoryColumn column)
+  {
+    UpdateRound();
+    ShowMessage($"Теория «{column.Theory}» дошла до финиша! Этот раунд — последний.");
   }
 
   private static string NameOf(GamePhase phase) => phase switch

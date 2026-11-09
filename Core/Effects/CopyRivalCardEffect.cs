@@ -22,10 +22,10 @@ public sealed class CopyRivalCardEffect : Effect
   /// </summary>
   public override bool CanBeBorrowed => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     context.Field.CopyTargets(context.CurrentPlayer).Where(target => target.Cell != context.SourceCell);
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     cell == context.SourceCell
       ? PlacementCheck.Deny("Нельзя скопировать действие самой этой карточки.")
       : context.Field.CheckCopy(cell, context.CurrentPlayer);

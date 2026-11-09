@@ -12,12 +12,12 @@ public sealed class RemoveMarketCardForInfluenceEffect : Effect
 
   public override bool RequiresTargetCell => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     (context.Market ?? throw new InvalidOperationException("Нет рынка."))
       .OpenCards.Keys
       .Select(cell => (cell, PlacementCheck.Allowed));
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     context.Market?.OpenCards.ContainsKey(cell) == true
       ? PlacementCheck.Allowed
       : PlacementCheck.Deny("На рынке здесь нет карточки.");

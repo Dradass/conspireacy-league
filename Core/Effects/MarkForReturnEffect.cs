@@ -31,10 +31,10 @@ public sealed class MarkForReturnEffect : Effect
 
   public override bool RequiresTargetCell => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     context.Field.WheelTargets(context.CurrentPlayer, Acting(context));
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     context.Field.CheckWheel(cell, context.CurrentPlayer, Acting(context));
 
   public override void Execute(GameContext context)

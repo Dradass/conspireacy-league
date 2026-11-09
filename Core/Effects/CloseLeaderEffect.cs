@@ -23,10 +23,10 @@ public sealed class CloseLeaderEffect : Effect
 
   public override bool TargetIsOptional => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     context.Field.CloseLeaderTargets(Theory(context), context.SourceCell);
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     context.Field.CheckCloseLeader(cell, Theory(context), context.SourceCell);
 
   public override void Execute(GameContext context)

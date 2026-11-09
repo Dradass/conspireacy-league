@@ -4,7 +4,7 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Итоги партии: победитель и игроки по убыванию (денег или победных очков — в зависимости от режима).
+/// Итоги партии: победитель (или победители при полном равенстве) и игроки по убыванию (денег или победных очков — в зависимости от режима).
 /// Нажатие на игрока раскрывает, за что он получил деньги или из чего складываются его очки.
 /// Список прокручивается колесиком. Внизу кнопки «В меню» и «Выйти».
 /// Занимает весь экран и затемняет стол.
@@ -47,7 +47,11 @@ public partial class ResultsPanel : Control
     panel.AddChild(column);
 
     var ranking = Session.Ranking;
-    var title = new Label { Text = $"Победил {ranking[0].Name}!", HorizontalAlignment = HorizontalAlignment.Center };
+    var winners = Session.Winners;
+    var titleText = winners.Count == 1
+      ? $"Победил {winners[0].Name}!"
+      : $"Победили {string.Join(", ", winners.Select(winner => winner.Name))}!";
+    var title = new Label { Text = titleText, HorizontalAlignment = HorizontalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart };
     title.AddThemeFontSizeOverride("font_size", TitleFontSize);
     UiStyle.MakeTitle(title, TitleColor);
     column.AddChild(title);
@@ -74,7 +78,12 @@ public partial class ResultsPanel : Control
     for (var i = 0; i < ranking.Count; i++)
     {
       var player = ranking[i];
-      var details = Session.Mode == GameMode.Money ? CreateEarningsDetails(player) : CreateScoreDetails(player);
+      var details = Session.Mode switch
+      {
+        GameMode.Money => CreateEarningsDetails(player),
+        GameMode.Race => CreateRaceDetails(player),
+        _ => CreateScoreDetails(player),
+      };
       var indent = new MarginContainer { Visible = false };
       indent.AddThemeConstantOverride("margin_left", DetailsIndent);
       indent.AddChild(details);
@@ -100,9 +109,12 @@ public partial class ResultsPanel : Control
   /// </summary>
   private string RowText(int place, Player player, bool expanded)
   {
-    var value = Session.Mode == GameMode.Money
-      ? $"{player.Money}$"
-      : $"{Session.ScoreOf(player).Total} ПО ({player.Money}$)";
+    var value = Session.Mode switch
+    {
+      GameMode.Money => $"{player.Money}$",
+      GameMode.Race => $"{Session.RaceScoreOf(player).Total} ПО ({player.Money}$)",
+      _ => $"{Session.ScoreOf(player).Total} ПО ({player.Money}$)",
+    };
     return $"{(expanded ? "[-]" : "[+]")} {place}. {player.Name} — {value}";
   }
 
@@ -155,6 +167,20 @@ public partial class ResultsPanel : Control
     details.AddChild(CreateSourceLabel($"Адепты: +{score.AdeptPoints} ПО"));
     details.AddChild(CreateSourceLabel($"Теорий ({score.TheoryCount}): +{score.TheoryPoints} ПО"));
     details.AddChild(CreateSourceLabel($"Деньги {player.Money}$ (по 1 ПО за {VictoryPoints.MoneyPerPoint}$): +{score.MoneyPoints} ПО"));
+    return details;
+  }
+
+  /// <summary>
+  /// Режим гонки: из чего складываются победные очки игрока.
+  /// </summary>
+  private VBoxContainer CreateRaceDetails(Player player)
+  {
+    var score = Session.RaceScoreOf(player);
+    var details = new VBoxContainer();
+    details.AddThemeConstantOverride("separation", 2);
+    details.AddChild(CreateSourceLabel($"Теорий на финише ({score.FinishedTheories}) × {RaceScoring.FinishBonus}: +{score.FinishPoints} ПО"));
+    details.AddChild(CreateSourceLabel($"Адепты теорий на финише: +{score.AdeptPoints} ПО"));
+    details.AddChild(CreateSourceLabel($"Деньги (при равенстве очков): {player.Money}$"));
     return details;
   }
 

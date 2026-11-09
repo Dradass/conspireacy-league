@@ -130,16 +130,33 @@ public abstract class Effect
 
   /// <summary>
   /// Карточки на поле, которые подходят для действия, с условиями выбора: можно ли и сколько $ это стоит.
+  /// Учитывает плату владельцу чужого полицейского (<see cref="PlayingField.WithPolicemanToll"/>).
   /// </summary>
   /// <param name="context">Контекст партии.</param>
-  public virtual IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) => [];
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+    TargetCellsCore(context).Select(target => (target.Cell, context.Field.WithPolicemanToll(target.Check, target.Cell, this, context)));
 
   /// <summary>
   /// Проверить, можно ли выбрать карточку на поле для действия.
+  /// Учитывает плату владельцу чужого полицейского (<see cref="PlayingField.WithPolicemanToll"/>).
   /// </summary>
   /// <param name="cell">Ячейка карточки.</param>
   /// <param name="context">Контекст партии.</param>
-  public virtual PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  public PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+    context.Field.WithPolicemanToll(CheckTargetCellCore(cell, context), cell, this, context);
+
+  /// <summary>
+  /// Карточки на поле, которые подходят для действия, без учёта платы полицейскому (см. <see cref="TargetCells"/>).
+  /// </summary>
+  /// <param name="context">Контекст партии.</param>
+  protected internal virtual IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) => [];
+
+  /// <summary>
+  /// Проверить карточку на поле без учёта платы полицейскому (см. <see cref="CheckTargetCell"/>).
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="context">Контекст партии.</param>
+  protected internal virtual PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     PlacementCheck.Deny($"Действию «{Description}» не нужна карточка на поле.");
 
   /// <summary>

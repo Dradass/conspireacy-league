@@ -13,10 +13,10 @@ public sealed class ChipPersonEffect : Effect
 
   public override bool RequiresTargetCell => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     context.Field.ChipTargets(context.CurrentPlayer);
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     context.Field.CheckChip(cell, context.CurrentPlayer);
 
   public override void Execute(GameContext context)

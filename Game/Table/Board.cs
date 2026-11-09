@@ -148,6 +148,11 @@ public partial class Board : Node2D
 
     // Подсветка теорий лежит на поле, под карточками: карточки её перекрывают.
     AddChild(new TheoryHighlights { Name = "TheoryHighlights", Session = Session, Board = this });
+    // Связи лидеров теорий — тоже под карточками: концы линий уходят под их края.
+    AddChild(new TheoryLinks { Name = "TheoryLinks", Session = Session, Board = this });
+    // Финишная линия режима гонки — тоже под карточками: стопки, ушедшие за финиш, её перекрывают.
+    if (Session.Mode == GameMode.Race)
+      AddChild(new FinishLine { Name = "FinishLine", Session = Session, Board = this });
     _cardsLayer = new Node2D { Name = "Cards" };
     AddChild(_cardsLayer);
     _adeptsLayer = new Node2D { Name = "Adepts" };
@@ -291,11 +296,14 @@ public partial class Board : Node2D
       DrawZone(zone, PlayerPalette.ZoneOf(player.Color), border);
     }
 
-    // В сетке ячейки занимают весь стол, на радиальном поле — только зоны.
+    // В сетке ячейки занимают весь стол ниже общей зоны, на радиальном поле — только зоны. В общей зоне видны
+    // только нижний ряд и стопки теорий: её столбцы раздвинуты, а ряды сжаты.
+    var firstRow = Field.CommonZone.BottomRow + 2;
     var cells = Radial
       ? RadialCells()
-      : Enumerable.Range(0, Field.Columns).SelectMany(x => Enumerable.Range(0, Field.Rows).Select(y => new Vector2I(x, y)))
-        .Where(cell => !IsAboveStack(Field, cell));
+      : Enumerable.Range(0, Field.Columns)
+        .SelectMany(x => Enumerable.Range(firstRow, Math.Max(0, Field.Rows - firstRow)).Select(y => new Vector2I(x, y)))
+        .Concat(CommonSlotCells());
     var slot = LocalSlot(SlotInset);
     foreach (var cell in cells)
     {
@@ -366,6 +374,14 @@ public partial class Board : Node2D
   public Vector2I? CellAt(Vector2 point)
   {
     var local = ToLocal(point);
+    // Подсвеченные ячейки — первыми: в общей зоне ряды сжаты, и ячейка ряда дочерних теорий может лежать
+    // под свободной ячейкой соседней стопки.
+    foreach (var candidate in _available.Keys)
+    {
+      if (SlotContains(candidate, local))
+        return candidate;
+    }
+
     // Карточки стопки теории перекрывают друг друга: ячейка, которая ближе к теории, лежит поверх следующей.
     foreach (var column in Field.TheoryColumns)
     {
@@ -375,6 +391,13 @@ public partial class Board : Node2D
         if (stackCell.Y >= 0 && SlotContains(stackCell, local))
           return stackCell;
       }
+    }
+
+    // Ячейки общей зоны лежат не по сетке (см. CommonColumn и CommonRow).
+    foreach (var candidate in CommonHitCells())
+    {
+      if (SlotContains(candidate, local))
+        return candidate;
     }
 
     // На радиальном поле ячейки повёрнуты и лежат только в зонах: ищем ту, в чей прямоугольник попала точка.
@@ -390,6 +413,8 @@ public partial class Board : Node2D
     }
 
     var cell = new Vector2I(Mathf.FloorToInt(local.X / CellSize.X), Mathf.FloorToInt(local.Y / CellSize.Y));
+    if (cell.Y <= Field.CommonZone.BottomRow + 1)
+      return null;
     return cell.X >= 0 && cell.X < Field.Columns && cell.Y >= 0 && cell.Y < Field.Rows ? cell : null;
   }
 
@@ -1432,10 +1457,6 @@ public partial class Board : Node2D
     return SlotColor;
   }
 
-  private static Rect2 ZoneRect(Zone zone) =>
-    new(CellOrigin(new Vector2I(zone.Left, zone.Top)), new Vector2(zone.Width * CellSize.X, zone.Height * CellSize.Y));
-
-  private static Vector2 CellOrigin(Vector2I cell) => new(cell.X * CellSize.X, cell.Y * CellSize.Y);
 }
 
 /// <summary>

@@ -14,10 +14,10 @@ public sealed class RevealHiddenCardEffect : Effect
 
   public override bool RequiresTargetCell => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     context.Field.RevealTargets(context.CurrentPlayer);
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     context.Field.CheckReveal(cell, context.CurrentPlayer);
 
   public override void Execute(GameContext context)

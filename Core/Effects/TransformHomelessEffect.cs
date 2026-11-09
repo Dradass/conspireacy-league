@@ -16,10 +16,10 @@ public sealed class TransformHomelessEffect : Effect
 
   public override bool AcceptsHandCardTarget => true;
 
-  public override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCells(GameContext context) =>
+  protected internal override IEnumerable<(Cell Cell, PlacementCheck Check)> TargetCellsCore(GameContext context) =>
     context.Field.HomelessTargets();
 
-  public override PlacementCheck CheckTargetCell(Cell cell, GameContext context) =>
+  protected internal override PlacementCheck CheckTargetCellCore(Cell cell, GameContext context) =>
     context.Field.CheckTransformHomeless(cell);
 
   public override PlacementCheck CheckHandCard(Card card, GameContext context) =>

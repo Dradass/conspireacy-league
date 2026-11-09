@@ -126,6 +126,22 @@ public sealed class GameSession
   public event Action<GamePhase>? PhaseChanged;
 
   /// <summary>
+  /// Режим гонки: текущий раунд — последний, потому что теория дошла до финиша (<see cref="RaceScoring.FinishLeaders(int)"/>).
+  /// Не снимается, даже если потом из теории уйдёт лидер.
+  /// </summary>
+  public bool IsLastRound { get; private set; }
+
+  /// <summary>
+  /// Режим гонки: теория первой дошла до финиша, и раунд объявлен последним; аргумент — эта теория.
+  /// </summary>
+  public event Action<TheoryColumn>? LastRoundDeclared;
+
+  /// <summary>
+  /// Режим гонки: сколько лидеров нужно штабу теории, чтобы дойти до финиша.
+  /// </summary>
+  public int FinishLeaders => RaceScoring.FinishLeaders(Players.Count);
+
+  /// <summary>
   /// Подготовить партию: поле стандартного размера, личные штабы игроков стоят в ряд внизу поля,
   /// перемешанная общая колода (<see cref="MarketDeck"/>) лежит на рынке.
   /// </summary>
@@ -285,6 +301,7 @@ public sealed class GameSession
     // Цель принята: даже если действие откажет на полпути, выкладывание карточки — потраченное действие хода.
     try
     {
+      Field.PayPolicemanTolls(effect, context);
       effect.Execute(context);
     }
     finally
@@ -617,7 +634,8 @@ public sealed class GameSession
   public bool RefreshMarket()
   {
     RequirePhase(GamePhase.MarketRefresh);
-    if (Market.DeckCount == 0)
+    // В режиме гонки партия заканчивается после раунда, в котором теория дошла до финиша.
+    if (Market.DeckCount == 0 || Mode == GameMode.Race && IsLastRound)
     {
       // Перед итоговым подсчётом все закрытые карточки раскрываются: их владельцы получают бонусы или карточки уходят.
       Field.RevealAllHiddenCards();
@@ -625,7 +643,7 @@ public sealed class GameSession
       Field.CloseInsolventTheories();
       Field.ReopenSolventTheories();
       // В режиме развития теорий денег за лидеров и повторного дохода от адептов нет: очки считаются по состоянию поля.
-      if (Mode == GameMode.TheoryDevelopment)
+      if (Mode is GameMode.TheoryDevelopment or GameMode.Race)
       {
         SetPhase(GamePhase.GameOver);
         return false;
@@ -661,12 +679,40 @@ public sealed class GameSession
   }
 
   /// <summary>
-  /// Итоги партии: в режиме денег — от самого богатого к самому бедному; в режиме развития теорий — по победным очкам
+  /// Итоги партии: в режиме денег — от самого богатого к самому бедному; в режимах развития теорий и гонки — по победным очкам
   /// (при равенстве — по деньгам). При полном равенстве — в порядке хода.
   /// </summary>
-  public IReadOnlyList<Player> Ranking => Mode == GameMode.Money
-    ? Players.OrderByDescending(player => player.Money).ToList()
-    : Players.OrderByDescending(player => ScoreOf(player).Total).ThenByDescending(player => player.Money).ToList();
+  public IReadOnlyList<Player> Ranking => Mode switch
+  {
+    GameMode.Money => Players.OrderByDescending(player => player.Money).ToList(),
+    GameMode.Race => Players.OrderByDescending(player => RaceScoreOf(player).Total).ThenByDescending(player => player.Money).ToList(),
+    _ => Players.OrderByDescending(player => ScoreOf(player).Total).ThenByDescending(player => player.Money).ToList(),
+  };
+
+  /// <summary>
+  /// Победители: первые в <see cref="Ranking"/> и все, кто с ними поровну (по очкам и деньгам или по деньгам в режиме денег).
+  /// </summary>
+  public IReadOnlyList<Player> Winners
+  {
+    get
+    {
+      var ranking = Ranking;
+      var best = RankKey(ranking[0]);
+      return ranking.TakeWhile(player => RankKey(player) == best).ToList();
+    }
+  }
+
+  private (int Points, int Money) RankKey(Player player) => Mode switch
+  {
+    GameMode.Money => (0, player.Money),
+    GameMode.Race => (RaceScoreOf(player).Total, player.Money),
+    _ => (ScoreOf(player).Total, player.Money),
+  };
+
+  /// <summary>
+  /// Победные очки игрока в режиме гонки (<see cref="RaceScore"/>) по текущему состоянию поля.
+  /// </summary>
+  public RaceScore RaceScoreOf(Player player) => RaceScoring.Of(player, Field, Players.Count);
 
   /// <summary>
   /// Победные очки игрока (режим развития теорий, <see cref="VictoryScore"/>) по текущему состоянию поля.
@@ -722,6 +768,7 @@ public sealed class GameSession
   /// </remarks>
   private void AutoPass()
   {
+    CheckRaceFinish();
     while (Phase == GamePhase.PlayerTurns && !HasMoves(CurrentPlayer))
     {
       AutoPassed?.Invoke(CurrentPlayer);
@@ -751,6 +798,9 @@ public sealed class GameSession
 
   private void SetPendingCheck(SuccessCheck? check)
   {
+    // Быстрое действие не завершает действие хода — проверяем финиш, когда проверка успеха закончилась.
+    if (check is null)
+      CheckRaceFinish();
     PendingCheck = check;
     PendingCheckChanged?.Invoke(check);
   }
@@ -791,8 +841,23 @@ public sealed class GameSession
       _unpaidTheories.Enqueue(column);
   }
 
+  /// <summary>
+  /// Режим гонки: если какая-то теория дошла до финиша, текущий раунд объявляется последним.
+  /// </summary>
+  private void CheckRaceFinish()
+  {
+    if (Mode != GameMode.Race || IsLastRound || Phase is GamePhase.Setup or GamePhase.GameOver)
+      return;
+    if (Field.TheoryColumns.FirstOrDefault(column => RaceScoring.IsFinished(column, Players.Count)) is not { } finished)
+      return;
+
+    IsLastRound = true;
+    LastRoundDeclared?.Invoke(finished);
+  }
+
   private void SetPhase(GamePhase phase)
   {
+    CheckRaceFinish();
     Phase = phase;
     PhaseChanged?.Invoke(phase);
   }

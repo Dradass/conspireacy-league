@@ -36,6 +36,11 @@ public partial class Board
   /// </summary>
   private static readonly float StackRowStep = CardPainter.CardSize.Y / 2 / CellSize.Y;
 
+  /// <summary>
+  /// Шаг столбцов общей зоны в долях ячейки: между карточками соседних теорий — половина ширины столбца.
+  /// </summary>
+  private static readonly float CommonColumnStep = (CardPainter.CardSize.X + CellSize.X / 2) / CellSize.X;
+
   private const int ZoneArcSegmentsPerCell = 4;
 
   /// <summary>
@@ -150,16 +155,98 @@ public partial class Board
   }
 
   /// <summary>
-  /// Центр карточки в ячейке. Карточки стопки теории лежат ближе друг к другу, чем ячейки: каждая следующая
-  /// выше предыдущей на полкарточки, поэтому из-под неё видна только её верхняя половина.
+  /// Центр карточки в ячейке. Карточки общей зоны лежат ближе друг к другу, чем ячейки (см. <see cref="CommonRow"/>):
+  /// каждая следующая в стопке выше предыдущей на полкарточки, поэтому из-под неё видна только её верхняя половина.
   /// </summary>
-  public Vector2 CardCenter(Vector2I cell)
-  {
-    if (StackOf(Field, cell) is not { } stack)
-      return CellCenter(cell);
+  public Vector2 CardCenter(Vector2I cell) => CellCenter(cell);
 
-    var theory = stack.TheoryCell.ToVector2I();
-    return PointAt(theory, theory.X, theory.Y - (theory.Y - cell.Y) * StackRowStep);
+  /// <summary>
+  /// Ряд дочерних теорий общей зоны: на уровне <see cref="PlayingField.SideTheoryLevel"/>-й карточки родительской теории.
+  /// </summary>
+  public int SideTheoryRow => Field.CommonZone.BottomRow - (PlayingField.SideTheoryLevel - 1);
+
+  /// <summary>
+  /// Верхний край карточки, которая ляжет в стопку штаба теории <paramref name="leaders"/>-й по счёту, — в рядах стола
+  /// (ряды общей зоны уже сжаты, см. <see cref="CommonRow"/>). По нему проходит финишная линия режима гонки.
+  /// </summary>
+  public float CommonCardTopRow(int leaders) =>
+    CommonRow(Field.CommonZone.BottomRow - (leaders - 1)) - CardPainter.CardSize.Y / 2 / CellSize.Y;
+
+  /// <summary>
+  /// Точка общей зоны на столе: столбец поля (дробный) и ряд стола (уже сжатый, см. <see cref="CommonCardTopRow"/>).
+  /// </summary>
+  public Vector2 CommonPoint(float column, float tableRow) =>
+    PixelAt(CommonAnchor, CommonColumn(column), tableRow);
+
+  /// <summary>
+  /// Помещается ли ряд стола в общую зону: на радиальном поле слишком высокий ряд ушёл бы за центр круга.
+  /// </summary>
+  public bool IsCommonRowOnTable(float tableRow)
+  {
+    if (!Radial)
+      return true;
+
+    var placement = PlacementOf(CommonAnchor);
+    return placement.Radius + (tableRow - placement.ReferenceRow) * CellSize.Y > 0;
+  }
+
+  private Vector2I CommonAnchor => new(Field.CommonZone.Left, Field.CommonZone.BottomRow);
+
+  /// <summary>
+  /// Относится ли ячейка к общей зоне с её рядом итогов: там столбцы раздвинуты, а ряды сжаты.
+  /// </summary>
+  private bool IsCommonArea(Vector2I cell) =>
+    Radial ? RingOf(cell, out _, out _) == Ring.Common : cell.Y <= Field.CommonZone.BottomRow + 1;
+
+  /// <summary>
+  /// Столбец общей зоны на столе: между соседними теориями — промежуток в полстолбца (<see cref="CommonColumnStep"/>).
+  /// </summary>
+  private float CommonColumn(float column) => _commonReferenceColumn + (column - _commonReferenceColumn) * CommonColumnStep;
+
+  /// <summary>
+  /// Ряд общей зоны на столе: ряды над нижним сжаты до полкарточки, поэтому дочерняя теория лежит вровень
+  /// с той карточкой родительской теории, рядом с которой её выложили.
+  /// </summary>
+  private float CommonRow(float row)
+  {
+    var bottom = Field.CommonZone.BottomRow;
+    return row >= bottom ? row : bottom - (bottom - row) * StackRowStep;
+  }
+
+  /// <summary>
+  /// Ячейки общей зоны, которые видны на столе: нижний ряд (туда кладут новые теории) и ячейки стопок с местом над ними.
+  /// </summary>
+  private IEnumerable<Vector2I> CommonSlotCells()
+  {
+    var zone = Field.CommonZone;
+    var cells = new HashSet<Vector2I>();
+    for (var x = zone.Left; x < zone.Left + zone.Width; x++)
+      cells.Add(new Vector2I(x, zone.BottomRow));
+    foreach (var column in Field.TheoryColumns)
+    {
+      for (var k = 0; k <= column.Members.Count; k++)
+      {
+        var cell = new Vector2I(column.TheoryCell.Column, column.TheoryCell.Row - k);
+        if (cell.Y >= zone.Top)
+          cells.Add(cell);
+      }
+    }
+
+    return cells;
+  }
+
+  /// <summary>
+  /// Ячейки общей зоны, куда можно попасть мышью: видимые и ряд дочерних теорий (он подсвечивается, когда туда можно
+  /// положить карточку). Ячейка ряда дочерних теорий может быть и над стопкой базовой теории: тогда базовая сдвинется.
+  /// </summary>
+  private IEnumerable<Vector2I> CommonHitCells()
+  {
+    var zone = Field.CommonZone;
+    var row = SideTheoryRow;
+    var side = row >= zone.Top
+      ? Enumerable.Range(zone.Left, zone.Width).Select(x => new Vector2I(x, row))
+      : [];
+    return CommonSlotCells().Concat(side);
   }
 
   /// <summary>
@@ -177,7 +264,13 @@ public partial class Board
   /// Точка стола по дробным координатам сетки: (столбец, строка) — центр ячейки, половинки — её края.
   /// </summary>
   /// <param name="anchor">Ячейка, по которой выбирается кольцо (в сетке не важна).</param>
-  private Vector2 PointAt(Vector2I anchor, float column, float row)
+  private Vector2 PointAt(Vector2I anchor, float column, float row) =>
+    IsCommonArea(anchor) ? PixelAt(anchor, CommonColumn(column), CommonRow(row)) : PixelAt(anchor, column, row);
+
+  /// <summary>
+  /// Точка стола по координатам стола в ячейках: в общей зоне они уже пересчитаны (<see cref="CommonColumn"/>, <see cref="CommonRow"/>).
+  /// </summary>
+  private Vector2 PixelAt(Vector2I anchor, float column, float row)
   {
     if (!Radial)
       return new Vector2((column + 0.5f) * CellSize.X, (row + 0.5f) * CellSize.Y);
@@ -204,12 +297,8 @@ public partial class Board
   /// </summary>
   private IEnumerable<Vector2I> RadialCells()
   {
-    foreach (var cell in Field.CommonZone.Cells)
-    {
-      var key = cell.ToVector2I();
-      if (!IsAboveStack(Field, key))
-        yield return key;
-    }
+    foreach (var cell in CommonSlotCells())
+      yield return cell;
 
     foreach (var cell in Market.Zone.Cells)
       yield return cell.ToVector2I();
@@ -297,9 +386,10 @@ public partial class Board
     var cellWidth = CellSize.X;
     var cellHeight = CellSize.Y;
 
-    // Общая зона: стопки растут к центру, поэтому столбцы должны поместиться по окружности её внутреннего края.
-    var commonInner = Mathf.Max(RadialEmptyRadius, common.Width * cellWidth / Mathf.Tau);
-    var theoryRow = commonInner + (common.Height - 0.5f) * cellHeight;
+    // Общая зона: стопки растут к центру, поэтому столбцы (с промежутками) должны поместиться по окружности её внутреннего края.
+    var commonInner = Mathf.Max(RadialEmptyRadius, common.Width * CommonColumnStep * cellWidth / Mathf.Tau);
+    // Ряды общей зоны над нижним сжаты (см. CommonRow).
+    var theoryRow = commonInner + ((common.Height - 1) * StackRowStep + 0.5f) * cellHeight;
     // Снаружи ряда теорий — ряд с итогами теорий.
     var commonOuter = theoryRow + 1.5f * cellHeight;
 
@@ -327,18 +417,34 @@ public partial class Board
   private Vector2[] ZoneOutline(Zone zone)
   {
     var anchor = new Vector2I(zone.Left, zone.Top);
-    var left = zone.Left - 0.5f;
-    var right = zone.Left + zone.Width - 0.5f;
-    var top = zone.Top - 0.5f;
-    var bottom = zone.BottomRow + 0.5f;
+    var common = IsCommonArea(anchor);
+    float Column(float column) => common ? CommonColumn(column) : column;
+    float Row(float row) => common ? CommonRow(row) : row;
+
+    var left = Column(zone.Left - 0.5f);
+    var right = Column(zone.Left + zone.Width - 0.5f);
+    var top = Row(zone.Top) - 0.5f;
+    var bottom = Row(zone.BottomRow) + 0.5f;
     var segments = Radial ? Mathf.Max(1, zone.Width * ZoneArcSegmentsPerCell) : 1;
 
     var points = new List<Vector2>();
     for (var i = 0; i <= segments; i++)
-      points.Add(PointAt(anchor, Mathf.Lerp(left, right, (float)i / segments), top));
+      points.Add(PixelAt(anchor, Mathf.Lerp(left, right, (float)i / segments), top));
     for (var i = segments; i >= 0; i--)
-      points.Add(PointAt(anchor, Mathf.Lerp(left, right, (float)i / segments), bottom));
+      points.Add(PixelAt(anchor, Mathf.Lerp(left, right, (float)i / segments), bottom));
     return [.. points];
+  }
+
+  /// <summary>
+  /// Прямоугольник зоны в сетке.
+  /// </summary>
+  private Rect2 ZoneRect(Zone zone)
+  {
+    var outline = ZoneOutline(zone);
+    var rect = new Rect2(outline[0], Vector2.Zero);
+    foreach (var point in outline)
+      rect = rect.Expand(point);
+    return rect;
   }
 
   /// <summary>

@@ -113,6 +113,13 @@ public partial class RoundController : Node
     await Pause(CameraPause);
     if (!_session.RefreshMarket())
     {
+      if (_session.Mode == GameMode.Race)
+      {
+        Hint?.Invoke(_session.IsLastRound
+          ? "Последний раунд окончен — гонка завершена. Закрытые карточки раскрыты. Подсчёт очков за теории на финише."
+          : "В колоде рынка не осталось карточек — гонка завершена. Закрытые карточки раскрыты. Подсчёт очков за теории на финише.");
+        return;
+      }
       if (_session.Mode == GameMode.TheoryDevelopment)
       {
         // Очки считаются по итоговому состоянию поля: выплат в конце нет, партия сразу завершается.

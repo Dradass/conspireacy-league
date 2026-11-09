@@ -55,6 +55,7 @@ public partial class StartMenu : Control
     _mode.AddThemeFontSizeOverride("font_size", LabelFontSize);
     _mode.AddItem("Заработок денег", (int)GameMode.Money);
     _mode.AddItem("Развитие теорий", (int)GameMode.TheoryDevelopment);
+    _mode.AddItem("Гонка", (int)GameMode.Race);
     _mode.Selected = _mode.GetItemIndex((int)GameMode.TheoryDevelopment);
     column.AddChild(_mode);
 

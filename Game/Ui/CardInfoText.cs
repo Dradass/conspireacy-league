@@ -93,7 +93,15 @@ public static class CardInfoText
       yield return $"Пассивно: соседи в личном штабе −{HomelessCard.NeighborSuccessPenalty}% успеха";
     if (person.AdeptsBonus is not null)
       yield return "На карточку в личном штабе можно приводить адептов";
+    if (person.Passive is PolicemanPassive)
+      yield return PolicemanTollText;
   }
+
+  /// <summary>
+  /// Плата владельцу полицейского за действие, применённое к нему другим игроком.
+  /// </summary>
+  private static string PolicemanTollText =>
+    $"Пассивно: другой игрок, применяющий к полицейскому действие, платит его владельцу {ConspiracyLeague.Core.Field.PlayingField.PolicemanToll}$";
 
   /// <summary>
   /// Эффекты персонажа в штабе теории: при выкладывании, пассивная способность полицейского и скидка при присоединении.
@@ -104,6 +112,8 @@ public static class CardInfoText
       yield return $"При выкладывании: {Escape(person.OnPlacedInHeadquarters.Description)}";
     if (person.Passive is PolicemanPassive)
       yield return $"Пассивно: {Escape(person.Passive.Description)}";
+    if (person.Passive is PolicemanPassive)
+      yield return PolicemanTollText;
     if (person.JoiningDiscount > 0)
       yield return $"Присоединение к теории дешевле на {person.JoiningDiscount}$";
   }
