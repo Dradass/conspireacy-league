@@ -17,7 +17,10 @@ public static class FieldLayout
 
   private const int PlayerZoneWidth = 7;
   private const int PlayerZoneHeight = 4;
-  private const int PlayerZoneGap = 3;
+  /// <summary>
+  /// Пустые столбцы между рабочими зонами соседних игроков.
+  /// </summary>
+  public const int PlayerZoneGap = 3;
   // 4 — пустые столбцы слева от открытых карточек (см. Market), по две открытые карточки на игрока в строке.
   private const int MarketZoneWidth = 4 + 2 * MaxPlayers;
   private const int MarketZoneHeight = 3;

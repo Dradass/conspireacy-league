@@ -44,6 +44,8 @@ public partial class CardInfoPanel : Control
       CustomMinimumSize = new Vector2(TextWidth, 0),
     };
     _text.AddThemeFontSizeOverride("normal_font_size", TextFontSize);
+    // Описание карточки — как досье: машинописный шрифт.
+    _text.AddThemeFontOverride("normal_font", UiStyle.DossierFont);
     _text.MetaClicked += OnMetaClicked;
     column.AddChild(_text);
 

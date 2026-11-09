@@ -4,12 +4,12 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Убрать бездомного (<see cref="GameContext.TargetCell"/>) из личного штаба — любого игрока — или из теории
-/// к себе на руку.
+/// Убрать бездомного (<see cref="GameContext.TargetCell"/>) из личного штаба — любого игрока — к себе на руку.
+/// Из штабов теорий бездомных не забирают.
 /// </summary>
 public sealed class TakeHomelessToHandEffect : Effect
 {
-  public override string Description => "Убрать любого бездомного из личного штаба или теории к себе на руку";
+  public override string Description => "Убрать любого бездомного из личного штаба к себе на руку";
 
   public override bool RequiresTargetCell => true;
 

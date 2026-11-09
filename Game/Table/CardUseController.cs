@@ -165,6 +165,8 @@ public partial class CardUseController : Node
     _session = session;
     _hand = hand;
     _session.Turns.TurnChanged += OnTurnChanged;
+    _session.Turns.Passed += OnPassed;
+    _session.PhaseChanged += OnPhaseChanged;
     _session.PendingPlacementChanged += OnPendingPlacementChanged;
     _session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
     _hand.CardPicked += OnHandCardPicked;
@@ -205,6 +207,8 @@ public partial class CardUseController : Node
   public override void _ExitTree()
   {
     _session.Turns.TurnChanged -= OnTurnChanged;
+    _session.Turns.Passed -= OnPassed;
+    _session.PhaseChanged -= OnPhaseChanged;
     _session.PendingPlacementChanged -= OnPendingPlacementChanged;
     _session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
     _hand.CardPicked -= OnHandCardPicked;
@@ -328,6 +332,8 @@ public partial class CardUseController : Node
     catch (Exception error) when (error is ArgumentException or InvalidOperationException)
     {
       UseDenied?.Invoke(error.Message);
+      // Если действие отказало уже после применения, карточка теории перевёрнута, а персонажи могли сыграть.
+      _board.ShowPlayStates();
       return;
     }
     // Карточка из личного штаба, сыгранная теорией (например, «Ленин — гриб»), переворачивается сразу же.
@@ -381,7 +387,7 @@ public partial class CardUseController : Node
     else if (targeting.Placement is not null)
     {
       EndTargeting();
-      _session.ResolvePlacement(targeting.TargetCell, targeting.SecondTargetCell);
+      ResolvePlacement(targeting.TargetCell, targeting.SecondTargetCell);
     }
     else
     {
@@ -406,7 +412,7 @@ public partial class CardUseController : Node
       return;
     if (_board.ViewAt(choice.Cell.ToVector2I()) is not { } view)
     {
-      _session.ResolvePlacement();
+      ResolvePlacement(retry: false);
       return;
     }
 
@@ -421,7 +427,26 @@ public partial class CardUseController : Node
   private void CancelTargeting()
   {
     if (EndTargeting().Placement is not null)
-      _session.ResolvePlacement();
+      ResolvePlacement();
+  }
+
+  /// <summary>
+  /// Завершить выбор цели для выложенной карточки. Если сессия цель не приняла (или без цели действие выполнить нельзя),
+  /// выложенная карточка всё ещё ждёт цель — выбор начинается заново, чтобы игра не застряла без способа продолжить.
+  /// </summary>
+  /// <param name="retry">Начать выбор заново, если цель не принята.</param>
+  private void ResolvePlacement(Cell? target = null, Cell? second = null, bool retry = true)
+  {
+    try
+    {
+      _session.ResolvePlacement(target, second);
+    }
+    catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+    {
+      UseDenied?.Invoke(error.Message);
+      if (retry && _session.PendingPlacement is { } choice)
+        Callable.From(() => StartPlacement(choice)).CallDeferred();
+    }
   }
 
   /// <summary>
@@ -1045,7 +1070,27 @@ public partial class CardUseController : Node
   /// <summary>
   /// Ход перешёл к другому игроку: начатый выбор действия прежнего игрока отменяется.
   /// </summary>
-  private void OnTurnChanged(Player player)
+  private void OnTurnChanged(Player player) => DropChoice();
+
+  /// <summary>
+  /// Игрок спасовал (кнопкой «Пас», в том числе посреди выбора цели): начатый выбор отменяется. Когда пасует последний
+  /// игрок, ход не переходит — без этого выбор остался бы висеть до конца раунда.
+  /// </summary>
+  private void OnPassed(Player player) => DropChoice();
+
+  /// <summary>
+  /// Ходы игроков закончились (конец раунда, конец партии): начатый выбор отменяется.
+  /// </summary>
+  private void OnPhaseChanged(GamePhase phase)
+  {
+    if (phase != GamePhase.PlayerTurns)
+      DropChoice();
+  }
+
+  /// <summary>
+  /// Закрыть меню действий и отменить выбор цели, не выполняя действие.
+  /// </summary>
+  private void DropChoice()
   {
     _menu.Hide();
     _borrowMenu.Hide();
@@ -1053,6 +1098,11 @@ public partial class CardUseController : Node
     if (_targeting is not null)
       EndTargeting();
   }
+
+  /// <summary>
+  /// Игрок сейчас выбирает действие карточки или его цель: в это время карточки из руки и с рынка не перетаскивают.
+  /// </summary>
+  public bool IsChoosing => _targeting is not null || _choosingPlayer is not null || _selection is not null;
 
   private Targeting EndTargeting()
   {
@@ -1070,18 +1120,35 @@ public partial class CardUseController : Node
   /// </summary>
   private async void Use(CardView view, Vector2I cell, Effect option, GameContext context)
   {
-    var check = _session.CheckSuccess(cell.ToCell());
+    SuccessCheck check;
+    try
+    {
+      check = _session.CheckSuccess(cell.ToCell());
+    }
+    catch (Exception error) when (error is InvalidOperationException or ArgumentException)
+    {
+      UseDenied?.Invoke(error.Message);
+      return;
+    }
+
     view.Lifted = true;
     var checkView = SuccessCheckView.Create(view, check);
     await checkView.Play();
+    // Пока шла анимация, партию могли закрыть (выход в меню): узлов уже нет.
+    if (!IsInstanceValid(this) || !IsInsideTree())
+      return;
     var action = context.BorrowedOption is { } borrowed ? $"{option.Description}: {Lowercase(borrowed.Description)}" : option.Description;
     Hint?.Invoke(check.Succeeded
       ? $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — успех! {action}."
       : $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — провал, действие не выполняется.");
     await ToSignal(GetTree().CreateTimer(ResultPause), SceneTreeTimer.SignalName.Timeout);
+    if (!IsInstanceValid(this) || !IsInsideTree())
+      return;
 
-    checkView.QueueFree();
-    view.Lifted = false;
+    if (IsInstanceValid(checkView))
+      checkView.QueueFree();
+    if (IsInstanceValid(view))
+      view.Lifted = false;
     try
     {
       _session.UseCard(option, context);
@@ -1090,7 +1157,12 @@ public partial class CardUseController : Node
     catch (NotImplementedException)
     {
       UseDenied?.Invoke($"Действие «{option.Description}» пока не реализовано.");
-      return;
+    }
+    // Действие отказало на полпути. Сессия уже засчитала карточку сыгранной и потратила ход — показываем причину.
+    catch (Exception error)
+    {
+      GD.PrintErr($"Действие «{option.Description}» не выполнено: {error}");
+      UseDenied?.Invoke($"Действие «{option.Description}» не удалось: {error.Message}");
     }
 
     // После быстрого действия карточка поворачивается, иначе переворачивается; действие могло перевернуть

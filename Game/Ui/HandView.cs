@@ -13,9 +13,10 @@ public partial class HandView : PanelContainer
   private const int MinVisibleCards = 5;
   private const int Separation = 8;
 
-  private static readonly Color FillColor = new(0.6f, 0.6f, 0.6f, 0.12f);
-  private static readonly Color BorderColor = new(0.7f, 0.7f, 0.7f, 0.25f);
-  private static readonly Color TargetBorderColor = new(0.85f, 0.85f, 0.85f, 0.6f);
+  // В стиле интерфейса (UiStyle): тёмно-зелёная подложка и зелёная рамка; при наведении карточки — ярче.
+  private static readonly Color FillColor = new(0.05f, 0.1f, 0.07f, 0.55f);
+  private static readonly Color BorderColor = UiStyle.Glow with { A = 0.35f };
+  private static readonly Color TargetBorderColor = UiStyle.Glow with { A = 0.7f };
   private static readonly Color HoverFillColor = new(0.55f, 0.95f, 0.6f, 0.2f);
   private static readonly Color HoverBorderColor = new(0.55f, 0.95f, 0.6f, 0.8f);
   private static readonly Color EmptyColor = new(1, 1, 1, 0.35f);
@@ -102,8 +103,8 @@ public partial class HandView : PanelContainer
 
   public override void _Ready()
   {
-    _style.SetBorderWidthAll(2);
-    _style.SetCornerRadiusAll(8);
+    _style.SetBorderWidthAll(1);
+    _style.SetCornerRadiusAll(3);
     _style.SetContentMarginAll(10);
     DropState = HandDropState.None;
     AddThemeStyleboxOverride("panel", _style);

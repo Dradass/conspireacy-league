@@ -26,6 +26,11 @@ public partial class MarketTheoryHints : Node2D
   /// </summary>
   public GameSession Session { get; init; } = null!;
 
+  /// <summary>
+  /// Стол: где лежат карточки рынка и как они повёрнуты.
+  /// </summary>
+  public Board Board { get; init; } = null!;
+
   public override void _Process(double delta) => QueueRedraw();
 
   public override void _Draw()
@@ -46,9 +51,10 @@ public partial class MarketTheoryHints : Node2D
       if (Session.Field.TheoryColumns.FirstOrDefault(column => column.Theory == theory) is { } column)
         markers.Add((column.Owner == player, FieldColor));
 
-      var center = Board.CellCenter(cell.ToVector2I());
-      var y = center.Y - CardPainter.CardSize.Y / 2 - Gap;
-      var x = center.X - (markers.Count - 1) * Spacing / 2;
+      // Рисуем в координатах карточки: на радиальном поле она повёрнута, и подсказка стоит над её верхом.
+      DrawSetTransformMatrix(Board.SlotTransform(cell.ToVector2I()));
+      var y = -CardPainter.CardSize.Y / 2 - Gap;
+      var x = -(markers.Count - 1) * Spacing / 2;
       foreach (var (arrow, color) in markers)
       {
         var position = new Vector2(x, y);
@@ -59,6 +65,8 @@ public partial class MarketTheoryHints : Node2D
         x += Spacing;
       }
     }
+
+    DrawSetTransformMatrix(Transform2D.Identity);
   }
 
   /// <summary>

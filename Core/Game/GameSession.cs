@@ -212,7 +212,22 @@ public sealed class GameSession
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
 
     using var scope = CurrentPlayer.EarningFrom($"Выкладывание: {card.Name}");
-    var check = place();
+    PlacementCheck check;
+    try
+    {
+      check = place();
+    }
+    catch
+    {
+      // Карточка уже легла на поле, а потом что-то отказало (например, действие при выкладывании):
+      // она не должна остаться ещё и в руке, а выкладывание — потраченное действие хода.
+      if (Field.CellOf(card) is not null)
+      {
+        hand.Remove(card);
+        CompleteAction();
+      }
+      throw;
+    }
     // Выложенная теория могла сдвинуться в соседний столбец вместе с карточкой — берём её актуальную ячейку.
     var placedCell = Field.CellOf(card) ?? throw new InvalidOperationException("Карточка не легла на поле.");
     hand.Remove(card);
@@ -267,8 +282,15 @@ public sealed class GameSession
 
     PendingPlacement = null;
     PendingPlacementChanged?.Invoke(null);
-    effect.Execute(context);
-    CompleteAction();
+    // Цель принята: даже если действие откажет на полпути, выкладывание карточки — потраченное действие хода.
+    try
+    {
+      effect.Execute(context);
+    }
+    finally
+    {
+      CompleteAction();
+    }
   }
 
   private static Cell RequireTarget(Effect effect, Cell cell, GameContext context)
@@ -311,18 +333,26 @@ public sealed class GameSession
     SetPendingCheck(null);
     RequireAction();
     var source = Field.CardAt(check.Cell)?.Name ?? "Действие";
-    using (CurrentPlayer.EarningFrom(source))
+    // Бросок уже сделан: даже если действие откажет, карточка сыграна (см. PlayingField.Use), и ход тратится как обычно.
+    try
     {
-      if (check.Succeeded)
-        Field.Use(check.Cell, option, context);
-      else
-        Field.Waste(check.Cell, CurrentPlayer, option.IsQuick, check.Die);
+      using (CurrentPlayer.EarningFrom(source))
+      {
+        if (check.Succeeded)
+          Field.Use(check.Cell, option, context);
+        else
+          Field.Waste(check.Cell, CurrentPlayer, option.IsQuick, check.Die);
+      }
     }
-    // Быстрое действие не тратит действие игрока, пока карточка только поворачивается. Если же она перевернулась
-    // рубашкой вверх (второе быстрое действие), действие игрока тратится.
-    // Карточку, ушедшую из игры, больше не сыграть — действие тоже тратится.
-    if (!option.IsQuick || Field.IsUsed(check.Cell) || Field.CardAt(check.Cell) is null)
-      CompleteAction();
+    finally
+    {
+      // Быстрое действие не тратит действие игрока, пока карточка только поворачивается. Если же она перевернулась
+      // рубашкой вверх (второе быстрое действие), действие игрока тратится.
+      // Карточку, ушедшую из игры, больше не сыграть — действие тоже тратится.
+      if (!option.IsQuick || Field.IsUsed(check.Cell) || Field.CardAt(check.Cell) is null)
+        CompleteAction();
+    }
+
     return check;
   }
 
@@ -334,20 +364,24 @@ public sealed class GameSession
   /// <param name="context">Контекст партии с выбранными целями (например, теорией).</param>
   public void UseTheoryCard(OwnedTheoryCard card, GameContext context)
   {
-    // Перенос «Шапочки из фольги» ничего не тратит: она уже лежит на персонаже.
-    var move = card.AttachedTo is not null && card.Card.Passive is TinFoilPassive;
-    if (move)
-    {
-      RequireNoPendingCheck();
-      RequirePhase(GamePhase.PlayerTurns);
-    }
-    else
-      RequireAction();
+    RequireAction();
 
-    var trigger = Field.UseTheoryCard(card, context);
+    TheoryTrigger? trigger;
+    try
+    {
+      trigger = Field.UseTheoryCard(card, context);
+    }
+    catch
+    {
+      // Действие отказало, но карточка уже применена (часть действия могла выполниться): ход тратится.
+      if (card.IsUsed)
+        CompleteAction();
+      throw;
+    }
+
     if (trigger is not null)
       SetPendingTheoryTrigger(trigger);
-    else if (!move)
+    else
       CompleteAction();
   }
 

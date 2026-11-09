@@ -42,6 +42,33 @@ public partial class CardView : Node2D
   /// </summary>
   private float _flip;
 
+  private float _baseAngle;
+
+  /// <summary>
+  /// Доворот после быстрого действия: 0 — карточка лежит прямо, π/2 — повёрнута.
+  /// </summary>
+  private float _turn;
+
+  /// <summary>
+  /// Поворот места, где лежит карточка: на радиальном поле карточки смотрят верхом к центру. Поворот после быстрого
+  /// действия (<see cref="Rotated"/>) добавляется к нему.
+  /// </summary>
+  public float BaseAngle
+  {
+    get => _baseAngle;
+    set
+    {
+      _baseAngle = value;
+      Rotation = _baseAngle + _turn;
+    }
+  }
+
+  private void SetTurn(float turn)
+  {
+    _turn = turn;
+    Rotation = _baseAngle + _turn;
+  }
+
   /// <summary>
   /// Отображаемая карточка.
   /// </summary>
@@ -186,7 +213,7 @@ public partial class CardView : Node2D
 
       _rotated = value;
       CreateTween()
-        .TweenProperty(this, Node2D.PropertyName.Rotation.ToString(), value ? Mathf.Pi / 2 : 0f, RotateDuration)
+        .TweenMethod(Callable.From<float>(SetTurn), _turn, value ? Mathf.Pi / 2 : 0f, RotateDuration)
         .SetTrans(Tween.TransitionType.Cubic)
         .SetEase(Tween.EaseType.Out);
     }

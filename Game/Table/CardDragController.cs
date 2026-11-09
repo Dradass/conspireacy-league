@@ -131,6 +131,8 @@ public partial class CardDragController : Node
   private void StartDrag(Drag drag)
   {
     drag.View.Position = MouseOnTable();
+    // Карточку несут прямо, даже если на радиальном поле она лежала повёрнутой; на место её довернёт стол.
+    drag.View.BaseAngle = 0;
     drag.View.Lifted = true;
     _dragLayer.AddChild(drag.View);
     _drag = drag;
@@ -156,9 +158,10 @@ public partial class CardDragController : Node
     {
       PlaceFromHand(drag);
     }
-    catch (InvalidOperationException error)
+    // Любая ошибка выкладывания, а не только запрет правил: иначе карточка зависла бы над столом, а в руке — невидимой.
+    catch (Exception error)
     {
-      GD.PrintErr($"Не удалось выложить «{drag.View.Card}»: {error.Message}");
+      GD.PrintErr($"Не удалось выложить «{drag.View.Card}»: {error}");
       PlacementDenied?.Invoke(error.Message);
       // Если карточка на поле не легла, она возвращается в руку, а не остаётся висеть над столом.
       if (_board.Field.CellOf(drag.View.Card) is null)
@@ -178,6 +181,13 @@ public partial class CardDragController : Node
     var view = drag.View;
     if (view.GetParent() != _dragLayer || _board.Field.CellOf(view.Card) is not { } cell)
       return;
+
+    // Карточка в теории отмечается миплом владельца; первая карточка новой теории — штаб.
+    if (_board.Field.ColumnAt(cell) is { } column)
+    {
+      view.CardOwner = column.OwnerAt(cell);
+      view.IsHeadquarters = column.IsHeadquarters && column.TheoryCell == cell;
+    }
 
     _dragLayer.RemoveChild(view);
     _board.Place(view, cell.ToVector2I());
@@ -306,10 +316,20 @@ public partial class CardDragController : Node
   private PlacementCheck Check(CardView view, Vector2I cell) => _board.Field.CheckDrop(view.Card, cell.ToCell(), _session.CurrentPlayer);
 
   /// <summary>
-  /// Брать карточки можно только в фазе ходов игроков.
+  /// Брать карточки можно только в фазе ходов игроков, когда ничего не ждёт выбора: ни проверка успеха, ни цель
+  /// выложенной карточки, ни действие основной теории, ни выбор цели карточки (<see cref="IsChoosing"/>).
   /// </summary>
   private bool CanAct =>
-    _session.Phase == GamePhase.PlayerTurns && _session.PendingCheck is null && _session.PendingPlacement is null;
+    _session.Phase == GamePhase.PlayerTurns
+    && _session.PendingCheck is null
+    && _session.PendingPlacement is null
+    && _session.PendingTheoryTrigger is null
+    && !(IsChoosing?.Invoke() ?? false);
+
+  /// <summary>
+  /// Игрок сейчас выбирает действие карточки или его цель (см. <see cref="CardUseController.IsChoosing"/>).
+  /// </summary>
+  public Func<bool>? IsChoosing { get; set; }
 
   private Vector2 MouseOnTable() => _board.GetGlobalMousePosition();
 

@@ -113,8 +113,8 @@ public sealed class TheoryColumn
   public int Adepts { get; private set; }
 
   /// <summary>
-  /// Штаб теории закрыт как несостоятельный: в стопку больше нельзя класть карточки, адепты не приходят
-  /// и не приносят денег.
+  /// Штаб теории закрыт как несостоятельный: адепты не приходят и не приносят денег. Карточки в стопку класть
+  /// по-прежнему можно — так штаб можно снова сделать состоятельным (см. <see cref="PlayingField.ReopenSolventTheories"/>).
   /// </summary>
   public bool IsClosed { get; private set; }
 
@@ -183,6 +183,11 @@ public sealed class TheoryColumn
   /// Карточки стопки, выложенные игроком.
   /// </summary>
   public IEnumerable<TheoryMember> MembersOf(Player player) => _members.Where(member => member.Owner == player);
+
+  /// <summary>
+  /// Лидер ли игрок в теории: у него есть карточка в стопке или мипл-лидер под карточкой теории (<see cref="LeaderMeeples"/>).
+  /// </summary>
+  public bool IsLeader(Player player) => MembersOf(player).Any() || _leaderMeeples.Contains(player);
 
   /// <summary>
   /// Влияние игрока в стопке — сумма очков влияния выложенных им карточек и его миплов-лидеров.

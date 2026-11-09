@@ -22,7 +22,6 @@ public partial class ResultsPanel : Control
   private const int DetailsIndent = 24;
 
   private static readonly Color ShadeColor = new(0f, 0f, 0f, 0.6f);
-  private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.95f);
   private static readonly Color TitleColor = new("e0b84f");
   private static readonly Color HintColor = new(1f, 1f, 1f, 0.6f);
 
@@ -39,11 +38,8 @@ public partial class ResultsPanel : Control
     var center = new CenterContainer { AnchorRight = 1, AnchorBottom = 1 };
     AddChild(center);
 
-    var style = new StyleBoxFlat { BgColor = PanelColor };
-    style.SetCornerRadiusAll(12);
-    style.SetContentMarginAll(28);
     var panel = new PanelContainer { CustomMinimumSize = new Vector2(PanelWidth, 0) };
-    panel.AddThemeStyleboxOverride("panel", style);
+    panel.AddThemeStyleboxOverride("panel", UiStyle.Panel(margin: 28, alpha: 0.95f));
     center.AddChild(panel);
 
     var column = new VBoxContainer();
@@ -53,7 +49,7 @@ public partial class ResultsPanel : Control
     var ranking = Session.Ranking;
     var title = new Label { Text = $"Победил {ranking[0].Name}!", HorizontalAlignment = HorizontalAlignment.Center };
     title.AddThemeFontSizeOverride("font_size", TitleFontSize);
-    title.AddThemeColorOverride("font_color", TitleColor);
+    UiStyle.MakeTitle(title, TitleColor);
     column.AddChild(title);
 
     var hint = new Label { Text = "Нажмите на игрока, чтобы увидеть подробности", HorizontalAlignment = HorizontalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart };

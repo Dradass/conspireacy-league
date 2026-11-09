@@ -43,6 +43,11 @@ public partial class TheoryHighlights : Node2D
   /// </summary>
   public GameSession Session { get; init; } = null!;
 
+  /// <summary>
+  /// Стол: где лежат ячейки и как они повёрнуты.
+  /// </summary>
+  public Board Board { get; init; } = null!;
+
   public override void _Process(double delta) => QueueRedraw();
 
   public override void _Draw()
@@ -56,7 +61,9 @@ public partial class TheoryHighlights : Node2D
       var color = style.Color with { A = active ? ActiveAlpha : FadedAlpha };
       foreach (var cell in ColumnCells(column))
       {
-        var rect = CellRect(cell);
+        // Рисуем в координатах ячейки: на радиальном поле она повёрнута.
+        DrawSetTransformMatrix(Board.SlotTransform(cell));
+        var rect = CellRect();
         DrawRect(rect, color);
         switch (style.Pattern)
         {
@@ -70,6 +77,8 @@ public partial class TheoryHighlights : Node2D
         }
       }
     }
+
+    DrawSetTransformMatrix(Transform2D.Identity);
   }
 
   /// <summary>
@@ -100,10 +109,13 @@ public partial class TheoryHighlights : Node2D
     }
   }
 
-  private Rect2 CellRect(Vector2I cell)
+  /// <summary>
+  /// Прямоугольник ячейки относительно её центра (см. <see cref="Board.SlotTransform"/>).
+  /// </summary>
+  private static Rect2 CellRect()
   {
     var inset = new Vector2(CellInset, CellInset);
-    return new Rect2(Board.CardCenter(Session.Field, cell) - Board.CellSize / 2 + inset, Board.CellSize - inset * 2);
+    return new Rect2(-Board.CellSize / 2 + inset, Board.CellSize - inset * 2);
   }
 
   /// <summary>

@@ -10,7 +10,7 @@ namespace ConspiracyLeague.Core.Effects;
 public sealed class AttachTinFoilEffect : Effect
 {
   public override string Description =>
-    "Положить на персонажа в личном штабе: он имеет 100% успеха и защищён от любых эффектов";
+    "Положить на персонажа в личном штабе до конца раунда: он имеет 100% успеха и защищён от любых эффектов";
 
   public override bool RequiresTargetCell => true;
 

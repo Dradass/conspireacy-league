@@ -149,7 +149,7 @@ public static class CardInfoText
   private static string Link(Theory theory) =>
     $"[url=theory:{TheoryCatalog.All.ToList().IndexOf(theory)}]{Escape(theory.Name)}[/url]";
 
-  private static string Title(string name) => $"[font_size=28][b]{Escape(name)}[/b][/font_size]";
+  private static string Title(string name) => $"[font={UiStyle.TitleFontPath}][font_size=30]{Escape(name)}[/font_size][/font]";
 
   private static string Lines(params string[] lines) => string.Join("\n", lines);
 

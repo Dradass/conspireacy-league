@@ -27,7 +27,7 @@ public sealed class AddAdeptsToOwnLeaderTheoryEffect : Effect
   public override bool RequiresTheory => true;
 
   public override bool CanTargetTheory(TheoryColumn column, Player player) =>
-    base.CanTargetTheory(column, player) && column.MembersOf(player).Any() && AdeptsFor(column) > 0;
+    base.CanTargetTheory(column, player) && column.IsLeader(player) && AdeptsFor(column) > 0;
 
   public override void Execute(GameContext context)
   {

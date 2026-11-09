@@ -15,7 +15,6 @@ public partial class Hud : CanvasLayer
   private const double MessageFade = 0.4;
   private const float ReminderOffset = 64f;
 
-  private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.85f);
   private const float WaitingPlayerAlpha = 0.55f;
 
   private readonly Dictionary<Player, Label> _balances = new();
@@ -167,6 +166,7 @@ public partial class Hud : CanvasLayer
     {
       var balance = new Label { Name = $"Balance{player.Color}" };
       balance.AddThemeFontSizeOverride("font_size", 24);
+      UiStyle.MakeNumber(balance);
       balance.AddThemeColorOverride("font_color", PlayerPalette.MainOf(player.Color));
       column.AddChild(balance);
       _balances[player] = balance;
@@ -221,12 +221,8 @@ public partial class Hud : CanvasLayer
 
   private static PanelContainer CreatePanel(string name)
   {
-    var style = new StyleBoxFlat { BgColor = PanelColor };
-    style.SetCornerRadiusAll(8);
-    style.SetContentMarginAll(12);
-
     var panel = new PanelContainer { Name = name, MouseFilter = Control.MouseFilterEnum.Ignore };
-    panel.AddThemeStyleboxOverride("panel", style);
+    panel.AddThemeStyleboxOverride("panel", UiStyle.Panel(margin: 12, alpha: 0.85f));
     return panel;
   }
 

@@ -29,7 +29,7 @@ public partial class TheoryGraphPanel : Control
   private const int Margin = 40;
   private const int HeaderInset = 16;
   private const int HeaderHeight = 64;
-  private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.95f);
+  private static readonly Color PanelColor = new(0.05f, 0.1f, 0.07f, 0.96f);
   private const float ZoomStep = 1.15f;
   private const float MinZoom = 0.3f;
   private const float MaxZoom = 2.5f;
@@ -76,6 +76,7 @@ public partial class TheoryGraphPanel : Control
 
     var title = new Label { Text = "Теории", VerticalAlignment = VerticalAlignment.Center };
     title.AddThemeFontSizeOverride("font_size", TitleFontSize);
+    UiStyle.MakeTitle(title);
     header.AddChild(title);
 
     // Область графа: всё, что вышло за её края, обрезается. Колесо и перетаскивание работают внутри неё.
@@ -226,8 +227,8 @@ public partial class TheoryGraphPanel : Control
   private void AddNode(Theory theory, Vector2 position, bool isParent)
   {
     var style = new StyleBoxFlat { BgColor = NodeBackground, BorderColor = isParent ? ParentBorder : ChildBorder };
-    style.SetBorderWidthAll(2);
-    style.SetCornerRadiusAll(8);
+    style.SetBorderWidthAll(1);
+    style.SetCornerRadiusAll(3);
     style.SetContentMarginAll(8);
 
     var node = new PanelContainer

@@ -20,7 +20,7 @@ public sealed class GainMoneyPerAdeptEffect : Effect
   public override bool RequiresTheory => true;
 
   public override bool CanTargetTheory(TheoryColumn column, Player player) =>
-    base.CanTargetTheory(column, player) && column.MembersOf(player).Any() && column.Adepts >= AdeptsPerDollar;
+    base.CanTargetTheory(column, player) && column.IsLeader(player) && column.Adepts >= AdeptsPerDollar;
 
   public override bool CanTargetAdeptCard(Cell cell, PlayingField field) => field.AdeptsAt(cell) >= AdeptsPerDollar;
 

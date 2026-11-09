@@ -53,15 +53,35 @@ public partial class RoundController : Node
   private void OnPhaseChanged(GamePhase phase)
   {
     if (phase == GamePhase.HeadquartersCheck)
-      PlayRoundEnd();
+      PlayRoundEndSafely();
   }
 
-  private async void PlayRoundEnd()
+  /// <summary>
+  /// Провести конец раунда, не роняя игру: ошибку пишем в лог и показываем игрокам, а не теряем молча
+  /// (иначе партия застряла бы в фазе конца раунда без единого сообщения).
+  /// </summary>
+  private async void PlayRoundEndSafely()
+  {
+    try
+    {
+      await PlayRoundEnd();
+    }
+    catch (Exception error)
+    {
+      // Партию закрыли посреди анимаций (выход в меню): узлов уже нет, сообщать некому.
+      if (!IsInstanceValid(this) || !IsInsideTree())
+        return;
+      GD.PrintErr($"Ошибка в конце раунда (фаза {_session.Phase}): {error}");
+      Hint?.Invoke($"Ошибка в конце раунда: {error.Message}");
+    }
+  }
+
+  private async Task PlayRoundEnd()
   {
     // Фаза сменилась посреди нажатия «Пас» — начинаем со следующего кадра.
     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
-    _camera.FocusOn(Board.ZoneCenter(_session.Field.CommonZone));
+    _camera.FocusOn(_board.ZoneCenter(_session.Field.CommonZone));
     var changes = _session.CloseInsolventTheories();
     var closed = changes.Closed;
     var reopened = changes.Reopened;
@@ -76,19 +96,19 @@ public partial class RoundController : Node
 
     while (_session.PayNextTheoryIncome() is { } income)
     {
-      _camera.FocusOn(Board.CellCenter(income.Column.TheoryCell.ToVector2I()));
+      _camera.FocusOn(_board.CellCenter(income.Column.TheoryCell.ToVector2I()));
       Hint?.Invoke($"Адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
       await _board.ShowIncome(income);
     }
 
     var zones = _session.Field.PlayerZones.Values.ToList();
-    _camera.FocusOn((Board.ZoneCenter(zones[0]) + Board.ZoneCenter(zones[^1])) / 2);
+    _camera.FocusOn((_board.ZoneCenter(zones[0]) + _board.ZoneCenter(zones[^1])) / 2);
     Hint?.Invoke("Обновление карточек: сыгранные карточки личных штабов переворачиваются.");
     await Pause(CameraPause);
     _session.RefreshPlayedCards();
     await Pause(StepPause);
 
-    _camera.FocusOn(Board.ZoneCenter(_session.Market.Zone));
+    _camera.FocusOn(_board.ZoneCenter(_session.Market.Zone));
     Hint?.Invoke("Обновление рынка.");
     await Pause(CameraPause);
     if (!_session.RefreshMarket())
@@ -122,18 +142,27 @@ public partial class RoundController : Node
   {
     while (_session.PayNextLeadersBonus() is { } bonus)
     {
-      _camera.FocusOn(Board.CellCenter(bonus.Column.TheoryCell.ToVector2I()));
+      _camera.FocusOn(_board.CellCenter(bonus.Column.TheoryCell.ToVector2I()));
       Hint?.Invoke($"«{bonus.Column.Theory}»: владелец {bonus.Owner} получает {bonus.Amount}$ за лидеров.");
       await _board.ShowLeadersBonus(bonus);
     }
 
     while (_session.PayNextTheoryIncome() is { } income)
     {
-      _camera.FocusOn(Board.CellCenter(income.Column.TheoryCell.ToVector2I()));
+      _camera.FocusOn(_board.CellCenter(income.Column.TheoryCell.ToVector2I()));
       Hint?.Invoke($"Повторный доход: адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
       await _board.ShowIncome(income);
     }
   }
 
-  private SignalAwaiter Pause(double seconds) => ToSignal(GetTree().CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+  /// <summary>
+  /// Пауза между шагами. Если за это время партию закрыли (выход в меню), продолжать нельзя: шаги дальше
+  /// обращаются к уже удалённым узлам — останавливаем последовательность.
+  /// </summary>
+  private async Task Pause(double seconds)
+  {
+    await ToSignal(GetTree().CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+    if (!IsInstanceValid(this) || !IsInsideTree())
+      throw new OperationCanceledException("Партия закрыта.");
+  }
 }

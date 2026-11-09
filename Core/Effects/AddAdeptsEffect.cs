@@ -64,6 +64,10 @@ public sealed class AddAdeptsEffect : Effect
     var theory = context.TargetTheory ?? throw new InvalidOperationException(Destination == AdeptDestination.Theory
       ? "Не выбрана теория, в которую добавить адептов."
       : "Не указан штаб теории, в который выложена карточка.");
+    // В закрытый штаб карточки класть можно, но адепты в него не приходят: действие при выкладывании просто ничего
+    // не делает, а не обрывает выкладывание на полпути (карточка уже легла на поле).
+    if (Destination == AdeptDestination.TheoryHeadquarters && theory.IsClosed)
+      return;
     context.Field.AddAdepts(theory, Count);
   }
 

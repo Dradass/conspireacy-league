@@ -38,14 +38,22 @@ public partial class Main : Node2D
   /// </summary>
   public bool FailureConsequences { get; init; } = true;
 
+  /// <summary>
+  /// Радиальное поле: стол в форме кругов — в центре пусто, дальше кольца теорий, рынка и личных штабов;
+  /// кольца крутятся мышью. Выбирается в стартовом меню, по умолчанию выключено.
+  /// </summary>
+  public bool RadialField { get; init; }
+
   public override void _Ready()
   {
+	// Оформление интерфейса в стиле рубашки карточек (обычно уже применено стартовым меню).
+	UiStyle.Apply();
 	var session = new GameSession(Enum.GetValues<PlayerColor>()
 	  .Take(PlayerCount)
 	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)), mode: Mode);
 	session.Field.FailureConsequences = FailureConsequences;
 
-	var board = new Board { Name = "Board", Session = session };
+	var board = new Board { Name = "Board", Session = session, Radial = RadialField };
 	AddChild(board);
 	if (DevMode)
 	  board.AddChild(new DevCardPalette { Name = "DevCardPalette", Board = board });
@@ -54,11 +62,11 @@ public partial class Main : Node2D
 	{
 	  Name = "Camera",
 	  Bounds = new Rect2(Vector2.Zero, board.Size + (DevMode ? new Vector2(0, DevCardPalette.Gap + DevCardPalette.Height) : Vector2.Zero)),
-	  Position = CameraTarget(session, session.CurrentPlayer),
+	  Position = CameraTarget(board, session.CurrentPlayer),
 	  Zoom = Vector2.One * StartZoom,
 	};
 	AddChild(camera);
-	session.Turns.TurnChanged += player => camera.FocusOn(CameraTarget(session, player));
+	session.Turns.TurnChanged += player => camera.FocusOn(CameraTarget(board, player));
 
 	var hand = new HandView { Name = "Hand", Session = session };
 	var hud = new Hud { Name = "Hud", Layer = 1, Session = session, Hand = hand };
@@ -79,6 +87,8 @@ public partial class Main : Node2D
 	useController.UseDenied += hud.ShowMessage;
 	useController.Hint += hud.ShowMessage;
 	useController.Reminder += hud.ShowReminder;
+	// Пока выбирают действие карточки или его цель, карточки не перетаскивают.
+	dragController.IsChoosing = () => useController.IsChoosing;
 
 	var roundController = new RoundController { Name = "RoundController" };
 	AddChild(roundController);
@@ -109,6 +119,6 @@ public partial class Main : Node2D
   /// <summary>
   /// Куда смотрит камера, когда ходит игрок: чуть ниже центра его зоны, чтобы её не закрывала рука.
   /// </summary>
-  private static Vector2 CameraTarget(GameSession session, Player player) =>
-	Board.ZoneCenter(session.Field.PlayerZones[player]) + new Vector2(0, StartCameraShift);
+  private static Vector2 CameraTarget(Board board, Player player) =>
+	board.ZoneCenter(board.Field.PlayerZones[player]) + new Vector2(0, StartCameraShift);
 }

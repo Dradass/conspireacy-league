@@ -68,7 +68,6 @@ public partial class Board : Node2D
   private static readonly Color MarketZoneColor = new("3d3a2c");
   private static readonly Color MarketSlotColor = new("4a4634");
   private static readonly Color MarketBorderColor = new("b59a5a");
-  private static readonly Color MarketDeckColor = new("5a4a7a");
 
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
 
@@ -120,6 +119,11 @@ public partial class Board : Node2D
 
   public override void _Ready()
   {
+    var common = Field.CommonZone;
+    _commonReferenceColumn = common.Left + (common.Width - 1) / 2f;
+    if (Radial)
+      TurnPlayersTo(Session.CurrentPlayer);
+    _arrows.Board = this;
     _highlight = new ColorRect
     {
       Name = "Highlight",
@@ -135,6 +139,7 @@ public partial class Board : Node2D
       MouseFilter = Control.MouseFilterEnum.Ignore,
     };
     _highlightCost.AddThemeFontSizeOverride("font_size", 18);
+    UiStyle.MakeNumber(_highlightCost);
     _highlightCost.AddThemeColorOverride("font_color", MoneyColor);
     _highlightCost.AddThemeColorOverride("font_outline_color", Colors.Black);
     _highlightCost.AddThemeConstantOverride("outline_size", 6);
@@ -142,7 +147,7 @@ public partial class Board : Node2D
     AddChild(_highlight);
 
     // Подсветка теорий лежит на поле, под карточками: карточки её перекрывают.
-    AddChild(new TheoryHighlights { Name = "TheoryHighlights", Session = Session });
+    AddChild(new TheoryHighlights { Name = "TheoryHighlights", Session = Session, Board = this });
     _cardsLayer = new Node2D { Name = "Cards" };
     AddChild(_cardsLayer);
     _adeptsLayer = new Node2D { Name = "Adepts" };
@@ -153,7 +158,7 @@ public partial class Board : Node2D
     _effectsLayer = new Node2D { Name = "Effects" };
     AddChild(_effectsLayer);
     // Подсказки рынка рисуются поверх карточек: добавлены последними среди слоёв карточек.
-    _effectsLayer.AddChild(new MarketTheoryHints { Name = "MarketTheoryHints", Session = Session });
+    _effectsLayer.AddChild(new MarketTheoryHints { Name = "MarketTheoryHints", Session = Session, Board = this });
     _effectsLayer.AddChild(_arrows);
 
     Field.AdeptsAdded += OnAdeptsAdded;
@@ -255,7 +260,8 @@ public partial class Board : Node2D
       if (Field.PlayerZones.TryGetValue(player, out var zone) && zone.Contains(hoveredCell) && Field.IsUsed(hoveredCell)
         && ViewAt(hoverCell) is { } playedView)
         peeked.Add(playedView);
-      if (TheoryCardAt(hoverCell) is { Owner: var owner, IsUsed: true } theory && owner == player
+      if (TheoryCardAt(hoverCell) is { Owner: var owner } theory && owner == player
+        && (theory.IsUsed || Field.IsTheoryClosed(theory.Card.Theory))
         && _theoryViews.TryGetValue(theory, out var theoryView))
         peeked.Add(theoryView);
     }
@@ -285,15 +291,16 @@ public partial class Board : Node2D
       DrawZone(zone, PlayerPalette.ZoneOf(player.Color), border);
     }
 
-    for (var x = 0; x < Field.Columns; x++)
+    // В сетке ячейки занимают весь стол, на радиальном поле — только зоны.
+    var cells = Radial
+      ? RadialCells()
+      : Enumerable.Range(0, Field.Columns).SelectMany(x => Enumerable.Range(0, Field.Rows).Select(y => new Vector2I(x, y)))
+        .Where(cell => !IsAboveStack(Field, cell));
+    var slot = LocalSlot(SlotInset);
+    foreach (var cell in cells)
     {
-      for (var y = 0; y < Field.Rows; y++)
-      {
-        var cell = new Vector2I(x, y);
-        if (IsAboveStack(Field, cell))
-          continue;
-        DrawRect(SlotRect(cell).Grow(-SlotInset), SlotColorOf(cell.ToCell()));
-      }
+      var color = SlotColorOf(cell.ToCell());
+      DrawInSlot(cell, () => DrawRect(slot, color));
     }
 
     DrawTheoryTotals();
@@ -301,12 +308,13 @@ public partial class Board : Node2D
 
     foreach (var (cell, check) in _available)
     {
-      var slot = SlotRect(cell).Grow(-SlotInset);
       var color = check.Cost > 0 ? PaidColor : AllowedColor;
-      DrawRect(slot, color with { A = AvailableFillAlpha });
-      DrawRect(slot.Grow(-AvailableBorderWidth / 2), color with { A = AvailableBorderAlpha }, filled: false, width: AvailableBorderWidth);
+      DrawInSlot(cell, () =>
+      {
+        DrawRect(slot, color with { A = AvailableFillAlpha });
+        DrawRect(slot.Grow(-AvailableBorderWidth / 2), color with { A = AvailableBorderAlpha }, filled: false, width: AvailableBorderWidth);
+      });
     }
-
   }
 
   /// <summary>
@@ -364,9 +372,21 @@ public partial class Board : Node2D
       for (var k = 0; k <= column.Members.Count; k++)
       {
         var stackCell = new Vector2I(column.TheoryCell.Column, column.TheoryCell.Row - k);
-        if (stackCell.Y >= 0 && SlotRect(stackCell).HasPoint(local))
+        if (stackCell.Y >= 0 && SlotContains(stackCell, local))
           return stackCell;
       }
+    }
+
+    // На радиальном поле ячейки повёрнуты и лежат только в зонах: ищем ту, в чей прямоугольник попала точка.
+    if (Radial)
+    {
+      foreach (var candidate in RadialCells())
+      {
+        if (SlotContains(candidate, local))
+          return candidate;
+      }
+
+      return null;
     }
 
     var cell = new Vector2I(Mathf.FloorToInt(local.X / CellSize.X), Mathf.FloorToInt(local.Y / CellSize.Y));
@@ -424,30 +444,6 @@ public partial class Board : Node2D
   }
 
   /// <summary>
-  /// Центр ячейки.
-  /// </summary>
-  public static Vector2 CellCenter(Vector2I cell) => CellOrigin(cell) + CellSize / 2;
-
-  /// <summary>
-  /// Шаг, с которым карточки стопки теории лежат одна над другой: видна только верхняя половина следующей карточки.
-  /// </summary>
-  private static readonly Vector2 StackStep = new(0, CardPainter.CardSize.Y / 2);
-
-  /// <summary>
-  /// Центр карточки в ячейке. Карточки стопки теории лежат ближе друг к другу, чем ячейки: каждая следующая
-  /// выше предыдущей на полкарточки, поэтому из-под неё видна только её верхняя половина.
-  /// </summary>
-  public static Vector2 CardCenter(PlayingField field, Vector2I cell) =>
-    StackOf(field, cell) is { } stack
-      ? CellCenter(stack.TheoryCell.ToVector2I()) - StackStep * (stack.TheoryCell.Row - cell.Y)
-      : CellCenter(cell);
-
-  /// <summary>
-  /// Прямоугольник ячейки на столе: по её центру из <see cref="CardCenter"/>.
-  /// </summary>
-  private Rect2 SlotRect(Vector2I cell) => new(CardCenter(Field, cell) - CellSize / 2, CellSize);
-
-  /// <summary>
   /// Стопка теории, к которой относится ячейка: её карточки и ячейка над верхней карточкой, куда ляжет следующая.
   /// </summary>
   public static TheoryColumn? StackOf(PlayingField field, Vector2I cell) =>
@@ -479,11 +475,6 @@ public partial class Board : Node2D
       }
     }
   }
-
-  /// <summary>
-  /// Центр зоны.
-  /// </summary>
-  public static Vector2 ZoneCenter(Zone zone) => ZoneRect(zone).GetCenter();
 
   /// <summary>
   /// Положить карточку в ячейку. Карточка плавно доезжает до центра ячейки.
@@ -523,9 +514,10 @@ public partial class Board : Node2D
     view.Lifted = false;
     _cardsLayer.AddChild(view);
     view.CreateTween()
-      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CardCenter(Field, cell), SnapDuration)
+      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CardCenter(cell), SnapDuration)
       .SetTrans(Tween.TransitionType.Cubic)
       .SetEase(Tween.EaseType.Out);
+    TurnTo(view, cell, SnapDuration);
   }
 
   /// <summary>
@@ -540,7 +532,10 @@ public partial class Board : Node2D
       return;
 
     var cost = check is { IsAllowed: true } ? check.Cost : 0;
-    _highlight.Position = SlotRect(target).Position;
+    // Подсветка поворачивается вокруг своего центра вместе с ячейкой (на радиальном поле).
+    _highlight.PivotOffset = CellSize / 2;
+    _highlight.Position = CardCenter(target) - CellSize / 2;
+    _highlight.Rotation = CellAngle(target);
     _highlight.Color = check is not { IsAllowed: true } ? DeniedColor : cost > 0 ? PaidColor : AllowedColor;
     _highlightCost.Text = cost > 0 ? $"−{cost}$" : string.Empty;
   }
@@ -555,11 +550,11 @@ public partial class Board : Node2D
     var column = bonus.Column;
     var leaders = bonus.Amount / LeadersBonus.PerLeader;
     var title = $"{column.Theory}: {leaders} лидеров × {LeadersBonus.PerLeader}$ → {bonus.Owner.Name}";
-    SpawnFloatingText(title, TotalsColor, IncomeTitleFontSize, CardCenter(Field, column.Top.Above.ToVector2I()), 0);
+    SpawnFloatingText(title, TotalsColor, IncomeTitleFontSize, CardCenter(column.Top.Above.ToVector2I()), 0);
 
     var cell = column.MembersOf(bonus.Owner).FirstOrDefault()?.Cell ?? column.TheoryCell;
     var color = PlayerPalette.MainOf(bonus.Owner.Color);
-    SpawnFloatingText($"+{bonus.Amount}$", color, IncomeFontSize, CardCenter(Field, cell.ToVector2I()), IncomeStagger);
+    SpawnFloatingText($"+{bonus.Amount}$", color, IncomeFontSize, CardCenter(cell.ToVector2I()), IncomeStagger);
 
     var duration = IncomeStagger + IncomeFadeIn + IncomeHold + IncomeFadeOut;
     await ToSignal(GetTree().CreateTimer(duration), SceneTreeTimer.SignalName.Timeout);
@@ -574,13 +569,13 @@ public partial class Board : Node2D
   {
     var column = income.Column;
     var title = $"{column.Theory}: {column.Adepts} адептов → {income.Total}$";
-    SpawnFloatingText(title, TotalsColor, IncomeTitleFontSize, CardCenter(Field, column.Top.Above.ToVector2I()), 0);
+    SpawnFloatingText(title, TotalsColor, IncomeTitleFontSize, CardCenter(column.Top.Above.ToVector2I()), 0);
 
     var delay = IncomeStagger;
     foreach (var member in income.Members.Where(member => member.Amount > 0))
     {
       var color = PlayerPalette.MainOf(member.Member.Owner.Color);
-      SpawnFloatingText($"+{member.Amount}$", color, IncomeFontSize, CardCenter(Field, member.Member.Cell.ToVector2I()), delay);
+      SpawnFloatingText($"+{member.Amount}$", color, IncomeFontSize, CardCenter(member.Member.Cell.ToVector2I()), delay);
       delay += IncomeStagger;
     }
 
@@ -653,6 +648,25 @@ public partial class Board : Node2D
     view.CardOwner = owned.Owner;
     _theoryViews[owned] = view;
     SnapTo(view, owned.Cell.ToVector2I());
+    ShowTheoryCardFace(owned, view);
+  }
+
+  /// <summary>
+  /// Карточка теории лежит рубашкой вверх, если она недоступна: уже применена в этом раунде или штаб её теории закрыт.
+  /// Когда штаб снова откроется (и карточка не применена), она переворачивается лицом вверх.
+  /// </summary>
+  private void ShowTheoryCardFace(OwnedTheoryCard owned, CardView view)
+  {
+    if (owned.IsUsed || Field.IsTheoryClosed(owned.Card.Theory))
+      view.FlipFaceDown();
+    else
+      view.FlipFaceUp();
+  }
+
+  private void ShowTheoryCardFaces()
+  {
+    foreach (var (owned, view) in _theoryViews)
+      ShowTheoryCardFace(owned, view);
   }
 
   /// <summary>
@@ -668,6 +682,7 @@ public partial class Board : Node2D
       .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CellCenter(owned.Cell.ToVector2I()), SnapDuration)
       .SetTrans(Tween.TransitionType.Cubic)
       .SetEase(Tween.EaseType.Out);
+    TurnTo(view, owned.Cell.ToVector2I(), SnapDuration);
   }
 
   /// <summary>
@@ -684,10 +699,11 @@ public partial class Board : Node2D
   /// </summary>
   private void OnTheoryCardsRefreshed(IReadOnlyList<OwnedTheoryCard> cards)
   {
+    // Карточка закрытой теории остаётся рубашкой вверх: штаб закрыт — эффект недоступен.
     foreach (var owned in cards)
     {
       if (_theoryViews.TryGetValue(owned, out var view))
-        view.FlipFaceUp();
+        ShowTheoryCardFace(owned, view);
     }
   }
 
@@ -752,7 +768,20 @@ public partial class Board : Node2D
     tween.TweenCallback(Callable.From(label.QueueFree));
   }
 
-  private void OnTurnChanged(Player player) => QueueRedraw();
+  /// <summary>
+  /// Ход перешёл к другому игроку. На радиальном поле кольцо личных штабов плавно поворачивается так, чтобы штаб
+  /// ходящего игрока оказался внизу, — туда же переезжает камера.
+  /// </summary>
+  private void OnTurnChanged(Player player)
+  {
+    if (Radial)
+    {
+      TurnPlayersTo(player);
+      Relayout(animate: true, RingTurnDuration);
+    }
+
+    QueueRedraw();
+  }
 
   private void OnFirstPlayerChanged(Player player) =>
     _firstPlayerToken.MoveTo(FirstPlayerTokenPosition(player), animate: true);
@@ -760,10 +789,21 @@ public partial class Board : Node2D
   /// <summary>
   /// Жетон первого игрока лежит на левом верхнем углу зоны игрока, наполовину снаружи, чтобы карточки его не закрывали.
   /// </summary>
-  private Vector2 FirstPlayerTokenPosition(Player player) =>
-    ZoneRect(Field.PlayerZones[player]).Position + new Vector2(FirstPlayerToken.Radius, 0);
+  private Vector2 FirstPlayerTokenPosition(Player player)
+  {
+    var zone = Field.PlayerZones[player];
+    var corner = new Vector2I(zone.Left, zone.Top);
+    return PointAt(corner, zone.Left - 0.5f, zone.Top - 0.5f) + new Vector2(FirstPlayerToken.Radius, 0).Rotated(CellAngle(corner));
+  }
 
-  private void OnCommonZoneChanged(Zone zone) => QueueRedraw();
+  /// <summary>
+  /// Общая зона выросла: на радиальном поле кольца раздвигаются, и всё плавно переезжает.
+  /// </summary>
+  private void OnCommonZoneChanged(Zone zone)
+  {
+    Relayout(animate: true);
+    QueueRedraw();
+  }
 
   /// <summary>
   /// Штаб теории снова состоятелен: карточки и адепты возвращают свой цвет.
@@ -778,6 +818,8 @@ public partial class Board : Node2D
 
     if (_adepts.TryGetValue(column, out var adepts))
       adepts.Modulate = Colors.White;
+    // Карточка теории снова доступна: переворачивается лицом вверх, если её ещё не применяли.
+    ShowTheoryCardFaces();
     QueueRedraw();
   }
 
@@ -794,6 +836,8 @@ public partial class Board : Node2D
 
     if (_adepts.TryGetValue(column, out var adepts))
       adepts.Modulate = ClosedAdeptsTint;
+    // Карточка теории недоступна, пока штаб закрыт: она переворачивается рубашкой вверх.
+    ShowTheoryCardFaces();
     // Перерисовываем итоги теорий: под закрытой теорией это подписано.
     QueueRedraw();
   }
@@ -892,6 +936,7 @@ public partial class Board : Node2D
     }
 
     meeple.Position = LeaderMeeplePosition(column, meeples.Count - 1, meeples.Count);
+    meeple.Rotation = CellAngle(column.TheoryCell.ToVector2I());
     meeple.CreateTween()
       .TweenProperty(meeple, MeepleView.PropertyName.Height.ToString(), 0f, LeaderMeepleDropDuration)
       .SetTrans(Tween.TransitionType.Bounce)
@@ -903,11 +948,12 @@ public partial class Board : Node2D
   /// <summary>
   /// Где стоит мипл-лидер: в ряд под нижним краем карточки теории.
   /// </summary>
-  private static Vector2 LeaderMeeplePosition(TheoryColumn column, int index, int count)
+  private Vector2 LeaderMeeplePosition(TheoryColumn column, int index, int count)
   {
-    var center = CellCenter(column.TheoryCell.ToVector2I());
+    var cell = column.TheoryCell.ToVector2I();
     var step = Mathf.Min(MeepleView.Size.X * LeaderMeepleScale * 1.15f, CardPainter.CardSize.X / count);
-    return new Vector2(center.X + (index - (count - 1) / 2f) * step, center.Y + CellSize.Y / 2);
+    var offset = new Vector2((index - (count - 1) / 2f) * step, CellSize.Y / 2);
+    return CellCenter(cell) + offset.Rotated(CellAngle(cell));
   }
 
   /// <summary>
@@ -1120,7 +1166,11 @@ public partial class Board : Node2D
       if (views.TryGetValue(to, out var stale) && !ReferenceEquals(stale, view))
         stale.QueueFree();
       views[to] = view;
-      SlideView(view, CardCenter(Field, to));
+      SlideView(view, CardCenter(to));
+      if (view is CardView card)
+        TurnTo(card, to, SnapDuration);
+      else if (Radial)
+        view.Rotation = CellAngle(to);
     }
   }
 
@@ -1130,11 +1180,14 @@ public partial class Board : Node2D
       .SetTrans(Tween.TransitionType.Cubic)
       .SetEase(Tween.EaseType.InOut);
 
-  private void SlideTo(CardView view, Vector2I cell) =>
+  private void SlideTo(CardView view, Vector2I cell)
+  {
     view.CreateTween()
-      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CardCenter(Field, cell), SnapDuration)
+      .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CardCenter(cell), SnapDuration)
       .SetTrans(Tween.TransitionType.Cubic)
       .SetEase(Tween.EaseType.InOut);
+    TurnTo(view, cell, SnapDuration);
+  }
 
   /// <summary>
   /// Закрытую карточку раскрыли: теперь все видят её лицевую сторону.
@@ -1148,7 +1201,8 @@ public partial class Board : Node2D
   {
     var view = CardView.Create(Field.CardAt(cell)!);
     view.CardOwner = owner;
-    view.Position = CardCenter(Field, cell.Below.ToVector2I());
+    view.Position = CardCenter(cell.Below.ToVector2I());
+    view.BaseAngle = CellAngle(cell.Below.ToVector2I());
     Place(view, cell.ToVector2I());
   }
 
@@ -1157,7 +1211,8 @@ public partial class Board : Node2D
   /// </summary>
   private void OnTheoryEarned(OwnedTheoryCard owned, int amount)
   {
-    var center = CellCenter(owned.Cell.ToVector2I()) - Vector2.Up * CellSize.Y / 2;
+    var cell = owned.Cell.ToVector2I();
+    var center = CellCenter(cell) - (Vector2.Up * CellSize.Y / 2).Rotated(CellAngle(cell));
     SpawnFloatingText($"+{amount}$", PlayerPalette.MainOf(owned.Owner.Color), IncomeFontSize, center, 0);
   }
 
@@ -1188,6 +1243,7 @@ public partial class Board : Node2D
       .TweenProperty(view, Node2D.PropertyName.Position.ToString(), CellCenter(to.ToVector2I()), MarketShiftDuration)
       .SetTrans(Tween.TransitionType.Cubic)
       .SetEase(Tween.EaseType.InOut);
+    TurnTo(view, to.ToVector2I(), MarketShiftDuration);
   }
 
   /// <summary>
@@ -1199,6 +1255,7 @@ public partial class Board : Node2D
     var target = cell.ToVector2I();
     var view = CardView.Create(card);
     view.Position = CellCenter(Market.DeckCell.ToVector2I());
+    view.BaseAngle = CellAngle(target);
     _cardsLayer.AddChild(view);
     _marketViews[target] = view;
     // Перерисовываем колоду рынка: в ней стало меньше карточек.
@@ -1216,7 +1273,14 @@ public partial class Board : Node2D
   {
     if (!_adepts.TryGetValue(column, out var view))
     {
-      view = new AdeptsView { Name = $"Adepts{column.Theory.Name}", Position = CellCenter(column.TheoryCell.ToVector2I()), Look = LookOf(column) };
+      var theoryCell = column.TheoryCell.ToVector2I();
+      view = new AdeptsView
+      {
+        Name = $"Adepts{column.Theory.Name}",
+        Position = CellCenter(theoryCell),
+        Rotation = CellAngle(theoryCell),
+        Look = LookOf(column),
+      };
       _adeptsLayer.AddChild(view);
       _adepts[column] = view;
     }
@@ -1234,7 +1298,7 @@ public partial class Board : Node2D
     var key = cell.ToVector2I();
     if (!_cardAdepts.TryGetValue(key, out var view))
     {
-      view = new AdeptsView { Name = $"Adepts{key.X}_{key.Y}", Position = CardCenter(Field, key) };
+      view = new AdeptsView { Name = $"Adepts{key.X}_{key.Y}", Position = CardCenter(key), Rotation = CellAngle(key) };
       _adeptsLayer.AddChild(view);
       _cardAdepts[key] = view;
     }
@@ -1256,8 +1320,8 @@ public partial class Board : Node2D
     // В одном столбце лежит только одна теория.
     foreach (var column in Field.TheoryColumns)
     {
-      var area = new Rect2(CellOrigin(new Vector2I(column.TheoryCell.Column, row)), CellSize).Grow(-SlotInset);
-      DrawTotals(column, area);
+      var cell = new Vector2I(column.TheoryCell.Column, row);
+      DrawInSlot(cell, () => DrawTotals(column, LocalSlot(SlotInset)));
     }
   }
 
@@ -1320,24 +1384,36 @@ public partial class Board : Node2D
   /// </summary>
   private void DrawMarketDeck()
   {
-    var center = CellCenter(Market.DeckCell.ToVector2I());
     var layers = Mathf.Min(Market.DeckCount, MarketDeckLayers);
-    for (var i = 0; i < layers; i++)
+    DrawInSlot(Market.DeckCell.ToVector2I(), () =>
     {
-      var offset = new Vector2(MarketDeckLayerOffset, -MarketDeckLayerOffset) * (i - (layers - 1) / 2f);
-      var title = i == layers - 1 ? $"Рынок\n{Market.DeckCount}" : null;
-      CardPainter.DrawBack(this, new Rect2(center - CardPainter.CardSize / 2 + offset, CardPainter.CardSize), MarketDeckColor, title);
-    }
+      for (var i = 0; i < layers; i++)
+      {
+        var offset = new Vector2(MarketDeckLayerOffset, -MarketDeckLayerOffset) * (i - (layers - 1) / 2f);
+        var title = i == layers - 1 ? $"Рынок\n{Market.DeckCount}" : null;
+        CardPainter.DrawBack(this, new Rect2(-CardPainter.CardSize / 2 + offset, CardPainter.CardSize), title);
+      }
+    });
   }
 
   private void DrawZone(Zone zone, Color fill, Color border)
   {
-    DrawRect(ZoneRect(zone), fill);
+    if (Radial)
+      DrawColoredPolygon(ZoneOutline(zone), fill);
+    else
+      DrawRect(ZoneRect(zone), fill);
     DrawZoneOutline(zone, border);
   }
 
   private void DrawZoneOutline(Zone zone, Color border)
   {
+    if (Radial)
+    {
+      var outline = ZoneOutline(zone);
+      DrawPolyline([.. outline, outline[0]], border, ZoneBorderWidth, antialiased: true);
+      return;
+    }
+
     var rect = ZoneRect(zone);
     DrawRect(rect.Grow(-ZoneBorderWidth / 2), border, filled: false, width: ZoneBorderWidth);
   }

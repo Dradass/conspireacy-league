@@ -15,7 +15,6 @@ public partial class IncomeSummaryPanel : Control
   private const int TextFontSize = 20;
   private const int TitleFontSize = 26;
   private static readonly Color NeutralTheoryColor = new("d8e6dc");
-  private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.95f);
 
   private ColorRect _dim = null!;
   private CenterContainer _center = null!;
@@ -32,11 +31,8 @@ public partial class IncomeSummaryPanel : Control
     _center = new CenterContainer { MouseFilter = MouseFilterEnum.Ignore };
     AddChild(_center);
 
-    var style = new StyleBoxFlat { BgColor = PanelColor };
-    style.SetCornerRadiusAll(12);
-    style.SetContentMarginAll(24);
     var panel = new PanelContainer { MouseFilter = MouseFilterEnum.Stop };
-    panel.AddThemeStyleboxOverride("panel", style);
+    panel.AddThemeStyleboxOverride("panel", UiStyle.Panel(margin: 24, alpha: 0.95f));
     _center.AddChild(panel);
 
     var column = new VBoxContainer();
@@ -45,6 +41,7 @@ public partial class IncomeSummaryPanel : Control
 
     var title = new Label { Text = "Итоги конца раунда" };
     title.AddThemeFontSizeOverride("font_size", TitleFontSize);
+    UiStyle.MakeTitle(title);
     column.AddChild(title);
 
     _text = new RichTextLabel

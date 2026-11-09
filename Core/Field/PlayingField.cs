@@ -535,12 +535,17 @@ public sealed class PlayingField
       .Select(cell => (cell, CheckTransformHomeless(cell)));
 
   /// <summary>
-  /// Проверить, можно ли превратить бездомного в личном штабе в гражданина.
+  /// Проверить, можно ли превратить бездомного в личном штабе в гражданина. Бездомного под шапочкой из фольги
+  /// превратить нельзя: шапочка защищает от любых эффектов.
   /// </summary>
-  public PlacementCheck CheckTransformHomeless(Cell cell) =>
-    CardAt(cell) is HomelessCard && OwnerOfCell(cell) is not null
-      ? PlacementCheck.Allowed
-      : PlacementCheck.Deny("Здесь нет бездомного в личном штабе.");
+  public PlacementCheck CheckTransformHomeless(Cell cell)
+  {
+    if (CardAt(cell) is not HomelessCard || OwnerOfCell(cell) is null)
+      return PlacementCheck.Deny("Здесь нет бездомного в личном штабе.");
+    return IsFoiled(cell)
+      ? PlacementCheck.Deny("Этого бездомного защищает шапочка из фольги.")
+      : PlacementCheck.Allowed;
+  }
 
   /// <summary>
   /// Проверить, можно ли превратить бездомного из руки игрока в гражданина.
@@ -719,12 +724,12 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Персонаж прикрыт шапочкой из фольги: карточка лежит на нём лицевой стороной вверх.
+  /// Персонаж прикрыт шапочкой из фольги: карточка лежит на нём до конца раунда.
   /// Такой персонаж имеет 100% успеха и защищён от любых эффектов.
   /// </summary>
   public bool IsFoiled(Cell cell) =>
     CardAt(cell) is PersonCard
-    && _theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell && !owned.IsUsed);
+    && _theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell);
 
   /// <summary>
   /// Освободить ячейку от шапочки из фольги, фишки и руля: карточка остаётся у владельца, но больше не лежит на персонаже.
@@ -811,44 +816,33 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Бездомные, которых можно убрать к игроку на руку: в личных штабах любого игрока и в теориях.
+  /// Бездомные, которых можно убрать к игроку на руку: только в личных штабах (любого игрока).
   /// </summary>
   public IEnumerable<(Cell Cell, PlacementCheck Check)> HomelessToHandTargets(Player player) =>
     _cards.Keys
-      .Where(cell => CardAt(cell) is HomelessCard)
+      .Where(cell => CardAt(cell) is HomelessCard && OwnerOfCell(cell) is not null)
       .Select(cell => (cell, CheckTakeHomeless(cell, player)));
 
   /// <summary>
-  /// Проверить, можно ли убрать бездомного к игроку на руку. В теории — если штаб открыт, его не защищает полицейский
-  /// и в нём останется другая карточка; в личном штабе — если его не защищает полицейский или шапочка из фольги.
+  /// Проверить, можно ли убрать бездомного к игроку на руку: только из личного штаба и только если его не защищает
+  /// полицейский или шапочка из фольги. Из штабов теорий бездомных не забирают.
   /// </summary>
   public PlacementCheck CheckTakeHomeless(Cell cell, Player player)
   {
     if (CardAt(cell) is not HomelessCard)
       return PlacementCheck.Deny("Здесь нет бездомного.");
-
-    if (ColumnAt(cell) is { } column)
-    {
-      if (column.IsClosed)
-        return PlacementCheck.Deny($"Штаб теории «{column}» закрыт — бездомного из него не забрать.");
-      if (column.IsProtected())
-        return PlacementCheck.Deny("Эту теорию защищает полицейский.");
-      if (IsImmune(cell))
-        return PlacementCheck.Deny("Персонажей этого игрока защищают рептилоиды.");
-      if (column.Members.Count == 1)
-        return PlacementCheck.Deny($"Нельзя убрать единственную карточку теории «{column}».");
-      return PlacementCheck.Allowed;
-    }
-
+    if (ColumnAt(cell) is not null)
+      return PlacementCheck.Deny("Из штаба теории бездомного забрать нельзя — только из личного штаба.");
     if (OwnerOfCell(cell) is null)
       return PlacementCheck.Deny("Здесь нет бездомного в личном штабе.");
+
     return IsProtected(cell, player)
       ? PlacementCheck.Deny("Этого бездомного защищает полицейский или шапочка из фольги.")
       : PlacementCheck.Allowed;
   }
 
   /// <summary>
-  /// Убрать бездомного из личного штаба или теории к игроку на руку.
+  /// Убрать бездомного из личного штаба к игроку на руку.
   /// </summary>
   /// <exception cref="InvalidOperationException">Убрать нельзя.</exception>
   public void TakeHomeless(Cell cell, Player player)
@@ -857,18 +851,9 @@ public sealed class PlayingField
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
-    if (ColumnAt(cell) is { } column)
-    {
-      var card = _cards[cell];
-      RemoveFromTheory(column, cell);
-      player.Hand.Add(card);
-    }
-    else
-    {
-      var card = DetachFromZone(cell);
-      player.Hand.Add(card);
-      CardTakenToHand?.Invoke(cell);
-    }
+    var card = DetachFromZone(cell);
+    player.Hand.Add(card);
+    CardTakenToHand?.Invoke(cell);
   }
 
   /// <summary>
@@ -1086,13 +1071,22 @@ public sealed class PlayingField
     var card = _cards[cell];
     if (!card.OnPlayFromHand.Options.Contains(option))
       throw new ArgumentException($"У карточки «{card}» нет действия «{option}».", nameof(option));
-    RequireTargets(option, context);
 
-    ExecuteWithMoneyBonus(cell, option, context);
-    // Чипированного персонажа использовали как своего: по 1$ за каждого чипированного персонажа в игре.
-    if (IsChippedBy(cell, context.CurrentPlayer))
-      context.CurrentPlayer.Earn(_chips.Count);
-    Play(cell, option.IsQuick);
+    // Проверка успеха уже пройдена: даже если действие не удалось выполнить (цели не подошли, эффект отказал на полпути),
+    // карточка считается сыгранной — иначе её можно было бы сыграть ещё раз с новым броском.
+    try
+    {
+      RequireTargets(option, context);
+      ExecuteWithMoneyBonus(cell, option, context);
+      // Чипированного персонажа использовали как своего: по 1$ за каждого чипированного персонажа в игре.
+      if (IsChippedBy(cell, context.CurrentPlayer))
+        context.CurrentPlayer.Earn(_chips.Count);
+    }
+    finally
+    {
+      if (_cards.ContainsKey(cell))
+        Play(cell, option.IsQuick);
+    }
   }
 
   /// <summary>
@@ -1326,7 +1320,11 @@ public sealed class PlayingField
       throw new InvalidOperationException(check.Reason);
 
     // Вариант, который копируем: выбранный через чужое действие (CopiedOption) или прямо (BorrowedOption).
-    ExecuteBorrowed(cell, context, context.CopiedOption ?? context.BorrowedOption);
+    var option = context.CopiedOption ?? context.BorrowedOption;
+    // Копирование не копирует копирование: иначе копия вызывала бы саму себя бесконечно.
+    if (option is CopyRivalCardEffect)
+      throw new InvalidOperationException("Копирование скопировать нельзя.");
+    ExecuteBorrowed(cell, context, option);
   }
 
   /// <summary>
@@ -1707,6 +1705,17 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Где могут лежать карточки теорий игрока, если ряд под его штабом (<see cref="TheoryCardZoneOf"/>) заполнен:
+  /// тот же ряд дальше вправо — до штаба соседа — и ещё один ряд ниже (пустой ряд перед рынком).
+  /// </summary>
+  public Zone TheoryCardAreaOf(Player player)
+  {
+    var zone = _playerZones[player];
+    var width = Math.Min(zone.Width + FieldLayout.PlayerZoneGap, Columns - zone.Left);
+    return new Zone(zone.Left, zone.BottomRow + 1, width, 2);
+  }
+
+  /// <summary>
   /// Закрытые штабы теорий (<see cref="TheoryColumn.IsHeadquarters"/>), где игрок — владелец.
   /// </summary>
   public IEnumerable<TheoryColumn> ClosedHeadquartersOf(Player player) =>
@@ -1726,7 +1735,7 @@ public sealed class PlayingField
   /// <summary>
   /// Закрыт ли штаб теории: тогда её карточка эффекта недоступна, пока штаб не откроется снова.
   /// </summary>
-  private bool IsTheoryClosed(Theory theory) => ColumnOf(theory) is { IsClosed: true };
+  public bool IsTheoryClosed(Theory theory) => ColumnOf(theory) is { IsClosed: true };
 
   /// <summary>
   /// Применить карточку теории: выполнить её действие, после чего карточка переворачивается рубашкой вверх.
@@ -1748,21 +1757,25 @@ public sealed class PlayingField
     if (!effect.RequiresTheory && ColumnOf(card.Card.Theory) is { } home)
       context = context.WithTargetTheory(home);
     RequireTargets(effect, context);
-    var moving = card.AttachedTo is not null;
     if (card.Card.Passive is TinFoilPassive && context.TargetCell is { } foilCell && CheckFoil(foilCell) is { IsAllowed: false } foilCheck)
       throw new InvalidOperationException(foilCheck.Reason);
-    effect.Execute(context);
 
-    if (card.Card.Passive is TinFoilPassive)
+    // Все проверки пройдены. Если действие откажет на полпути, карточка всё равно считается применённой:
+    // часть действия уже могла выполниться, и применить её второй раз нельзя.
+    var executed = false;
+    try
     {
-      // Шапочку кладут лицевой стороной вверх; когда её переносят, она переворачивается до следующего раунда.
-      card.AttachedTo = context.TargetCell;
-      card.IsUsed = moving;
+      effect.Execute(context);
+      executed = true;
     }
-    else
+    finally
+    {
+      // Шапочка остаётся лежать на персонаже до конца раунда, а сама карточка переворачивается, как любая другая.
+      if (executed && card.Card.Passive is TinFoilPassive)
+        card.AttachedTo = context.TargetCell;
       card.IsUsed = true;
-    if (card.IsUsed)
       TheoryCardUsed?.Invoke(card);
+    }
 
     // Основная теория срабатывает для своего владельца; если её действию нужен выбор, владелец выберет позже.
     TheoryTrigger? pending = null;
@@ -1771,7 +1784,17 @@ public sealed class PlayingField
     {
       var trigger = new TheoryTrigger(main, new GameContext(main.Owner, this, context.Random, context.Market));
       if (!NeedsChoice(main.Card.OnPlayFromHand))
-        main.Card.OnPlayFromHand.Execute(trigger.Context);
+      {
+        // Дочерняя карточка уже применена: если действие основной теории сейчас выполнить нельзя, оно просто
+        // не срабатывает, а не отменяет уже сделанное.
+        try
+        {
+          main.Card.OnPlayFromHand.Execute(trigger.Context);
+        }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException)
+        {
+        }
+      }
       else if (HasChoices(trigger))
         pending = trigger;
     }
@@ -1809,13 +1832,28 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Обновить карточки теорий после изменения штабов: сначала карточки переходят к новым владельцам теорий,
-  /// затем выдаются новые.
+  /// Обновить карточки теорий после изменения штабов: сначала пересчитать влияние, которое зависит от карточек теорий
+  /// («Масоны» — влияние закрытых персонажей, «Плоская Земля» — влияние основателя), затем карточки переходят к новым
+  /// владельцам теорий и выдаются новые.
   /// </summary>
+  /// <remarks>
+  /// Выдача или переход карточки снова меняет влияние (например, игрок получил «Масонов»), а от влияния зависят
+  /// владельцы и выдача — поэтому пересчитываем, пока карточки не перестанут меняться.
+  /// </remarks>
   private void UpdateTheoryCards()
   {
-    MoveTheoryCardsToOwners();
-    GrantTheoryCards();
+    const int maxPasses = 5;
+    for (var pass = 0; pass < maxPasses; pass++)
+    {
+      SyncHiddenInfluence();
+      SyncTheoryRules();
+      var before = _theoryCards.Select(owned => (owned, owned.Owner)).ToList();
+      MoveTheoryCardsToOwners();
+      GrantTheoryCards();
+      if (_theoryCards.Count == before.Count && before.All(item => item.owned.Owner == item.Owner))
+        break;
+    }
+
     SyncHiddenInfluence();
     SyncTheoryRules();
   }
@@ -1949,7 +1987,7 @@ public sealed class PlayingField
       return null;
 
     var owner = _theoryCards.FirstOrDefault(owned => owned.Card.Passive is IlluminatiPassive)?.Owner;
-    return owner is not null && (column.Members.Any(member => member.Owner == owner) || column.LeaderMeeples.Contains(owner))
+    return owner is not null && column.IsLeader(owner)
       ? owner
       : null;
   }
@@ -2022,12 +2060,22 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Первая свободная ячейка в ряду карточек теорий игрока — слева направо.
+  /// Первая свободная ячейка для карточки теории игрока: сначала ряд под штабом слева направо, затем этот ряд дальше
+  /// вправо и ряд ниже (<see cref="TheoryCardAreaOf"/>).
   /// </summary>
+  /// <exception cref="InvalidOperationException">Места нет (у игрока больше карточек теорий, чем ячеек).</exception>
   private Cell FirstFreeTheoryCell(Player player)
   {
-    var row = TheoryCardZoneOf(player);
-    return row.Cells.First(cell => !_theoryCards.Any(owned => owned.Cell == cell));
+    var area = TheoryCardAreaOf(player);
+    var cells = Enumerable.Range(area.Top, area.Height)
+      .SelectMany(row => Enumerable.Range(area.Left, area.Width).Select(column => new Cell(column, row)));
+    foreach (var cell in cells)
+    {
+      if (!_theoryCards.Any(owned => owned.Cell == cell))
+        return cell;
+    }
+
+    throw new InvalidOperationException($"У игрока {player} нет места для ещё одной карточки теории.");
   }
 
   /// <summary>
@@ -2064,6 +2112,9 @@ public sealed class PlayingField
       TheoryClosed?.Invoke(column);
     }
 
+    // Закрытие меняет, какие теории действующие: пересчитываем карточки теорий.
+    if (closed.Count > 0)
+      UpdateTheoryCards();
     return closed;
   }
 
@@ -2080,6 +2131,9 @@ public sealed class PlayingField
       TheoryReopened?.Invoke(column);
     }
 
+    // Открывшийся штаб снова может получить карточку теории, если он действующий и лидеров хватает.
+    if (reopened.Count > 0)
+      UpdateTheoryCards();
     return reopened;
   }
 

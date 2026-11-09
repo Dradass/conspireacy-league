@@ -3,6 +3,7 @@ using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Cards.Professionals;
 using ConspiracyLeague.Core.Passives;
 using ConspiracyLeague.Core.Theories;
+using ConspiracyLeague.Game.Ui;
 using Godot;
 
 namespace ConspiracyLeague.Game.Cards;
@@ -31,11 +32,20 @@ public static class CardPainter
   private static readonly Color PaperColor = new("f3ecd9");
   private static readonly Color InkColor = new("fdfaf2");
   private static readonly Color TextColor = new("3b3328");
-  private static readonly Color ParentTheoryColor = TextColor with { A = 0.55f };
   private static readonly Color HeadquartersColor = new("c9962b");
   private static readonly Color ShadowColor = new(0, 0, 0, 0.45f);
-  private static readonly Color PlainBackColor = new("000000");
-  private static readonly Color HiddenBackColor = new("2e3a4f");
+  private static readonly Color BackPlateColor = new(0f, 0f, 0f, 0.62f);
+
+  /// <summary>
+  /// Рисунок рубашки — один для всех карточек (сыгранных, закрытых, колоды рынка).
+  /// </summary>
+  private const string BackTexturePath = "res://Game/Cards/card_back.png";
+
+  private const int RoundedCornerSegments = 5;
+
+  private static Texture2D? _backTexture;
+
+  private static Texture2D BackTexture => _backTexture ??= GD.Load<Texture2D>(BackTexturePath);
   private static readonly Color ClosedOverlayColor = new(0.3f, 0.3f, 0.3f, 0.6f);
   private static readonly Color PeekOverlayColor = new(0f, 0f, 0f, 0.3f);
   private static readonly Color HazardYellow = new("f2c230");
@@ -123,9 +133,9 @@ public static class CardPainter
       // Стоимость — справа в заголовке, название — по центру оставшегося места.
       var costText = $"{cost}$";
       var padding = rect.Size.X * 0.05f;
-      var costWidth = ThemeDB.FallbackFont.GetStringSize(costText, fontSize: headerFont).X;
+      var costWidth = UiStyle.NumberFont.GetStringSize(costText, fontSize: headerFont).X;
       var costRect = new Rect2(headerRect.End.X - padding - costWidth, headerRect.Position.Y, costWidth, headerRect.Size.Y);
-      DrawCenteredText(canvas, costText, costRect, headerFont, InkColor);
+      DrawCenteredText(canvas, costText, costRect, headerFont, InkColor, UiStyle.NumberFont);
       var nameRect = new Rect2(headerRect.Position.X + padding, headerRect.Position.Y, costRect.Position.X - headerRect.Position.X - padding * 2, headerRect.Size.Y);
       DrawCenteredText(canvas, card.Name, nameRect, FitFontSize(card.Name, nameRect.Size.X, headerFont), InkColor);
     }
@@ -162,37 +172,42 @@ public static class CardPainter
 
   /// <summary>
   /// Нарисовать название теории, а у дочерней теории под ним — название родительской в скобках,
-  /// мельче и бледнее. Обе надписи вместе стоят по центру области.
+  /// мельче, тем же цветом. Обе надписи вместе стоят по центру области.
   /// Если название уже написано в шапке карточки (<paramref name="withName"/> = false), рисуется только родительская.
   /// </summary>
   private static void DrawTheoryName(CanvasItem canvas, Rect2 area, Theory theory, int fontSize, bool withName)
   {
-    var nameFontSize = FitFontSize(theory.Name, area.Size.X, fontSize);
-    if (theory.Parent is not { } parent)
-    {
-      if (withName)
-        DrawCenteredText(canvas, theory.Name, area, nameFontSize, TextColor);
+    var font = UiStyle.TheoryNameFont;
+    var parentText = theory.Parent is { } parent ? $"({parent.Name})" : null;
+    var name = withName ? theory.Name : null;
+    if (name is null && parentText is null)
       return;
+
+    // Обе надписи вместе должны поместиться в область: уменьшаем кегль, пока не влезут.
+    int nameFontSize, parentFontSize;
+    float nameHeight, parentHeight;
+    while (true)
+    {
+      nameFontSize = name is null ? 0 : FitFontSize(name, area.Size.X, fontSize, font);
+      parentFontSize = parentText is null ? 0 : FitFontSize(parentText, area.Size.X, (int)(fontSize * ParentTheoryFontShare), font);
+      nameHeight = name is null ? 0 : TextHeight(name, area.Size.X, nameFontSize, font);
+      parentHeight = parentText is null ? 0 : TextHeight(parentText, area.Size.X, parentFontSize, font);
+      if (nameHeight + parentHeight <= area.Size.Y || fontSize <= MinEffectFontSize)
+        break;
+      fontSize--;
     }
 
-    var parentText = $"({parent.Name})";
-    var parentFontSize = FitFontSize(parentText, area.Size.X, (int)(fontSize * ParentTheoryFontShare));
-    if (!withName)
-    {
-      DrawCenteredText(canvas, parentText, area, parentFontSize, ParentTheoryColor);
-      return;
-    }
-
-    var nameHeight = TextHeight(theory.Name, area.Size.X, nameFontSize);
-    var parentHeight = TextHeight(parentText, area.Size.X, parentFontSize);
     var top = area.Position.Y + (area.Size.Y - nameHeight - parentHeight) / 2;
-    DrawCenteredText(canvas, theory.Name, new Rect2(area.Position.X, top, area.Size.X, nameHeight), nameFontSize, TextColor);
-    DrawCenteredText(
-      canvas,
-      parentText,
-      new Rect2(area.Position.X, top + nameHeight, area.Size.X, parentHeight),
-      parentFontSize,
-      ParentTheoryColor);
+    if (name is not null)
+      DrawCenteredText(canvas, name, new Rect2(area.Position.X, top, area.Size.X, nameHeight), nameFontSize, TextColor, font);
+    if (parentText is not null)
+      DrawCenteredText(
+        canvas,
+        parentText,
+        new Rect2(area.Position.X, top + nameHeight, area.Size.X, parentHeight),
+        parentFontSize,
+        TextColor,
+        font);
   }
 
   /// <summary>
@@ -222,8 +237,8 @@ public static class CardPainter
     DrawCenteredText(canvas, text, area, size, TextColor);
   }
 
-  private static float TextHeight(string text, float width, int fontSize) =>
-    ThemeDB.FallbackFont.GetMultilineStringSize(text, HorizontalAlignment.Center, width, fontSize).Y;
+  private static float TextHeight(string text, float width, int fontSize, Font? font = null) =>
+    (font ?? ThemeDB.FallbackFont).GetMultilineStringSize(text, HorizontalAlignment.Center, width, fontSize).Y;
 
   /// <summary>
   /// Нарисовать щит в левом верхнем углу карточки: её защищает полицейский.
@@ -301,7 +316,7 @@ public static class CardPainter
     var arrowWidth = arrowHeight * 0.7f;
     var text = up ? $"+{modifier}%" : $"{modifier}%";
     var fontSize = (int)(rect.Size.Y * 0.11f);
-    var textWidth = ThemeDB.FallbackFont.GetStringSize(text, HorizontalAlignment.Left, -1, fontSize).X;
+    var textWidth = UiStyle.NumberFont.GetStringSize(text, HorizontalAlignment.Left, -1, fontSize).X;
     var gap = rect.Size.X * 0.04f;
     var left = center.X - (arrowWidth + gap + textWidth) / 2;
 
@@ -319,33 +334,32 @@ public static class CardPainter
 
     // Запас по ширине, чтобы надпись не переносилась из-за округления.
     var textRect = new Rect2(left + arrowWidth + gap, center.Y - fontSize / 2f, textWidth + 2, fontSize);
-    DrawCenteredText(canvas, text, textRect, fontSize, color);
+    DrawCenteredText(canvas, text, textRect, fontSize, color, UiStyle.NumberFont);
   }
 
   /// <summary>
-  /// Нарисовать рубашку карточки.
+  /// Нарисовать рубашку карточки: рисунок рубашки со скруглёнными, как у карточек, углами и, если есть, подпись
+  /// на тёмной плашке вверху — чтобы она читалась на рисунке, не закрывала глаз в треугольнике и была видна
+  /// у закрытой карточки в стопке теории, где из-под соседней виден только верх.
   /// </summary>
   /// <param name="canvas">Где рисовать.</param>
   /// <param name="rect">Прямоугольник карточки.</param>
-  /// <param name="accent">Цвет колоды.</param>
   /// <param name="title">Подпись на рубашке или <c>null</c>.</param>
-  public static void DrawBack(CanvasItem canvas, Rect2 rect, Color accent, string? title = null)
+  public static void DrawBack(CanvasItem canvas, Rect2 rect, string? title = null)
   {
-    var radius = CornerRadius(rect);
+    DrawRoundedTexture(canvas, BackTexture, rect, CornerRadius(rect));
+    if (title is null)
+      return;
 
-    var back = new StyleBoxFlat { BgColor = accent, BorderColor = PaperColor };
-    back.SetBorderWidthAll(2);
-    back.SetCornerRadiusAll(radius);
-    canvas.DrawStyleBox(back, rect);
-
-    var innerRect = rect.Grow(-rect.Size.X * 0.08f);
-    var inner = new StyleBoxFlat { DrawCenter = false, BorderColor = InkColor with { A = 0.5f } };
-    inner.SetBorderWidthAll(1);
-    inner.SetCornerRadiusAll(radius / 2);
-    canvas.DrawStyleBox(inner, innerRect);
-
-    if (title is not null)
-      DrawCenteredText(canvas, title, innerRect.Grow(-rect.Size.X * 0.02f), (int)(rect.Size.Y * 0.075f), InkColor);
+    var plate = new Rect2(
+      rect.Position.X + rect.Size.X * 0.08f,
+      rect.Position.Y + rect.Size.Y * 0.06f,
+      rect.Size.X * 0.84f,
+      rect.Size.Y * 0.22f);
+    var style = new StyleBoxFlat { BgColor = BackPlateColor };
+    style.SetCornerRadiusAll(CornerRadius(rect) / 2);
+    canvas.DrawStyleBox(style, plate);
+    DrawCenteredText(canvas, title, plate.Grow(-rect.Size.X * 0.02f), (int)(rect.Size.Y * 0.07f), InkColor);
   }
 
   /// <summary>
@@ -356,18 +370,40 @@ public static class CardPainter
   /// <param name="rect">Прямоугольник карточки.</param>
   /// <param name="card">Закрытая карточка.</param>
   public static void DrawHiddenBack(CanvasItem canvas, Rect2 rect, HiddenCard card) =>
-    DrawBack(canvas, rect, HiddenBackColor, $"{card.Name}\n\nВлияние: {card.Influence}");
+    DrawBack(canvas, rect, $"{card.Name}\nВлияние: {card.Influence}");
 
   /// <summary>
-  /// Нарисовать однотонную чёрную рубашку — так лежат использованные карточки.
+  /// Нарисовать рубашку без подписи — так лежат использованные карточки.
   /// </summary>
   /// <param name="canvas">Где рисовать.</param>
   /// <param name="rect">Прямоугольник карточки.</param>
-  public static void DrawPlainBack(CanvasItem canvas, Rect2 rect)
+  public static void DrawPlainBack(CanvasItem canvas, Rect2 rect) => DrawBack(canvas, rect);
+
+  /// <summary>
+  /// Нарисовать картинку в прямоугольнике со скруглёнными углами: многоугольник по контуру с текстурными координатами.
+  /// </summary>
+  private static void DrawRoundedTexture(CanvasItem canvas, Texture2D texture, Rect2 rect, float radius)
   {
-    var back = new StyleBoxFlat { BgColor = PlainBackColor };
-    back.SetCornerRadiusAll(CornerRadius(rect));
-    canvas.DrawStyleBox(back, rect);
+    // Центры скруглений и начальные углы дуг по часовой стрелке (ось Y смотрит вниз): верх-лево, верх-право, низ-право, низ-лево.
+    (Vector2 Center, float Start)[] corners =
+    [
+      (rect.Position + new Vector2(radius, radius), Mathf.Pi),
+      (new Vector2(rect.End.X - radius, rect.Position.Y + radius), Mathf.Pi * 1.5f),
+      (rect.End - new Vector2(radius, radius), 0f),
+      (new Vector2(rect.Position.X + radius, rect.End.Y - radius), Mathf.Pi * 0.5f),
+    ];
+
+    var points = new List<Vector2>();
+    foreach (var (center, start) in corners)
+    {
+      for (var i = 0; i <= RoundedCornerSegments; i++)
+        points.Add(center + Vector2.FromAngle(start + Mathf.Pi / 2 * i / RoundedCornerSegments) * radius);
+    }
+
+    Vector2[] outline = [.. points];
+    Vector2[] uvs = [.. points.Select(point => (point - rect.Position) / rect.Size)];
+    Color[] colors = [Colors.White];
+    canvas.DrawPolygon(outline, colors, uvs, texture);
   }
 
   /// <summary>
@@ -436,9 +472,10 @@ public static class CardPainter
   /// <summary>
   /// Нарисовать текст по центру области, перенося его по словам.
   /// </summary>
-  public static void DrawCenteredText(CanvasItem canvas, string text, Rect2 area, int fontSize, Color color)
+  /// <param name="font">Шрифт; по умолчанию — основной шрифт.</param>
+  public static void DrawCenteredText(CanvasItem canvas, string text, Rect2 area, int fontSize, Color color, Font? font = null)
   {
-    var font = ThemeDB.FallbackFont;
+    font ??= ThemeDB.FallbackFont;
     var size = font.GetMultilineStringSize(text, HorizontalAlignment.Center, area.Size.X, fontSize);
     var top = area.Position.Y + (area.Size.Y - size.Y) / 2;
     canvas.DrawMultilineString(
@@ -476,9 +513,9 @@ public static class CardPainter
   /// <summary>
   /// Размер шрифта, при котором самое длинное слово текста помещается по ширине, но не больше заданного.
   /// </summary>
-  private static int FitFontSize(string text, float width, int fontSize)
+  private static int FitFontSize(string text, float width, int fontSize, Font? font = null)
   {
-    var font = ThemeDB.FallbackFont;
+    font ??= ThemeDB.FallbackFont;
     var longest = text.Split(' ').MaxBy(word => font.GetStringSize(word, fontSize: fontSize).X)!;
     while (fontSize > 1 && font.GetStringSize(longest, fontSize: fontSize).X > width)
       fontSize--;

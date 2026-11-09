@@ -15,8 +15,7 @@ public partial class GameMenu : VBoxContainer
   private const int ButtonFontSize = 20;
   private const float ButtonHeight = 48f;
 
-  private static readonly Color PanelColor = new(0.08f, 0.1f, 0.09f, 0.95f);
-  private static readonly Color IconColor = new(0.9f, 0.9f, 0.9f);
+  private static readonly Color IconColor = UiStyle.Text;
 
   private PanelContainer _panel = null!;
 
@@ -51,12 +50,8 @@ public partial class GameMenu : VBoxContainer
     toggle.Pressed += () => _panel.Visible = !_panel.Visible;
     AddChild(toggle);
 
-    var style = new StyleBoxFlat { BgColor = PanelColor };
-    style.SetCornerRadiusAll(8);
-    style.SetContentMarginAll(12);
-
     _panel = new PanelContainer { Name = "Panel", Visible = false, CustomMinimumSize = new Vector2(PanelWidth, 0) };
-    _panel.AddThemeStyleboxOverride("panel", style);
+    _panel.AddThemeStyleboxOverride("panel", UiStyle.Panel(margin: 12, alpha: 0.95f));
 
     var column = new VBoxContainer();
     column.AddThemeConstantOverride("separation", 8);
