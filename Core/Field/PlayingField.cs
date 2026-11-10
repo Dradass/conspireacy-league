@@ -584,6 +584,91 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Свои персонажи в личном штабе (кроме <paramref name="source"/>), которым можно убрать или добавить теорию.
+  /// </summary>
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> ToggleTheoryTargets(Player player, Cell? source) =>
+    _playerZones.TryGetValue(player, out var zone)
+      ? zone.Cells
+        .Where(cell => cell != source && CardAt(cell) is PersonCard)
+        .Select(cell => (cell, CheckToggleTheory(cell, player, source)))
+      : [];
+
+  /// <summary>
+  /// Проверить, можно ли убрать или добавить теорию персонажу в своём личном штабе. Персонажа под шапочкой из фольги
+  /// трогать нельзя.
+  /// </summary>
+  public PlacementCheck CheckToggleTheory(Cell cell, Player player, Cell? source)
+  {
+    if (CardAt(cell) is not PersonCard person || !_playerZones.TryGetValue(player, out var zone) || !zone.Contains(cell))
+      return PlacementCheck.Deny("Выберите персонажа в своём личном штабе.");
+    if (cell == source)
+      return PlacementCheck.Deny("Выберите другого персонажа.");
+    if (WithTheory(person, null) is null)
+      return PlacementCheck.Deny($"У персонажа «{person.Name}» теорию поменять нельзя.");
+    return IsFoiled(cell)
+      ? PlacementCheck.Deny("Этого персонажа защищает шапочка из фольги.")
+      : PlacementCheck.Allowed;
+  }
+
+  /// <summary>
+  /// Проверить, можно ли убрать или добавить теорию персонажу в руке игрока.
+  /// </summary>
+  public PlacementCheck CheckToggleHandTheory(Card card, Player player) =>
+    card is PersonCard person && player.Hand.Contains(card) && WithTheory(person, null) is not null
+      ? PlacementCheck.Allowed
+      : PlacementCheck.Deny("Выберите персонажа в руке.");
+
+  /// <summary>
+  /// Персонажу в своём личном штабе: убрать теорию, если она есть, иначе — добавить случайную.
+  /// Карточка остаётся на месте и сохраняет состояние ячейки (сыграна, повёрнута).
+  /// </summary>
+  /// <returns>Новая теория персонажа или <c>null</c>, если теорию убрали.</returns>
+  /// <exception cref="InvalidOperationException">Нельзя.</exception>
+  public Theory? ToggleTheory(Cell cell, Player player, Cell? source, Random random)
+  {
+    var check = CheckToggleTheory(cell, player, source);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    var person = (PersonCard)_cards[cell];
+    var theory = ToggledTheory(person, random);
+    _cards[cell] = WithTheory(person, theory)!;
+    CardReplaced?.Invoke(cell);
+    return theory;
+  }
+
+  /// <summary>
+  /// Персонажу в руке: убрать теорию, если она есть, иначе — добавить случайную. Карточка остаётся на своём месте в руке.
+  /// </summary>
+  /// <returns>Новая теория персонажа или <c>null</c>, если теорию убрали.</returns>
+  /// <exception cref="InvalidOperationException">Нельзя.</exception>
+  public Theory? ToggleHandTheory(Card card, Player player, Random random)
+  {
+    var check = CheckToggleHandTheory(card, player);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    var person = (PersonCard)card;
+    var theory = ToggledTheory(person, random);
+    player.Hand.Replace(card, WithTheory(person, theory)!);
+    return theory;
+  }
+
+  private static Theory? ToggledTheory(PersonCard person, Random random) =>
+    person.Theory is null ? TheoryCatalog.All[random.Next(TheoryCatalog.All.Count)] : null;
+
+  /// <summary>
+  /// Та же карточка персонажа, но с другой теорией; <c>null</c> — для такой карточки теорию поменять нельзя.
+  /// </summary>
+  private static PersonCard? WithTheory(PersonCard person, Theory? theory) => person switch
+  {
+    HomelessCard => new HomelessCard(theory),
+    CitizenCard => new CitizenCard(theory),
+    GenericProfessionalCard professional => new GenericProfessionalCard(professional.Profession, theory),
+    _ => null,
+  };
+
+  /// <summary>
   /// Бездомные и граждане в теориях, которых можно заменить карточкой с руки.
   /// </summary>
   public IEnumerable<(Cell Cell, PlacementCheck Check)> ReplaceTargets(PersonCard? card, Player player) =>
@@ -910,9 +995,43 @@ public sealed class PlayingField
       .Select(cell => (cell, CheckDemote(cell, player)));
 
   /// <summary>
-  /// Проверить, можно ли понизить персонажа до бездомного: закрытая теория и защищённые персонажи не трогаем.
+  /// Проверить, можно ли понизить персонажа до бездомного: закрытая теория и защищённые персонажи не трогаем,
+  /// а за чужого персонажа нужно заплатить его владельцу его влияние (<see cref="DemoteFee"/>).
   /// </summary>
-  public PlacementCheck CheckDemote(Cell cell, Player player)
+  /// <param name="cell">Ячейка персонажа.</param>
+  /// <param name="player">Игрок, который понижает.</param>
+  /// <param name="includePolicemanToll">Учесть плату владельцу полицейского, которая берётся до понижения.</param>
+  public PlacementCheck CheckDemote(Cell cell, Player player, bool includePolicemanToll = true)
+  {
+    var check = CheckDemoteTarget(cell, player);
+    if (!check.IsAllowed || DemoteFee(cell, player) is not { } fee)
+      return check;
+
+    var toll = includePolicemanToll && PolicemanTollFor(cell, player) is { } policeman ? policeman.Amount : 0;
+    // Плату показываем в стоимости проверки — по ней цель оценивает и бот.
+    return player.CanAfford(fee.Amount + toll)
+      ? PlacementCheck.Allow(fee.Amount, check.Column)
+      : PlacementCheck.Deny($"Чтобы понизить персонажа, нужно заплатить {fee.Owner} {fee.Amount}$ (его влияние), а у вас {player.Money - toll}$.");
+  }
+
+  /// <summary>
+  /// Плата за понижение персонажа: игрок платит владельцу пониженного персонажа его влияние.
+  /// Своего персонажа понижать бесплатно.
+  /// </summary>
+  /// <returns>Кому и сколько платить или <c>null</c>, если платить не нужно.</returns>
+  public (Player Owner, int Amount)? DemoteFee(Cell cell, Player player)
+  {
+    if (CardAt(cell) is not PersonCard person)
+      return null;
+
+    var owner = ColumnAt(cell)?.OwnerAt(cell) ?? OwnerOfCell(cell);
+    return owner is null || owner == player || person.Influence <= 0 ? null : (owner, person.Influence);
+  }
+
+  /// <summary>
+  /// Можно ли понизить персонажа без учёта платы за понижение.
+  /// </summary>
+  private PlacementCheck CheckDemoteTarget(Cell cell, Player player)
   {
     if (CardAt(cell) is not PersonCard || CardAt(cell) is HomelessCard or HiddenCard)
       return PlacementCheck.Deny("Здесь нет персонажа, которого можно понизить.");
@@ -977,9 +1096,17 @@ public sealed class PlayingField
   /// <exception cref="InvalidOperationException">Понизить нельзя.</exception>
   public void Demote(Cell cell, Player player)
   {
-    var check = CheckDemote(cell, player);
+    // Плата владельцу полицейского к этому моменту уже взята.
+    var check = CheckDemote(cell, player, includePolicemanToll: false);
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
+
+    if (DemoteFee(cell, player) is { } fee)
+    {
+      player.Spend(fee.Amount);
+      using (fee.Owner.EarningFrom("Понижение персонажа"))
+        EarnAt(cell, fee.Owner, fee.Amount);
+    }
 
     var card = (PersonCard)_cards[cell];
     var homeless = new HomelessCard(card.Theory);
@@ -1166,8 +1293,11 @@ public sealed class PlayingField
 
     if (option.TheoryCount > 1)
     {
-      if (context.TargetTheories.Count != option.TheoryCount || context.TargetTheories.Distinct().Count() != option.TheoryCount)
-        throw new ArgumentException($"Для действия «{option}» нужно выбрать {option.TheoryCount} разные теории.", nameof(context));
+      if (context.TargetTheories.Count != option.TheoryCount
+        || !option.AllowsRepeatedTheories && context.TargetTheories.Distinct().Count() != option.TheoryCount)
+        throw new ArgumentException(option.AllowsRepeatedTheories
+          ? $"Для действия «{option}» нужно выбрать теорию {option.TheoryCount} раза."
+          : $"Для действия «{option}» нужно выбрать {option.TheoryCount} разные теории.", nameof(context));
       if (context.TargetTheories.Any(theory => !option.CanTargetTheory(theory, context.CurrentPlayer)))
         throw new ArgumentException($"Для действия «{option}» нельзя выбрать одну из теорий.", nameof(context));
       return;
@@ -2025,23 +2155,25 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Сколько адептов ушло из соседних теорий в эту: ближайшая открытая теория слева и справа по полю
-  /// отдаёт по одному адепту (если он есть).
+  /// Адепты переходят в эту теорию: первая теория слева и первая справа по полю, где есть адепты (и их можно увести),
+  /// отдают по одному адепту. Теории без адептов пропускаются.
   /// </summary>
-  /// <exception cref="InvalidOperationException">Штаб закрыт или адептов не переведут.</exception>
+  /// <exception cref="InvalidOperationException">Штаб закрыт.</exception>
   public void MoveAdeptsFromNeighbours(TheoryColumn home)
   {
     if (!_theoryColumns.Contains(home) || home.IsClosed)
       throw new InvalidOperationException("Адептов в закрытый штаб не переводят.");
 
-    var open = _theoryColumns.Where(column => !column.IsClosed && column != home).ToList();
+    var open = _theoryColumns
+      .Where(column => !column.IsClosed && column != home && column.Adepts > 0 && !column.AdeptsShielded)
+      .ToList();
     var left = open.Where(column => column.TheoryCell.Column < home.TheoryCell.Column)
       .OrderByDescending(column => column.TheoryCell.Column).FirstOrDefault();
     var right = open.Where(column => column.TheoryCell.Column > home.TheoryCell.Column)
       .OrderBy(column => column.TheoryCell.Column).FirstOrDefault();
     foreach (var neighbour in new[] { left, right })
     {
-      if (neighbour is not null && neighbour.Adepts > 0 && !neighbour.AdeptsShielded)
+      if (neighbour is not null)
         MoveAdepts(neighbour, home, 1);
     }
   }
@@ -2898,7 +3030,7 @@ public sealed class PlayingField
       if (cell.Row != CommonZone.BottomRow)
         return PlacementCheck.Deny($"Новую теорию «{theory}» можно выложить только в нижний ряд общей зоны.");
       // Если над ячейкой уже лежит дочерняя теория, базовую придётся сдвинуть — нужно место, куда её сдвинуть.
-      if (TheoryAtColumn(cell.Column) is { } child && FreeColumn(cell.Column, ConflictDirection(child.TheoryCell)) is null)
+      if (TheoryAtColumn(cell.Column) is { } child && FreeColumn(cell.Column, ConflictDirection(child.Theory, child.TheoryCell)) is null)
         return PlacementCheck.Deny($"Столбец занят теорией «{child.Theory}», а сдвинуть базовую теорию «{theory}» некуда.");
       return PlacementCheck.Allow(createsHeadquarters: true);
     }
@@ -2925,7 +3057,7 @@ public sealed class PlayingField
         + $"от {SideTheoryLevel}-й карточки родительской теории «{parentTheory}» или уже выложенной дочерней теории «{parentTheory}».");
     }
     // Если в этом столбце стоит базовая теория, она сдвинется — нужно место, куда её сдвинуть.
-    if (TheoryAtColumn(cell.Column) is { } baseTheory && FreeColumn(cell.Column, ConflictDirection(cell)) is null)
+    if (TheoryAtColumn(cell.Column) is { } baseTheory && FreeColumn(cell.Column, ConflictDirection(theory, cell)) is null)
       return PlacementCheck.Deny($"Столбец занят теорией «{baseTheory.Theory}», а сдвинуть её некуда.");
     return PlacementCheck.Allow();
   }
@@ -2936,10 +3068,20 @@ public sealed class PlayingField
   private TheoryColumn? TheoryAtColumn(int column) => _theoryColumns.FirstOrDefault(theory => theory.TheoryCell.Column == column);
 
   /// <summary>
-  /// Куда сдвигать базовую теорию из-за дочерней, которая лежит над ней (ячейка <paramref name="child"/>):
-  /// вправо, если родительская теория дочерней стоит слева, и влево — иначе.
+  /// Куда сдвигать базовую теорию из-за дочерней теории <paramref name="childTheory"/>, которая лежит над ней
+  /// (ячейка <paramref name="childCell"/>): вправо, если слева вплотную стоит её семейство (родительская теория или
+  /// другая дочерняя того же родителя), и влево — иначе. Чужие теории слева не в счёт: иначе базовая теория уедет
+  /// вправо вместе с родительской, и дочерняя оторвётся от семейства.
   /// </summary>
-  private int ConflictDirection(Cell child) => _theoryColumns.Any(theory => theory.Cells.Contains(child.Left)) ? 1 : -1;
+  private int ConflictDirection(Theory childTheory, Cell childCell)
+  {
+    var parentTheory = childTheory.Parent;
+    var familyOnLeft = _theoryColumns.Any(column =>
+      column.Theory != childTheory
+      && (column.Theory == parentTheory || column.Theory.Parent == parentTheory)
+      && column.Cells.Contains(childCell.Left));
+    return familyOnLeft ? 1 : -1;
+  }
 
   /// <summary>
   /// Ближайший свободный столбец общей зоны от столбца <paramref name="column"/> в сторону <paramref name="direction"/>.
@@ -2968,7 +3110,7 @@ public sealed class PlayingField
       return;
 
     var (moved, child) = placed.IsHeadquarters ? (placed, other) : (other, placed);
-    var direction = ConflictDirection(child.TheoryCell);
+    var direction = ConflictDirection(child.Theory, child.TheoryCell);
     var free = FreeColumn(index, direction)
       ?? throw new InvalidOperationException($"Некуда сдвинуть базовую теорию «{moved.Theory}».");
     // Сначала сдвигаем занятые столбцы, начиная с самого дальнего, затем базовую теорию.

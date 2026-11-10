@@ -24,6 +24,11 @@ public partial class Main : Node2D
   public IReadOnlyList<string>? PlayerNames { get; init; }
 
   /// <summary>
+  /// За каких игроков играет бот (<see cref="Core.Bots.Bot"/>), по порядку; задаётся в стартовом меню. Если не задано — все люди.
+  /// </summary>
+  public IReadOnlyList<bool>? BotSeats { get; init; }
+
+  /// <summary>
   /// Режим разработчика: под рынком панель со всеми персонажами, которых можно поставить в личный штаб.
   /// </summary>
   public bool DevMode { get; init; }
@@ -44,13 +49,31 @@ public partial class Main : Node2D
   /// </summary>
   public bool RadialField { get; init; }
 
+  /// <summary>
+  /// Во сколько раз медленнее исходной скорости ходят боты.
+  /// </summary>
+  public double BotSlowdown { get; init; } = 2;
+
+  /// <summary>
+  /// Камера следует за действиями ботов.
+  /// </summary>
+  public bool FollowBots { get; init; }
+
+  /// <summary>
+  /// Показывать итоги конца раунда столбчатой диаграммой, а не текстом.
+  /// </summary>
+  public bool RoundSummaryChart { get; init; }
+
   public override void _Ready()
   {
 	// Оформление интерфейса в стиле рубашки карточек (обычно уже применено стартовым меню).
 	UiStyle.Apply();
 	var session = new GameSession(Enum.GetValues<PlayerColor>()
 	  .Take(PlayerCount)
-	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)), mode: Mode);
+	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)
+	  {
+		IsBot = BotSeats is { } bots && index < bots.Count && bots[index],
+	  }), mode: Mode);
 	session.Field.FailureConsequences = FailureConsequences;
 
 	var board = new Board { Name = "Board", Session = session, Radial = RadialField };
@@ -68,8 +91,25 @@ public partial class Main : Node2D
 	AddChild(camera);
 	session.Turns.TurnChanged += player => camera.FocusOn(CameraTarget(board, player));
 
-	var hand = new HandView { Name = "Hand", Session = session };
-	var hud = new Hud { Name = "Hud", Layer = 1, Session = session, Hand = hand };
+	// Общее состояние окон интерфейса: окон руки, штаба и рынка может быть сколько угодно, контроллеры работают с хабами.
+	var hand = new HandHub(session);
+	var personalHq = new PersonalHqHub();
+	personalHq.FocusRequested += player => camera.FocusOn(CameraTarget(board, player));
+	var market = new MarketHub();
+	market.FocusRequested += () => camera.FocusOn(board.ZoneCenter(session.Market.Zone));
+	var theories = new TheoriesHub();
+	theories.FocusRequested += camera.FocusOn;
+	var hud = new Hud
+	{
+	  Name = "Hud",
+	  Layer = 1,
+	  Session = session,
+	  Board = board,
+	  Hand = hand,
+	  PersonalHq = personalHq,
+	  Market = market,
+	  Theories = theories,
+	};
 	AddChild(hud);
 
 	// Слой выше интерфейса, но в координатах стола: карточка летит поверх руки и масштабируется вместе со столом.
@@ -78,7 +118,7 @@ public partial class Main : Node2D
 
 	var dragController = new CardDragController { Name = "CardDragController" };
 	AddChild(dragController);
-	dragController.Initialize(board, session, dragLayer, hand);
+	dragController.Initialize(board, session, dragLayer, hand, personalHq, market);
 	dragController.PlacementDenied += hud.ShowMessage;
 
 	var useController = new CardUseController { Name = "CardUseController" };
@@ -89,6 +129,12 @@ public partial class Main : Node2D
 	useController.Reminder += hud.ShowReminder;
 	// Пока выбирают действие карточки или его цель, карточки не перетаскивают.
 	dragController.IsChoosing = () => useController.IsChoosing;
+
+	// Боты ходят за своих игроков теми же путями, что и люди: с полётом карточек и бросками кубика.
+	var botController = new BotController { Name = "BotController", Slowdown = BotSlowdown, FollowBots = FollowBots };
+	AddChild(botController);
+	botController.Initialize(session, board, dragController, useController, camera);
+	botController.Hint += hud.ShowMessage;
 
 	var roundController = new RoundController { Name = "RoundController" };
 	AddChild(roundController);
@@ -101,9 +147,9 @@ public partial class Main : Node2D
 	infoLayer.AddChild(infoPanel);
 	var infoController = new CardInfoController { Name = "CardInfoController" };
 	AddChild(infoController);
-	infoController.Initialize(board, session, infoPanel, hand);
+	infoController.Initialize(board, session, infoPanel, hand, market, theories);
 
-	var incomeSummary = new IncomeSummaryPanel { Name = "IncomeSummary" };
+	var incomeSummary = new IncomeSummaryPanel { Name = "IncomeSummary", Chart = RoundSummaryChart };
 	infoLayer.AddChild(incomeSummary);
 	roundController.IncomeSummaryRequested += incomeSummary.Open;
 

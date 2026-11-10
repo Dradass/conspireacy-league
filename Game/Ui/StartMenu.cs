@@ -107,28 +107,32 @@ public partial class StartMenu : Control
   private async void StartLocalGame(bool devMode = false)
   {
     var mode = SelectedMode;
-    var names = await PlayersDialog.Ask(this, devMode ? "Режим разработчика" : "Локальная игра");
-    if (names is null)
+    var players = await PlayersDialog.Ask(this, devMode ? "Режим разработчика" : "Локальная игра");
+    if (players is null)
       return;
 
-    StartGame(names, devMode, mode);
+    StartGame(players, devMode, mode);
   }
 
   /// <summary>
   /// Заменить меню партией с выбранными игроками, режимом и опциями (<see cref="GameOptions"/>).
   /// </summary>
-  private void StartGame(IReadOnlyList<string> names, bool devMode, GameMode mode)
+  private void StartGame(IReadOnlyList<PlayerSetup> players, bool devMode, GameMode mode)
   {
     var tree = GetTree();
     var game = new Main
     {
       Name = "Main",
-      PlayerCount = names.Count,
-      PlayerNames = names,
+      PlayerCount = players.Count,
+      PlayerNames = players.Select(player => player.Name).ToList(),
+      BotSeats = players.Select(player => player.IsBot).ToList(),
       DevMode = devMode,
       Mode = mode,
       FailureConsequences = GameOptions.CriticalFailure,
       RadialField = GameOptions.RadialField,
+      BotSlowdown = GameOptions.BotSlowdown,
+      FollowBots = GameOptions.FollowBots,
+      RoundSummaryChart = GameOptions.RoundSummary == RoundSummaryView.BarChart,
     };
     tree.Root.AddChild(game);
     tree.CurrentScene = game;

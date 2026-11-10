@@ -52,6 +52,11 @@ public abstract class Effect
   public virtual int TheoryCount => 1;
 
   /// <summary>
+  /// Можно ли при выборе нескольких теорий (<see cref="TheoryCount"/>) выбрать одну и ту же теорию несколько раз.
+  /// </summary>
+  public virtual bool AllowsRepeatedTheories => false;
+
+  /// <summary>
   /// Можно ли выбрать для действия эту теорию, если действию нужна теория.
   /// </summary>
   /// <param name="column">Теория.</param>

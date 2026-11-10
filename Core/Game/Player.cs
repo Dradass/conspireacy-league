@@ -16,6 +16,11 @@ public sealed class Player
   public PlayerColor Color { get; }
 
   /// <summary>
+  /// Игроком управляет бот (<see cref="Bots.Bot"/>), а не человек.
+  /// </summary>
+  public bool IsBot { get; init; }
+
+  /// <summary>
   /// Баланс в $.
   /// </summary>
   public int Money { get; private set; }

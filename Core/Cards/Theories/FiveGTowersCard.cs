@@ -4,7 +4,7 @@ using ConspiracyLeague.Core.Theories;
 namespace ConspiracyLeague.Core.Cards.Theories;
 
 /// <summary>
-/// Карточка теории «5G вреди здоровью»: адепт из ближайшей теории слева и из ближайшей справа переходит в эту теорию.
+/// Карточка теории «5G вреди здоровью»: адепт из первой теории слева и из первой справа, где есть адепты, переходит в эту теорию.
 /// </summary>
 public sealed class FiveGTowersCard : TheoryCard
 {

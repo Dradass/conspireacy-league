@@ -3,13 +3,20 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Меню в левом верхнем углу во время партии: кнопка с тремя полосками раскрывает «Выйти в главное меню» и «Выйти».
+/// Меню в левом верхнем углу во время партии: кнопка с тремя полосками раскрывает «Теории», «Добавить окно»,
+/// «Выйти в главное меню» и «Выйти».
 /// </summary>
 public partial class GameMenu : VBoxContainer
 {
   private const string StartMenuScene = "res://Game/StartMenu.tscn";
-  private const float Margin = 24f;
-  private const float IconSize = 48f;
+  /// <summary>
+  /// Отступ меню от края экрана.
+  /// </summary>
+  public const float Margin = 24f;
+  /// <summary>
+  /// Размер кнопки с тремя полосками; под ней — кнопки хода (<see cref="TurnButtons"/>).
+  /// </summary>
+  public const float IconSize = 48f;
   private const float BarHeight = 4f;
   private const float PanelWidth = 280f;
   private const int ButtonFontSize = 20;
@@ -23,6 +30,11 @@ public partial class GameMenu : VBoxContainer
   /// Нажата кнопка «Теории» — нужно открыть граф теорий.
   /// </summary>
   public event Action? TheoriesRequested;
+
+  /// <summary>
+  /// Нажата кнопка «Добавить окно» — нужно добавить новое окно интерфейса (<see cref="HudWindow"/>).
+  /// </summary>
+  public event Action? AddWindowRequested;
 
   /// <summary>
   /// Раскрыть меню (например, после закрытия окна «Теории» кнопкой «Назад»).
@@ -59,6 +71,11 @@ public partial class GameMenu : VBoxContainer
     {
       _panel.Visible = false;
       TheoriesRequested?.Invoke();
+    }));
+    column.AddChild(CreateButton("AddWindow", "Добавить окно", () =>
+    {
+      _panel.Visible = false;
+      AddWindowRequested?.Invoke();
     }));
     column.AddChild(CreateButton("Menu", "Выйти в главное меню", () => GetTree().ChangeSceneToFile(StartMenuScene)));
     column.AddChild(CreateButton("Quit", "Выйти", () => GetTree().Quit()));

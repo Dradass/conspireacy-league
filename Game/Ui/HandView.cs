@@ -1,12 +1,11 @@
-using ConspiracyLeague.Core.Cards;
-using ConspiracyLeague.Core.Game;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Рука игрока, который сейчас ходит: его карточки в слабо заметной серой области.
-/// Карточки отсюда выкладывают на стол, а с рынка покупают сюда.
+/// Окно руки: карточки руки, показанной в <see cref="HandHub"/> (обычно — игрока, который сейчас ходит),
+/// в слабо заметной серой области. Карточки отсюда выкладывают на стол, а с рынка покупают сюда.
+/// Всё состояние (выбор, подсветка, перетаскиваемая карточка) общее для всех окон руки и хранится в хабе.
 /// </summary>
 public partial class HandView : PanelContainer
 {
@@ -24,89 +23,17 @@ public partial class HandView : PanelContainer
   private readonly StyleBoxFlat _style = new();
   private HBoxContainer _cards = null!;
   private Label _empty = null!;
-  private Hand? _hand;
-  private HandDropState _dropState;
-  private bool _picking;
-  private Card? _selectedCard;
 
   /// <summary>
-  /// Сессия игры: показывается рука игрока, который сейчас ходит.
+  /// Общее состояние окон руки.
   /// </summary>
-  public GameSession Session { get; init; } = null!;
-
-  /// <summary>
-  /// Игрок начал тянуть карточку из руки.
-  /// </summary>
-  public event Action<HandCardView>? CardDragStarted;
-
-  /// <summary>
-  /// Правой кнопкой нажата карточка в руке; аргумент — карточка.
-  /// </summary>
-  public event Action<Card>? CardInfoPressed;
-
-  /// <summary>
-  /// Правую кнопку отпустили.
-  /// </summary>
-  public event Action? CardInfoReleased;
-
-  /// <summary>
-  /// Игрок выбрал карточку в руке, пока идёт выбор (<see cref="Picking"/>).
-  /// </summary>
-  public event Action<Card>? CardPicked;
-
-  /// <summary>
-  /// Игрок выбирает карточку в руке для действия: щелчок по карточке выбирает её, а не начинает перетаскивание.
-  /// Рука подсвечена.
-  /// </summary>
-  public bool Picking
-  {
-    get => _picking;
-    set
-    {
-      _picking = value;
-      DropState = value ? HandDropState.Target : HandDropState.None;
-    }
-  }
-
-  /// <summary>
-  /// Выбранная карточка: она выделена рамкой. <c>null</c> — ничего не выбрано.
-  /// </summary>
-  public Card? SelectedCard
-  {
-    get => _selectedCard;
-    set
-    {
-      _selectedCard = value;
-      foreach (var view in _cards.GetChildren().OfType<HandCardView>())
-        view.Selected = view.Card == value;
-    }
-  }
-
-  /// <summary>
-  /// Подсветка руки как места, куда можно положить карточку.
-  /// </summary>
-  public HandDropState DropState
-  {
-    get => _dropState;
-    set
-    {
-      _dropState = value;
-      _style.BgColor = value == HandDropState.Hover ? HoverFillColor : FillColor;
-      _style.BorderColor = value switch
-      {
-        HandDropState.Hover => HoverBorderColor,
-        HandDropState.Target => TargetBorderColor,
-        _ => BorderColor,
-      };
-    }
-  }
+  public HandHub Hub { get; init; } = null!;
 
   public override void _Ready()
   {
     _style.SetBorderWidthAll(1);
     _style.SetCornerRadiusAll(3);
     _style.SetContentMarginAll(10);
-    DropState = HandDropState.None;
     AddThemeStyleboxOverride("panel", _style);
     MouseFilter = MouseFilterEnum.Ignore;
 
@@ -132,58 +59,83 @@ public partial class HandView : PanelContainer
     _empty.AddThemeColorOverride("font_color", EmptyColor);
     AddChild(_empty);
 
-    Session.Turns.TurnChanged += ShowHandOf;
-    ShowHandOf(Session.CurrentPlayer);
+    Hub.Register(this);
+    Hub.HandChanged += Refresh;
+    Hub.SelectionChanged += ApplySelection;
+    Hub.DropStateChanged += ApplyDropState;
+    Refresh();
+    ApplyDropState();
   }
 
   public override void _ExitTree()
   {
-    Session.Turns.TurnChanged -= ShowHandOf;
-    if (_hand is not null)
-      _hand.Changed -= Refresh;
+    Hub.Unregister(this);
+    Hub.HandChanged -= Refresh;
+    Hub.SelectionChanged -= ApplySelection;
+    Hub.DropStateChanged -= ApplyDropState;
   }
 
   /// <summary>
-  /// Находится ли точка экрана над рукой.
+  /// Находится ли точка экрана над этим окном руки (над всем окном, а не только над карточками). Скрытое окно
+  /// (раскладка другого игрока) карточку не принимает.
   /// </summary>
-  public bool ContainsScreenPoint(Vector2 point) => GetGlobalRect().HasPoint(point);
-
-  /// <summary>
-  /// Показать руку указанного игрока (например, владельца основной теории, который выбирает карточку в руке).
-  /// </summary>
-  public void ShowHandOf(Player player)
-  {
-    if (_hand is not null)
-      _hand.Changed -= Refresh;
-    _hand = player.Hand;
-    _hand.Changed += Refresh;
-    Refresh();
-  }
+  public bool ContainsScreenPoint(Vector2 point) =>
+    IsVisibleInTree() && (HudWindow.Of(this) ?? (Control)this).GetGlobalRect().HasPoint(point);
 
   private void Refresh()
   {
+    // Убираем старые карточки сразу, а не в конце кадра: иначе они ещё учитываются в размере руки,
+    // по которому окно подбирает размер и масштаб.
     foreach (var child in _cards.GetChildren())
+    {
+      _cards.RemoveChild(child);
       child.QueueFree();
+    }
 
-    foreach (var card in _hand!.Cards)
+    foreach (var card in Hub.Hand.Cards)
     {
       var view = HandCardView.Create(card);
-      view.Selected = card == _selectedCard;
       view.DragStarted += OnCardPressed;
-      view.InfoPressed += source => CardInfoPressed?.Invoke(source.Card);
-      view.InfoReleased += _ => CardInfoReleased?.Invoke();
+      view.InfoPressed += source => Hub.RaiseInfoPressed(source.Card);
+      view.InfoReleased += _ => Hub.RaiseInfoReleased();
       _cards.AddChild(view);
     }
 
-    _empty.Visible = _hand.Cards.Count == 0;
+    ApplySelection();
+    _empty.Visible = Hub.Hand.Cards.Count == 0;
+  }
+
+  private void ApplySelection()
+  {
+    foreach (var view in _cards.GetChildren().OfType<HandCardView>())
+    {
+      view.Selected = view.Card == Hub.SelectedCard;
+      // Карточка остаётся в руке, пока её не выложат; на время перетаскивания прячем её.
+      view.Modulate = view.Card == Hub.DraggedCard ? Colors.Transparent : Colors.White;
+    }
+  }
+
+  private void ApplyDropState()
+  {
+    var state = Hub.DropState;
+    if (state == HandDropState.Hover && !ContainsScreenPoint(GetViewport().GetMousePosition()))
+      state = HandDropState.Target;
+
+    _style.BgColor = state == HandDropState.Hover ? HoverFillColor : FillColor;
+    _style.BorderColor = state switch
+    {
+      HandDropState.Hover => HoverBorderColor,
+      HandDropState.Target => TargetBorderColor,
+      _ => BorderColor,
+    };
   }
 
   private void OnCardPressed(HandCardView source)
   {
-    if (_picking)
-      CardPicked?.Invoke(source.Card);
+    if (Hub.Picking)
+      Hub.RaisePicked(source.Card);
     else
-      CardDragStarted?.Invoke(source);
+      Hub.RaiseDragStarted(source);
   }
 }
 

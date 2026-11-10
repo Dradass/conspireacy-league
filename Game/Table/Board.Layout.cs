@@ -30,6 +30,7 @@ public partial class Board
   /// На сколько пикселей экрана нужно сдвинуть мышь, чтобы начать крутить кольцо (меньше — это щелчок).
   /// </summary>
   private const float RingDragThreshold = 6f;
+  private const float TheoriesRectMargin = 24f;
 
   /// <summary>
   /// На какую долю ячейки по строке сдвинута каждая следующая карточка стопки теории: на полкарточки.
@@ -253,6 +254,31 @@ public partial class Board
   /// Положение и поворот ячейки на столе: начало координат — центр карточки в ячейке, ось X — вправо по карточке.
   /// </summary>
   public Transform2D SlotTransform(Vector2I cell) => new(CellAngle(cell), CardCenter(cell));
+
+  /// <summary>
+  /// Область стола (в мировых координатах), где лежат штабы теорий: все стопки общей зоны, свободный ряд для новых
+  /// теорий и ряд итогов под ними, с небольшим полем. По ней окно «Теории» кадрирует свою камеру.
+  /// </summary>
+  public Rect2 TheoriesRect()
+  {
+    var zone = Field.CommonZone;
+    var totals = Enumerable.Range(zone.Left, zone.Width).Select(column => new Vector2I(column, zone.BottomRow + 1));
+    var half = CardPainter.CardSize / 2;
+    Vector2[] corners = [new(-half.X, -half.Y), new(half.X, -half.Y), new(-half.X, half.Y), new(half.X, half.Y)];
+    var toWorld = GetGlobalTransform();
+    Rect2? rect = null;
+    foreach (var cell in CommonSlotCells().Concat(totals))
+    {
+      var slot = SlotTransform(cell);
+      foreach (var corner in corners)
+      {
+        var point = toWorld * (slot * corner);
+        rect = rect is { } r ? r.Expand(point) : new Rect2(point, Vector2.Zero);
+      }
+    }
+
+    return (rect ?? new Rect2(toWorld * ZoneCenter(zone), Vector2.Zero)).Grow(TheoriesRectMargin);
+  }
 
   /// <summary>
   /// Центр зоны.

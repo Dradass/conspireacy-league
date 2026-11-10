@@ -36,7 +36,7 @@ public partial class CardUseController : Node
 
   private Board _board = null!;
   private GameSession _session = null!;
-  private HandView _hand = null!;
+  private HandHub _hand = null!;
   private PopupMenu _menu = null!;
   private PopupMenu _borrowMenu = null!;
   private PopupMenu _playerMenu = null!;
@@ -159,7 +159,7 @@ public partial class CardUseController : Node
   /// <param name="board">Стол.</param>
   /// <param name="session">Сессия игры: карточки использует игрок, который сейчас ходит.</param>
   /// <param name="hand">Рука игрока, который сейчас ходит: в ней выбирают карточку для действия.</param>
-  public void Initialize(Board board, GameSession session, HandView hand)
+  public void Initialize(Board board, GameSession session, HandHub hand)
   {
     _board = board;
     _session = session;
@@ -219,9 +219,15 @@ public partial class CardUseController : Node
     // Владелец основной теории выбирает цель своего действия: его ход и руку не трогаем.
     if (_session.PendingTheoryTrigger is { } trigger)
     {
-      HandleTheoryTriggerInput(@event, trigger);
+      // За бота выбирает бот (BotController).
+      if (!trigger.Owner.IsBot)
+        HandleTheoryTriggerInput(@event, trigger);
       return;
     }
+
+    // Пока ходит бот, человек карточки не играет.
+    if (_session.CurrentPlayer.IsBot)
+      return;
 
     if (_targeting is not null)
     {
@@ -325,6 +331,31 @@ public partial class CardUseController : Node
       return;
     }
 
+    RunTheoryCard(owned, context);
+  }
+
+  /// <summary>
+  /// Бот играет карточку из личного штаба с уже выбранными целями: проверка успеха с анимацией, как у игрока.
+  /// </summary>
+  /// <returns><c>false</c>, если карточки на столе нет.</returns>
+  public bool UseForBot(Cell cell, Effect option, GameContext context)
+  {
+    if (_board.ViewAt(cell.ToVector2I()) is not { } view)
+      return false;
+    Use(view, cell.ToVector2I(), option, context);
+    return true;
+  }
+
+  /// <summary>
+  /// Бот применяет свою карточку теории с уже выбранными целями.
+  /// </summary>
+  public void UseTheoryCardForBot(OwnedTheoryCard owned, GameContext context) => RunTheoryCard(owned, context);
+
+  /// <summary>
+  /// Применить карточку теории и показать, что произошло.
+  /// </summary>
+  private void RunTheoryCard(OwnedTheoryCard owned, GameContext context)
+  {
     try
     {
       _session.UseTheoryCard(owned, context);
@@ -408,7 +439,8 @@ public partial class CardUseController : Node
 
   private void StartPlacement(PlacementChoice choice)
   {
-    if (_session.PendingPlacement != choice)
+    // Цель для выложенной ботом карточки выбирает бот.
+    if (_session.PendingPlacement != choice || _session.CurrentPlayer.IsBot)
       return;
     if (_board.ViewAt(choice.Cell.ToVector2I()) is not { } view)
     {
@@ -584,7 +616,7 @@ public partial class CardUseController : Node
     if (targeting.HandCard is not { } card)
     {
       var adeptCards = AdeptCardTargets(targeting.Active).ToList();
-      _board.ShowTargets(TheoryTargets(targeting.Active).Where(theory => !PickedTheories.Contains(theory))
+      _board.ShowTargets(TheoryTargets(targeting.Active).Where(theory => targeting.Active.AllowsRepeatedTheories || !PickedTheories.Contains(theory))
         .SelectMany(theory => theory.Cells).Concat(adeptCards));
       Hint?.Invoke(adeptCards.Count > 0
         ? "Выберите теорию щелчком по её карточкам или подсвеченную карточку в личном штабе. Esc или щелчок мимо карточек — отмена."
@@ -646,6 +678,14 @@ public partial class CardUseController : Node
       _hand.Picking = false;
       _hand.SelectedCard = null;
       _hand.ShowHandOf(_session.CurrentPlayer);
+      return;
+    }
+
+    // Владелец основной теории — бот: он выберет сам, подсвечивать людям нечего.
+    if (trigger.Owner.IsBot)
+    {
+      Reminder?.Invoke(null);
+      _hand.Picking = false;
       return;
     }
 
@@ -822,7 +862,7 @@ public partial class CardUseController : Node
     }
 
     // Действию нужно несколько теорий: запоминаем выбранные и просим следующую.
-    if (PickedTheories.Contains(theory))
+    if (!_targeting.Active.AllowsRepeatedTheories && PickedTheories.Contains(theory))
     {
       UseDenied?.Invoke($"Теория «{theory}» уже выбрана. Выберите другую или нажмите Esc.");
       return;

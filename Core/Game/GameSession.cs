@@ -156,7 +156,8 @@ public sealed class GameSession
     for (var i = 0; i < Players.Count; i++)
       Field.AddPlayer(Players[i], FieldLayout.PlayerZone(i, Players.Count));
     _random = random ?? Random.Shared;
-    Market = new Market(FieldLayout.MarketZone, MarketDeck.Create(Players.Count, _random));
+    var (marketDeck, marketReserve) = MarketDeck.CreateWithReserve(Players.Count, _random);
+    Market = new Market(FieldLayout.MarketZone, marketDeck, marketReserve);
     // Подписываемся первыми: к моменту, когда о новом ходе узнают остальные, действия уже восстановлены.
     Turns.TurnChanged += _ => SetActionsLeft(ActionsPerTurn);
   }

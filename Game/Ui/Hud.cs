@@ -1,46 +1,68 @@
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Game.Table;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Интерфейс поверх стола: раунд и фаза, игроки с балансами, кнопку «Пас» (и «Не играть действие теории» при выборе основной теории) слева внизу, рука игрока справа внизу
-/// и сообщения сверху. Когда партия завершена — итоги (<see cref="ResultsPanel"/>).
+/// Интерфейс поверх стола: окна интерфейса (<see cref="HudWindow"/>) и сообщения сверху. Когда партия завершена —
+/// итоги (<see cref="ResultsPanel"/>).
 /// </summary>
+/// <remarks>
+/// У каждого игрока своя раскладка окон: показывается раскладка того, чьё действие сейчас ожидается. По умолчанию
+/// в ней три закреплённых окна — информация об игроках справа вверху, рука справа внизу и личный штаб слева внизу;
+/// игрок может откреплять, двигать, растягивать и закрывать их и добавлять новые через меню («Добавить окно»).
+/// </remarks>
 public partial class Hud : CanvasLayer
 {
   private const float Margin = 24f;
   private const double MessageDuration = 3;
   private const double MessageFade = 0.4;
   private const float ReminderOffset = 64f;
+  private const float TurnButtonsGap = 8f;
+  private const HudWindowKind NewWindowKind = HudWindowKind.Market;
 
-  private const float WaitingPlayerAlpha = 0.55f;
-
-  private readonly Dictionary<Player, Label> _balances = new();
-  private Label _round = null!;
-  private Label _turn = null!;
-  private Label _actions = null!;
-  private Button _pass = null!;
-  private Button _skipTheory = null!;
+  private readonly Dictionary<Player, Control> _layouts = new();
   private PanelContainer _messagePanel = null!;
   private Label _message = null!;
   private Tween? _messageTween;
   private PanelContainer _reminderPanel = null!;
   private Label _reminder = null!;
   private Control _root = null!;
+  private Player? _layoutPlayer;
 
   /// <summary>
-  /// Сессия игры: игроки, чьи балансы показываются, и очерёдность ходов.
+  /// Сессия игры.
   /// </summary>
   public GameSession Session { get; init; } = null!;
 
   private TurnOrder Turns => Session.Turns;
 
   /// <summary>
-  /// Рука игрока, который сейчас ходит.
+  /// Общее состояние окон руки.
   /// </summary>
-  public HandView Hand { get; init; } = null!;
+  public HandHub Hand { get; init; } = null!;
+
+  /// <summary>
+  /// Общее состояние окон личного штаба.
+  /// </summary>
+  public PersonalHqHub PersonalHq { get; init; } = null!;
+
+  /// <summary>
+  /// Связь окон рынка с контроллерами.
+  /// </summary>
+  public MarketHub Market { get; init; } = null!;
+
+  /// <summary>
+  /// Связь окон «Теории» с контроллерами.
+  /// </summary>
+  public TheoriesHub Theories { get; init; } = null!;
+
+  /// <summary>
+  /// Стол: окна «Теории» показывают его общую зону.
+  /// </summary>
+  public Board Board { get; init; } = null!;
 
   public override void _Ready()
   {
@@ -49,51 +71,39 @@ public partial class Hud : CanvasLayer
     AddChild(root);
     _root = root;
 
-    root.AddChild(CreatePlayers());
-    root.AddChild(CreateHand());
+    root.AddChild(CreateLayouts());
     root.AddChild(CreateMessage());
     root.AddChild(CreateReminder());
     var theoryGraph = new TheoryGraphPanel { Name = "TheoryGraph" };
+    // Кнопки хода — под кнопкой меню; раскрытое меню ложится поверх них.
+    root.AddChild(CreateTurnButtons());
     var gameMenu = new GameMenu { Name = "GameMenu" };
     gameMenu.TheoriesRequested += theoryGraph.Open;
+    gameMenu.AddWindowRequested += AddWindow;
     root.AddChild(gameMenu);
     // Граф поверх меню и интерфейса, но под окном информации о карточке (слой 3).
     theoryGraph.BackRequested += gameMenu.ShowMenu;
     root.AddChild(theoryGraph);
 
-    foreach (var player in Turns.Players)
-    {
-      player.MoneyChanged += OnMoneyChanged;
-      OnMoneyChanged(player);
-    }
-
     Turns.TurnChanged += OnTurnChanged;
-    Turns.Passed += OnPassed;
     Turns.FirstPlayerChanged += OnFirstPlayerChanged;
     Session.PhaseChanged += OnPhaseChanged;
-    Session.ActionsLeftChanged += OnActionsLeftChanged;
     Session.AutoPassed += OnAutoPassed;
     Session.LastRoundDeclared += OnLastRoundDeclared;
-    Session.PendingCheckChanged += OnPendingCheckChanged;
-    Session.PendingPlacementChanged += OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
-    OnPhaseChanged(Session.Phase);
+    GetViewport().SizeChanged += OnViewportSizeChanged;
+    ShowLayoutOfActor();
   }
 
   public override void _ExitTree()
   {
-    foreach (var player in Turns.Players)
-      player.MoneyChanged -= OnMoneyChanged;
     Turns.TurnChanged -= OnTurnChanged;
-    Turns.Passed -= OnPassed;
     Turns.FirstPlayerChanged -= OnFirstPlayerChanged;
     Session.PhaseChanged -= OnPhaseChanged;
-    Session.ActionsLeftChanged -= OnActionsLeftChanged;
     Session.AutoPassed -= OnAutoPassed;
     Session.LastRoundDeclared -= OnLastRoundDeclared;
-    Session.PendingCheckChanged -= OnPendingCheckChanged;
-    Session.PendingPlacementChanged -= OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    GetViewport().SizeChanged -= OnViewportSizeChanged;
   }
 
   /// <summary>
@@ -122,6 +132,94 @@ public partial class Hud : CanvasLayer
       _reminder.Text = text;
   }
 
+  /// <summary>
+  /// Раскладки окон всех игроков; видна только раскладка того, чьё действие ожидается.
+  /// </summary>
+  private Control CreateLayouts()
+  {
+    var windows = new Control { Name = "Windows", MouseFilter = Control.MouseFilterEnum.Ignore };
+    windows.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+    foreach (var player in Turns.Players)
+    {
+      var layout = new Control { Name = $"Layout{player.Color}", MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false };
+      layout.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+      windows.AddChild(layout);
+      _layouts[player] = layout;
+
+      // Бывшие закреплённые панели — теперь закреплённые окна на прежних местах.
+      layout.AddChild(CreateWindow(player, HudWindowKind.Players, pinned: true,
+        (size, screen) => new Vector2(screen.X - size.X - Margin, Margin)));
+      layout.AddChild(CreateWindow(player, HudWindowKind.Hand, pinned: true,
+        (size, screen) => screen - size - new Vector2(Margin, Margin)));
+      layout.AddChild(CreateWindow(player, HudWindowKind.PersonalHq, pinned: true,
+        (size, screen) => new Vector2(Margin, screen.Y - size.Y - Margin)));
+    }
+
+    return windows;
+  }
+
+  private HudWindow CreateWindow(Player owner, HudWindowKind kind, bool pinned, Func<Vector2, Vector2, Vector2>? placement = null) => new()
+  {
+    Name = $"Window{kind}",
+    LayoutOwner = owner,
+    Players = Turns.Players.ToList(),
+    InitialKind = kind,
+    Pinned = pinned,
+    Placement = placement,
+    ContentFactory = CreateContent,
+  };
+
+  private Control CreateContent(HudWindow window) => window.Kind switch
+  {
+    HudWindowKind.Market => new MarketView { Name = "Market", Session = Session, Hub = Market },
+    HudWindowKind.Theories => new TheoriesView { Name = "Theories", Board = Board, Hub = Theories },
+    HudWindowKind.Hand => new HandView { Name = "Hand", Hub = Hand },
+    HudWindowKind.PersonalHq => new PersonalHqView { Name = "PersonalHq", Session = Session, Hub = PersonalHq },
+    HudWindowKind.OtherHq => new PersonalHqView { Name = "OtherHq", Session = Session, Hub = PersonalHq, FixedPlayer = window.ShownPlayer },
+    HudWindowKind.Players => new PlayersInfoView { Name = "Players", Session = Session },
+    _ => throw new ArgumentOutOfRangeException(nameof(window), window.Kind, null),
+  };
+
+  /// <summary>
+  /// Кнопка меню «Добавить окно»: новое незакреплённое окно по центру экрана в раскладке того, чья она сейчас.
+  /// </summary>
+  private void AddWindow()
+  {
+    if (_layoutPlayer is not { } player)
+      return;
+    var window = CreateWindow(player, NewWindowKind, pinned: false);
+    _layouts[player].AddChild(window);
+  }
+
+  private void OnViewportSizeChanged()
+  {
+    foreach (var window in _layouts.Values.SelectMany(layout => layout.GetChildren().OfType<HudWindow>()))
+      window.ClampToViewport();
+  }
+
+  /// <summary>
+  /// Показать раскладку окон игрока, чьё действие сейчас ожидается: обычно того, кто ходит, а пока владелец основной
+  /// теории выбирает действие после дочерней карточки — его.
+  /// </summary>
+  private void ShowLayoutOfActor()
+  {
+    var actor = Session.PendingTheoryTrigger?.Owner ?? Turns.CurrentPlayer;
+    if (actor == _layoutPlayer)
+      return;
+    _layoutPlayer = actor;
+    foreach (var (player, layout) in _layouts)
+      layout.Visible = player == actor;
+  }
+
+  private Control CreateTurnButtons()
+  {
+    var buttons = new TurnButtons { Name = "TurnButtons", Session = Session };
+    buttons.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+    buttons.OffsetLeft = GameMenu.Margin;
+    buttons.OffsetTop = GameMenu.Margin + GameMenu.IconSize + TurnButtonsGap;
+    return buttons;
+  }
+
   private Control CreateReminder()
   {
     _reminderPanel = CreatePanel("Reminder");
@@ -136,74 +234,6 @@ public partial class Hud : CanvasLayer
     _reminder.AddThemeFontSizeOverride("font_size", 18);
     _reminderPanel.AddChild(_reminder);
     return _reminderPanel;
-  }
-
-  private Control CreatePlayers()
-  {
-    var panel = CreatePanel("Players");
-    panel.AnchorTop = 1;
-    panel.AnchorBottom = 1;
-    panel.OffsetLeft = Margin;
-    panel.OffsetTop = -Margin;
-    panel.OffsetBottom = -Margin;
-    panel.GrowVertical = Control.GrowDirection.Begin;
-
-    var column = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-    column.AddThemeConstantOverride("separation", 6);
-    panel.AddChild(column);
-
-    _round = new Label();
-    _round.AddThemeFontSizeOverride("font_size", 18);
-    column.AddChild(_round);
-
-    _turn = new Label();
-    _turn.AddThemeFontSizeOverride("font_size", 22);
-    column.AddChild(_turn);
-
-    _actions = new Label();
-    _actions.AddThemeFontSizeOverride("font_size", 18);
-    column.AddChild(_actions);
-
-    foreach (var player in Turns.Players)
-    {
-      var balance = new Label { Name = $"Balance{player.Color}" };
-      balance.AddThemeFontSizeOverride("font_size", 24);
-      UiStyle.MakeNumber(balance);
-      balance.AddThemeColorOverride("font_color", PlayerPalette.MainOf(player.Color));
-      column.AddChild(balance);
-      _balances[player] = balance;
-    }
-
-    var buttons = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-    buttons.AddThemeConstantOverride("separation", 6);
-    column.AddChild(buttons);
-
-    _pass = new Button { Name = "Pass", Text = "Пас", FocusMode = Control.FocusModeEnum.None };
-    _pass.AddThemeFontSizeOverride("font_size", 20);
-    _pass.Pressed += Session.Pass;
-    buttons.AddChild(_pass);
-
-    // Появляется, только когда владелец основной теории может сыграть её действие после побочной карточки.
-    _skipTheory = new Button { Name = "SkipTheory", Text = "Не играть действие теории", FocusMode = Control.FocusModeEnum.None, Visible = false };
-    _skipTheory.AddThemeFontSizeOverride("font_size", 20);
-    _skipTheory.Pressed += Session.SkipTheoryTrigger;
-    buttons.AddChild(_skipTheory);
-    return panel;
-  }
-
-  private Control CreateHand()
-  {
-    Hand.AnchorLeft = 1;
-    Hand.AnchorRight = 1;
-    Hand.AnchorTop = 1;
-    Hand.AnchorBottom = 1;
-    Hand.OffsetLeft = -Margin;
-    Hand.OffsetRight = -Margin;
-    Hand.OffsetTop = -Margin;
-    Hand.OffsetBottom = -Margin;
-    Hand.GrowHorizontal = Control.GrowDirection.Begin;
-    Hand.GrowVertical = Control.GrowDirection.Begin;
-    return Hand;
   }
 
   private Control CreateMessage()
@@ -228,111 +258,26 @@ public partial class Hud : CanvasLayer
     return panel;
   }
 
-  private void OnMoneyChanged(Player player) =>
-    _balances[player].Text = (player == Turns.FirstPlayer ? "(1) " : string.Empty)
-      + $"{player.Name}: {player.Money}$" + (Turns.HasPassed(player) ? " — пас" : string.Empty);
-
-  private void OnFirstPlayerChanged(Player first)
-  {
-    foreach (var player in Turns.Players)
-      OnMoneyChanged(player);
+  private void OnFirstPlayerChanged(Player first) =>
     ShowMessage($"Жетон первого игрока у игрока {first.Name}: он начинает раунд.");
-  }
-
-  private void OnPassed(Player player) => OnMoneyChanged(player);
 
   private void OnAutoPassed(Player player) =>
     ShowMessage($"{player.Name} пасует автоматически: рука пуста, карточки личного штаба сыграны, на рынке нет карточек.");
 
-  private void OnActionsLeftChanged(int actionsLeft)
-  {
-    _actions.Visible = Session.Phase == GamePhase.PlayerTurns;
-    _actions.Text = $"Действий: {actionsLeft} из {GameSession.ActionsPerTurn}";
-  }
-
-  private void OnPendingCheckChanged(SuccessCheck? check) => UpdateButtons();
-
-  private void OnPendingPlacementChanged(PlacementChoice? choice) => UpdateButtons();
-
-  private void OnPendingTheoryTriggerChanged(TheoryTrigger? trigger)
-  {
-    UpdateButtons();
-    RefreshTurn();
-  }
-
-  /// <summary>
-  /// Пасовать можно только во время ходов игроков и не посреди проверки успеха или выбора.
-  /// Пока ждём решения владельца основной теории, вместо этого доступна кнопка «Не играть действие теории».
-  /// </summary>
-  private void UpdateButtons()
-  {
-    var canAct = Session.Phase == GamePhase.PlayerTurns && Session.PendingCheck is null
-      && Session.PendingPlacement is null && Session.PendingTheoryTrigger is null;
-    _pass.Disabled = !canAct;
-    _skipTheory.Visible = Session.PendingTheoryTrigger is not null;
-  }
+  private void OnPendingTheoryTriggerChanged(TheoryTrigger? trigger) => ShowLayoutOfActor();
 
   private void OnPhaseChanged(GamePhase phase)
   {
-    UpdateButtons();
-    UpdateRound();
-    OnActionsLeftChanged(Session.ActionsLeft);
-    foreach (var player in Turns.Players)
-      OnMoneyChanged(player);
-    RefreshTurn();
+    ShowLayoutOfActor();
     if (phase == GamePhase.GameOver)
       _root.AddChild(new ResultsPanel { Name = "Results", Session = Session });
   }
 
   /// <summary>
-  /// Номер раунда и фаза; в режиме гонки — пометка, что раунд последний.
-  /// </summary>
-  private void UpdateRound()
-  {
-    var last = Session.IsLastRound && Session.Phase != GamePhase.GameOver ? " (последний)" : "";
-    _round.Text = $"Раунд {Session.Round}{last}: {NameOf(Session.Phase)}";
-  }
-
-  /// <summary>
   /// Режим гонки: теория дошла до финиша — раунд объявлен последним.
   /// </summary>
-  private void OnLastRoundDeclared(TheoryColumn column)
-  {
-    UpdateRound();
+  private void OnLastRoundDeclared(TheoryColumn column) =>
     ShowMessage($"Теория «{column.Theory}» дошла до финиша! Этот раунд — последний.");
-  }
 
-  private static string NameOf(GamePhase phase) => phase switch
-  {
-    GamePhase.Setup => "подготовка",
-    GamePhase.PlayerTurns => "ходы игроков",
-    GamePhase.HeadquartersCheck => "проверка штабов теорий",
-    GamePhase.AdeptIncome => "адепты приносят деньги",
-    GamePhase.CardsRefresh => "обновление карточек",
-    GamePhase.MarketRefresh => "обновление рынка",
-    GamePhase.FinalLeadersBonus => "итоговый подсчёт: деньги владельцам за лидеров",
-    GamePhase.FinalAdeptIncome => "итоговый подсчёт: адепты приносят деньги",
-    GamePhase.GameOver => "партия завершена",
-    _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null),
-  };
-
-  private void OnTurnChanged(Player _) => RefreshTurn();
-
-  /// <summary>
-  /// Показать, чьё действие сейчас ожидается: обычно это игрок, который ходит, но пока владелец основной теории
-  /// выбирает действие после дочерней карточки (даже если ход у другого игрока), ожидается его выбор.
-  /// </summary>
-  private void RefreshTurn()
-  {
-    var actor = Session.PendingTheoryTrigger?.Owner ?? Turns.CurrentPlayer;
-    _turn.Text = Session.Phase switch
-    {
-      GamePhase.PlayerTurns => $"Ходит: {actor.Name}",
-      GamePhase.FinalLeadersBonus or GamePhase.FinalAdeptIncome or GamePhase.GameOver => "Итоговый подсчёт",
-      _ => "Конец раунда",
-    };
-    _turn.AddThemeColorOverride("font_color", PlayerPalette.MainOf(actor.Color));
-    foreach (var (player, balance) in _balances)
-      balance.Modulate = player == actor ? Colors.White : Colors.White with { A = WaitingPlayerAlpha };
-  }
+  private void OnTurnChanged(Player _) => ShowLayoutOfActor();
 }

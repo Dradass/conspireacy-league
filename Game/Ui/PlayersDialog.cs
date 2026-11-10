@@ -4,7 +4,12 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Окно перед началом партии: количество игроков и строка с именем для каждого. «Начать» запускает партию,
+/// Игрок, заданный перед партией: имя и играет ли за него бот.
+/// </summary>
+public sealed record PlayerSetup(string Name, bool IsBot);
+
+/// <summary>
+/// Окно перед началом партии: количество игроков и строка с именем и галочкой «Бот» для каждого. «Начать» запускает партию,
 /// «Назад» (или Esc) возвращает в стартовое меню.
 /// </summary>
 public partial class PlayersDialog : MenuDialog
@@ -19,8 +24,9 @@ public partial class PlayersDialog : MenuDialog
   private const float FieldHeight = 34f;
 
   private readonly List<NameField> _fields = [];
+  private readonly List<CheckBox> _bots = [];
   private string _title = string.Empty;
-  private TaskCompletionSource<IReadOnlyList<string>?> _result = null!;
+  private TaskCompletionSource<IReadOnlyList<PlayerSetup>?> _result = null!;
   private Label _countLabel = null!;
   private HSlider _count = null!;
   private VBoxContainer _rows = null!;
@@ -29,11 +35,11 @@ public partial class PlayersDialog : MenuDialog
   /// Показать окно поверх <paramref name="parent"/> и дождаться решения игроков.
   /// </summary>
   /// <param name="title">Заголовок окна: какую партию начинают.</param>
-  /// <returns>Имена игроков по порядку или <c>null</c>, если нажали «Назад».</returns>
-  public static Task<IReadOnlyList<string>?> Ask(Node parent, string title)
+  /// <returns>Игроки по порядку (имя и бот ли это) или <c>null</c>, если нажали «Назад».</returns>
+  public static Task<IReadOnlyList<PlayerSetup>?> Ask(Node parent, string title)
   {
     var dialog = new PlayersDialog { Name = "PlayersDialog", _title = title };
-    dialog._result = new TaskCompletionSource<IReadOnlyList<string>?>();
+    dialog._result = new TaskCompletionSource<IReadOnlyList<PlayerSetup>?>();
     parent.AddChild(dialog);
     return dialog._result.Task;
   }
@@ -58,7 +64,7 @@ public partial class PlayersDialog : MenuDialog
     _count.ValueChanged += _ => UpdateRows();
     column.AddChild(_count);
 
-    column.AddChild(CreateLabel("Имена игроков"));
+    column.AddChild(CreateLabel("Имена игроков (галочка — играет бот)"));
     _rows = new VBoxContainer { Name = "Names" };
     _rows.AddThemeConstantOverride("separation", 6);
     column.AddChild(_rows);
@@ -92,27 +98,52 @@ public partial class PlayersDialog : MenuDialog
         CustomMinimumSize = new Vector2(0, FieldHeight),
       };
       field.AddThemeFontSizeOverride("font_size", FieldFontSize);
+      field.SizeFlagsHorizontal = SizeFlags.ExpandFill;
       field.TextSubmitted += _ => Start();
-      _rows.AddChild(field);
+
+      var bot = new CheckBox { Name = $"Bot{number}", Text = "Бот", FocusMode = FocusModeEnum.None };
+      bot.AddThemeFontSizeOverride("font_size", FieldFontSize);
+      bot.Toggled += pressed => OnBotToggled(field, number, pressed);
+
+      var row = new HBoxContainer { Name = $"Player{number}" };
+      row.AddThemeConstantOverride("separation", 8);
+      row.AddChild(field);
+      row.AddChild(bot);
+      _rows.AddChild(row);
       _fields.Add(field);
+      _bots.Add(bot);
     }
 
     while (_fields.Count > Count)
     {
-      var last = _fields[^1];
+      var row = _fields[^1].GetParent();
       _fields.RemoveAt(_fields.Count - 1);
-      _rows.RemoveChild(last);
-      last.QueueFree();
+      _bots.RemoveAt(_bots.Count - 1);
+      _rows.RemoveChild(row);
+      row.QueueFree();
     }
+  }
+
+  /// <summary>
+  /// Имя по умолчанию подсказывает, кто играет: «Бот N» или «Игрок N». Введённое вручную имя не трогаем.
+  /// </summary>
+  private static void OnBotToggled(NameField field, int number, bool bot)
+  {
+    var wasDefault = field.Text.Trim().Length == 0 || field.Text == field.DefaultName;
+    field.DefaultName = bot ? $"Бот {number}" : $"Игрок {number}";
+    if (wasDefault)
+      field.Text = field.DefaultName;
   }
 
   private void Start()
   {
-    // Пустое имя — имя по умолчанию «Игрок N».
-    var names = _fields
-      .Select(field => field.Text.Trim() is { Length: > 0 } name ? name : field.DefaultName)
+    // Пустое имя — имя по умолчанию «Игрок N» («Бот N»).
+    var players = _fields
+      .Select((field, index) => new PlayerSetup(
+        field.Text.Trim() is { Length: > 0 } name ? name : field.DefaultName,
+        _bots[index].ButtonPressed))
       .ToList();
-    _result.TrySetResult(names);
+    _result.TrySetResult(players);
     QueueFree();
   }
 
@@ -130,7 +161,7 @@ public partial class PlayersDialog : MenuDialog
     /// <summary>
     /// Имя по умолчанию, которое стирается при щелчке и подставляется, если поле оставили пустым.
     /// </summary>
-    public string DefaultName { get; init; } = string.Empty;
+    public string DefaultName { get; set; } = string.Empty;
 
     public override void _GuiInput(InputEvent @event)
     {

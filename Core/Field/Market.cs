@@ -15,9 +15,13 @@ namespace ConspiracyLeague.Core.Field;
 /// </remarks>
 public sealed class Market
 {
-  private const int FirstOpenColumn = 4;
+  /// <summary>
+  /// С какого столбца зоны (от её левого края) выкладываются открытые карточки.
+  /// </summary>
+  public const int FirstOpenColumn = 4;
 
   private readonly Stack<PersonCard> _deck;
+  private readonly List<PersonCard> _reserve;
   private readonly Dictionary<Cell, PersonCard> _openCards = new();
   private int _slotsPerRow;
 
@@ -63,12 +67,45 @@ public sealed class Market
 
   /// <param name="zone">Зона рынка.</param>
   /// <param name="deck">Колода рынка; первая карточка — верхняя.</param>
-  public Market(Zone zone, IReadOnlyList<PersonCard> deck)
+  /// <param name="reserve">Резерв: карточки состава игры, не попавшие в колоду рынка (см. <see cref="AddReserveCard"/>).</param>
+  public Market(Zone zone, IReadOnlyList<PersonCard> deck, IEnumerable<PersonCard>? reserve = null)
   {
     ArgumentNullException.ThrowIfNull(zone);
     ArgumentNullException.ThrowIfNull(deck);
     Zone = zone;
     _deck = new Stack<PersonCard>(deck.Reverse());
+    _reserve = reserve?.ToList() ?? [];
+  }
+
+  /// <summary>
+  /// Сколько карточек осталось в резерве.
+  /// </summary>
+  public int ReserveCount => _reserve.Count;
+
+  /// <summary>
+  /// Есть ли свободное место для дополнительной карточки во второй строке рынка.
+  /// </summary>
+  public bool HasFreeExtraSlot => ExtraRow.Any(cell => !_openCards.ContainsKey(cell));
+
+  /// <summary>
+  /// Выложить на рынок случайную карточку из резерва (не из колоды рынка) — на свободное место
+  /// во второй строке, как дополнительную карточку.
+  /// </summary>
+  /// <param name="random">Источник случайности.</param>
+  /// <returns>Выложенная карточка или <c>null</c>, если резерв пуст или нет свободного места.</returns>
+  public PersonCard? AddReserveCard(Random random)
+  {
+    ArgumentNullException.ThrowIfNull(random);
+    var cell = ExtraRow.Where(cell => !_openCards.ContainsKey(cell)).Cast<Cell?>().FirstOrDefault();
+    if (cell is null || _reserve.Count == 0)
+      return null;
+
+    var index = random.Next(_reserve.Count);
+    var card = _reserve[index];
+    _reserve.RemoveAt(index);
+    _openCards[cell.Value] = card;
+    CardOpened?.Invoke(cell.Value, card);
+    return card;
   }
 
   /// <summary>

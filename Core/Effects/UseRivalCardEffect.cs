@@ -4,15 +4,13 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Быстрое действие: использовать чужого непрофессионала в личном штабе другого игрока (<see cref="GameContext.BorrowedCell"/>) —
+/// Обычное действие: использовать чужого непрофессионала в личном штабе другого игрока (<see cref="GameContext.BorrowedCell"/>) —
 /// выполнить для себя выбранный вариант его действия (<see cref="GameContext.BorrowedOption"/>).
 /// Чужая карточка после этого переворачивается, как сыгранная.
 /// </summary>
 public sealed class UseRivalCardEffect : Effect
 {
-  public override string Description => "Быстрое: использовать чужого непрофессионала в личном штабе";
-
-  public override bool IsQuick => true;
+  public override string Description => "Использовать чужого непрофессионала в личном штабе";
 
   public override bool RequiresTargetCell => true;
 

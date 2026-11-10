@@ -7,7 +7,8 @@ namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
 /// Сводка дохода от адептов в начале раунда: каждая строка — теория, которая принесла деньги. Сначала общий доход
-/// адептов теории, затем сколько заработал каждый игрок. Закрывается кнопкой «Закрыть» или нажатием вне окна.
+/// адептов теории, затем сколько заработал каждый игрок. Если включён <see cref="Chart"/>, доход показан столбчатой
+/// диаграммой (<see cref="IncomeBarChart"/>). Закрывается кнопкой «Закрыть» или нажатием вне окна.
 /// </summary>
 public partial class IncomeSummaryPanel : Control
 {
@@ -19,6 +20,12 @@ public partial class IncomeSummaryPanel : Control
   private ColorRect _dim = null!;
   private CenterContainer _center = null!;
   private RichTextLabel _text = null!;
+  private IncomeBarChart _chart = null!;
+
+  /// <summary>
+  /// Показывать доход столбчатой диаграммой, а не текстом.
+  /// </summary>
+  public bool Chart { get; init; }
 
   public override void _Ready()
   {
@@ -43,6 +50,9 @@ public partial class IncomeSummaryPanel : Control
     title.AddThemeFontSizeOverride("font_size", TitleFontSize);
     UiStyle.MakeTitle(title);
     column.AddChild(title);
+
+    _chart = new IncomeBarChart { Name = "Chart", CustomMinimumSize = new Vector2(TextWidth, 0), Visible = false };
+    column.AddChild(_chart);
 
     _text = new RichTextLabel
     {
@@ -82,16 +92,22 @@ public partial class IncomeSummaryPanel : Control
   /// <param name="incomes">Доход по теориям за конец раунда.</param>
   public void Open(IReadOnlyList<TheoryIncome> incomes, SolvencyChanges solvency)
   {
-    var lines = incomes.Select(FormatLine).ToList();
+    var chart = Chart && incomes.Any(income => income.Total > 0);
+    _chart.Visible = chart;
+    if (chart)
+      _chart.Show(incomes);
+
+    var lines = chart ? [] : incomes.Select(FormatLine).ToList();
     if (incomes.Count == 0)
       lines.Add("Адепты денег не принесли.");
-    if (solvency.Closed.Count > 0 || solvency.Reopened.Count > 0)
+    if (lines.Count > 0 && (solvency.Closed.Count > 0 || solvency.Reopened.Count > 0))
       lines.Add("");
     if (solvency.Closed.Count > 0)
       lines.Add($"[b]Закрылись:[/b] {string.Join(", ", solvency.Closed.Select(column => $"[color=#e06060]{column.Theory}[/color]"))}");
     if (solvency.Reopened.Count > 0)
       lines.Add($"[b]Открылись:[/b] {string.Join(", ", solvency.Reopened.Select(column => $"[color=#60e080]{column.Theory}[/color]"))}");
     _text.Text = string.Join("\n", lines);
+    _text.Visible = lines.Count > 0;
     Layout();
     Visible = true;
   }

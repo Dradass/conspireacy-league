@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Cards;
@@ -21,7 +22,9 @@ public partial class CardDragController : Node
   private Board _board = null!;
   private GameSession _session = null!;
   private CanvasLayer _dragLayer = null!;
-  private HandView _hand = null!;
+  private HandHub _hand = null!;
+  private PersonalHqHub _personalHq = null!;
+  private MarketHub _market = null!;
   private Drag? _drag;
 
   /// <summary>
@@ -55,9 +58,14 @@ public partial class CardDragController : Node
   /// <param name="board">Стол.</param>
   /// <param name="session">Сессия игры: карточки покупает и выкладывает игрок, который сейчас ходит.</param>
   /// <param name="dragLayer">Слой поверх интерфейса, следующий за камерой: в нём летит карточка.</param>
-  /// <param name="hand">Рука игрока, который сейчас ходит.</param>
-  public void Initialize(Board board, GameSession session, CanvasLayer dragLayer, HandView hand)
+  /// <param name="hand">Окна руки игрока, который сейчас ходит.</param>
+  /// <param name="personalHq">Окна личного штаба: в свой штаб тоже можно положить карточку из руки.</param>
+  /// <param name="market">Окна рынка: из них, как и со стола, карточку рынка можно перетащить в руку.</param>
+  public void Initialize(Board board, GameSession session, CanvasLayer dragLayer, HandHub hand, PersonalHqHub personalHq, MarketHub market)
   {
+    _personalHq = personalHq;
+    _market = market;
+    _market.CardDragStarted += OnMarketCardDragStarted;
     _board = board;
     _session = session;
     _dragLayer = dragLayer;
@@ -65,7 +73,11 @@ public partial class CardDragController : Node
     _hand.CardDragStarted += OnHandCardDragStarted;
   }
 
-  public override void _ExitTree() => _hand.CardDragStarted -= OnHandCardDragStarted;
+  public override void _ExitTree()
+  {
+    _hand.CardDragStarted -= OnHandCardDragStarted;
+    _market.CardDragStarted -= OnMarketCardDragStarted;
+  }
 
   public override void _Input(InputEvent @event)
   {
@@ -90,8 +102,23 @@ public partial class CardDragController : Node
       return;
 
     GetViewport().SetInputAsHandled();
+    StartMarketDrag(cell);
+  }
+
+  /// <summary>
+  /// Карточку рынка потянули из окна рынка.
+  /// </summary>
+  private void OnMarketCardDragStarted(Vector2I cell)
+  {
+    if (_drag is null && CanAct && _board.MarketViewAt(cell) is not null)
+      StartMarketDrag(cell);
+  }
+
+  private void StartMarketDrag(Vector2I cell)
+  {
     var view = _board.TakeMarketView(cell);
     StartDrag(new MarketDrag(view, cell));
+    _market.DraggedCell = cell;
     _hand.DropState = HandDropState.Target;
     // Пока решаем, брать ли карточку, подсвечиваем её теорию на поле.
     _board.ShowTargets(_board.Field.TheoryCellsOf(view.Card));
@@ -107,8 +134,11 @@ public partial class CardDragController : Node
     switch (_drag)
     {
       case HandDrag:
-        var cell = _board.CellAt(_drag.View.Position);
-        _board.Highlight(cell, cell is { } target ? Check(_drag.View, target) : null);
+        var cell = TargetCell(_drag.View);
+        var check = cell is { } target ? Check(_drag.View, target) : null;
+        _board.Highlight(cell, check);
+        var hqCell = _personalHq.CellAtScreenPoint(MouseOnScreen());
+        _personalHq.Highlight(hqCell, check?.IsAllowed ?? false);
         break;
       case MarketDrag:
         _hand.DropState = _hand.ContainsScreenPoint(MouseOnScreen()) ? HandDropState.Hover : HandDropState.Target;
@@ -121,10 +151,12 @@ public partial class CardDragController : Node
     if (_drag is not null || !CanAct)
       return;
 
-    // Карточка остаётся в руке, пока её не выложат; на время перетаскивания прячем её.
-    source.Modulate = Colors.Transparent;
+    // Карточка остаётся в руке, пока её не выложат; на время перетаскивания прячем её во всех окнах руки.
+    _hand.DraggedCard = source.Card;
     StartDrag(new HandDrag(CardView.Create(source.Card), source));
-    _board.ShowAvailable(_board.Field.AvailableCells(source.Card, _session.CurrentPlayer));
+    var available = _board.Field.AvailableCells(source.Card, _session.CurrentPlayer).ToList();
+    _board.ShowAvailable(available);
+    _personalHq.ShowAvailable(available.Where(pair => pair.Check.IsAllowed).Select(pair => pair.Cell));
     _board.ShowArrows(_board.Field.ArrowTargets(source.Card, _session.CurrentPlayer));
   }
 
@@ -170,6 +202,9 @@ public partial class CardDragController : Node
     finally
     {
       SettleDrag(drag);
+      // Карточка легла на поле — прятать в руке больше нечего (при возврате в руку её покажет ReturnToHand).
+      if (_board.Field.CellOf(drag.View.Card) is not null && _hand.DraggedCard == drag.View.Card)
+        _hand.DraggedCard = null;
     }
   }
 
@@ -195,7 +230,7 @@ public partial class CardDragController : Node
 
   private void PlaceFromHand(HandDrag drag)
   {
-    if (_board.CellAt(drag.View.Position) is not { } cell)
+    if (TargetCell(drag.View) is not { } cell)
     {
       ReturnToHand(drag);
       return;
@@ -243,6 +278,35 @@ public partial class CardDragController : Node
     _board.Place(drag.View, cell);
   }
 
+  /// <summary>
+  /// Бот выкладывает карточку с руки: она вылетает из его личного штаба и ложится в ячейку, как у игрока.
+  /// </summary>
+  /// <returns>Условия, на которых карточка положена.</returns>
+  public PlacementCheck PlaceForBot(Card card, Cell cell)
+  {
+    var player = _session.CurrentPlayer;
+    var view = CardView.Create(card);
+    view.Position = _board.ZoneCenter(_board.Field.PlayerZones[player]);
+    PlacementCheck placed;
+    try
+    {
+      placed = _session.PlaceFromHand(card, cell);
+    }
+    catch
+    {
+      view.QueueFree();
+      throw;
+    }
+
+    // Действие при выкладывании могло сдвинуть карточку.
+    var actual = (_board.Field.CellOf(card) ?? cell).ToVector2I();
+    view.IsHeadquarters = placed.CreatesHeadquarters;
+    if (_board.Field.CommonZone.Contains(actual.ToCell()))
+      view.CardOwner = player;
+    _board.Place(view, actual);
+    return placed;
+  }
+
   private void DropFromMarket(MarketDrag drag)
   {
     if (!_hand.ContainsScreenPoint(MouseOnScreen()))
@@ -284,7 +348,10 @@ public partial class CardDragController : Node
     _board.Highlight(null);
     _board.HideArrows();
     _board.HideAvailable();
+    _personalHq.ShowAvailable([]);
+    _personalHq.Highlight(null, false);
     _hand.DropState = HandDropState.None;
+    _market.DraggedCell = null;
     Input.SetDefaultCursorShape();
     return drag;
   }
@@ -293,8 +360,12 @@ public partial class CardDragController : Node
   {
     var view = drag.View;
     var source = drag.Source;
-    // Рука живёт в координатах экрана, карточка — в координатах стола.
-    var target = GetViewport().GetCanvasTransform().AffineInverse() * source.Center;
+    var card = view.Card;
+    // Рука живёт в координатах экрана, карточка — в координатах стола. Окно руки могли закрыть — тогда карточка
+    // просто исчезает на месте.
+    var target = IsInstanceValid(source) && source.IsVisibleInTree()
+      ? GetViewport().GetCanvasTransform().AffineInverse() * source.Center
+      : view.Position;
     var tween = view.CreateTween();
     tween.TweenProperty(view, Node2D.PropertyName.Position.ToString(), target, ReturnDuration)
       .SetTrans(Tween.TransitionType.Cubic)
@@ -302,8 +373,8 @@ public partial class CardDragController : Node
     tween.TweenCallback(Callable.From(() =>
     {
       view.QueueFree();
-      if (IsInstanceValid(source))
-        source.Modulate = Colors.White;
+      if (_hand.DraggedCard == card)
+        _hand.DraggedCard = null;
     }));
   }
 
@@ -311,6 +382,18 @@ public partial class CardDragController : Node
   {
     _dragLayer.RemoveChild(drag.View);
     _board.ReturnMarketView(drag.View, drag.Cell);
+  }
+
+  /// <summary>
+  /// Куда ляжет карточка из руки: в ячейку своего штаба в окне, если карточка над ним, иначе — в ячейку стола под ней.
+  /// Над окном штаба (своего, но не над ячейкой, или чужого) карточку положить некуда.
+  /// </summary>
+  private Vector2I? TargetCell(CardView view)
+  {
+    var screen = MouseOnScreen();
+    if (_personalHq.ContainsScreenPoint(screen))
+      return _personalHq.CellAtScreenPoint(screen)?.ToVector2I();
+    return _board.CellAt(view.Position);
   }
 
   private PlacementCheck Check(CardView view, Vector2I cell) => _board.Field.CheckDrop(view.Card, cell.ToCell(), _session.CurrentPlayer);
@@ -321,6 +404,7 @@ public partial class CardDragController : Node
   /// </summary>
   private bool CanAct =>
     _session.Phase == GamePhase.PlayerTurns
+    && !_session.CurrentPlayer.IsBot
     && _session.PendingCheck is null
     && _session.PendingPlacement is null
     && _session.PendingTheoryTrigger is null

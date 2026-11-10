@@ -4,7 +4,8 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Окно «Опции» стартового меню: вид поля (классический или круг) и критический провал. Изменения сразу
+/// Окно «Опции» стартового меню: вид поля (классический или круг), критический провал, вид итогов раунда,
+/// скорость ботов и слежение камеры за ботами. Изменения сразу
 /// сохраняются (<see cref="GameOptions"/>) и действуют для следующих партий.
 /// </summary>
 public partial class OptionsDialog : MenuDialog
@@ -59,6 +60,69 @@ public partial class OptionsDialog : MenuDialog
     hint.AddThemeColorOverride("font_color", HintColor);
     column.AddChild(hint);
 
+    column.AddChild(CreateLabel("Вид итогов раунда"));
+    var summary = new OptionButton { Name = "RoundSummaryView", FocusMode = FocusModeEnum.None };
+    summary.AddThemeFontSizeOverride("font_size", LabelFontSize);
+    summary.AddItem("Текст", (int)RoundSummaryView.Text);
+    summary.AddItem("Столбчатая диаграмма", (int)RoundSummaryView.BarChart);
+    summary.Selected = summary.GetItemIndex((int)GameOptions.RoundSummary);
+    summary.ItemSelected += index =>
+    {
+      GameOptions.RoundSummary = (RoundSummaryView)summary.GetItemId((int)index);
+      GameOptions.Save();
+    };
+    column.AddChild(summary);
+
+    var speedLabel = CreateLabel(BotSpeedText());
+    column.AddChild(speedLabel);
+    var speed = new HSlider
+    {
+      Name = "BotSpeed",
+      MinValue = 0,
+      MaxValue = GameOptions.BotSlowdowns.Length - 1,
+      Step = 1,
+      TickCount = GameOptions.BotSlowdowns.Length,
+      TicksOnBorders = true,
+      Value = GameOptions.BotSpeed,
+      FocusMode = FocusModeEnum.None,
+      CustomMinimumSize = new Vector2(0, 28),
+    };
+    speed.ValueChanged += value =>
+    {
+      GameOptions.BotSpeed = (int)value;
+      GameOptions.Save();
+      speedLabel.Text = BotSpeedText();
+    };
+    column.AddChild(speed);
+
+    var follow = new CheckButton
+    {
+      Name = "FollowBots",
+      Text = "Отслеживать движения ботов",
+      ButtonPressed = GameOptions.FollowBots,
+      FocusMode = FocusModeEnum.None,
+    };
+    follow.AddThemeFontSizeOverride("font_size", LabelFontSize);
+    follow.Toggled += pressed =>
+    {
+      GameOptions.FollowBots = pressed;
+      GameOptions.Save();
+    };
+    column.AddChild(follow);
+
+    var followHint = CreateLabel("Камера следует за действиями ботов: куда бот кладёт карточку и на что действует.", HintFontSize);
+    followHint.AddThemeColorOverride("font_color", HintColor);
+    column.AddChild(followHint);
+
     column.AddChild(CreateButton("Back", "Назад", Cancel));
+  }
+
+  /// <summary>
+  /// Подпись ползунка скорости ботов с текущим замедлением.
+  /// </summary>
+  private static string BotSpeedText()
+  {
+    var slowdown = GameOptions.BotSlowdown;
+    return slowdown <= 1 ? "Скорость ботов: быстро" : $"Скорость ботов: в {slowdown:0.#} раза медленнее";
   }
 }

@@ -15,7 +15,9 @@ public partial class CardInfoController : Node
   private Board _board = null!;
   private GameSession _session = null!;
   private CardInfoPanel _panel = null!;
-  private Ui.HandView _hand = null!;
+  private HandHub _hand = null!;
+  private MarketHub _market = null!;
+  private TheoriesHub _theories = null!;
 
   /// <summary>
   /// Сколько секунд нужно удерживать правую кнопку, чтобы открылось описание.
@@ -40,9 +42,17 @@ public partial class CardInfoController : Node
   /// <param name="board">Стол.</param>
   /// <param name="session">Сессия игры.</param>
   /// <param name="panel">Окно информации.</param>
-  /// <param name="hand">Рука игрока, который ходит.</param>
-  public void Initialize(Board board, GameSession session, CardInfoPanel panel, Ui.HandView hand)
+  /// <param name="hand">Окна руки игрока, который ходит.</param>
+  /// <param name="market">Окна рынка.</param>
+  /// <param name="theories">Окна «Теории»: в них, как и на столе, можно посмотреть описание карточки.</param>
+  public void Initialize(Board board, GameSession session, CardInfoPanel panel, HandHub hand, MarketHub market, TheoriesHub theories)
   {
+    _theories = theories;
+    _theories.InfoPressed += OnTablePointPressed;
+    _theories.InfoReleased += CancelHold;
+    _market = market;
+    _market.CardInfoPressed += OnHandCardPressed;
+    _market.CardInfoReleased += CancelHold;
     _board = board;
     _session = session;
     _panel = panel;
@@ -55,6 +65,10 @@ public partial class CardInfoController : Node
   {
     _hand.CardInfoPressed -= OnHandCardPressed;
     _hand.CardInfoReleased -= CancelHold;
+    _market.CardInfoPressed -= OnHandCardPressed;
+    _market.CardInfoReleased -= CancelHold;
+    _theories.InfoPressed -= OnTablePointPressed;
+    _theories.InfoReleased -= CancelHold;
   }
 
   public override void _Process(double delta)
@@ -87,8 +101,29 @@ public partial class CardInfoController : Node
     }
     if (@event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right })
       return;
-    if (_board.CellAt(_board.GetGlobalMousePosition()) is not { } cell)
+    if (InfoAt(_board.GetGlobalMousePosition()) is not { } show)
       return;
+
+    GetViewport().SetInputAsHandled();
+    StartHold(show);
+  }
+
+  /// <summary>
+  /// Правой кнопкой нажали в окне «Теории» над точкой стола.
+  /// </summary>
+  private void OnTablePointPressed(Vector2 point)
+  {
+    if (InfoAt(point) is { } show)
+      StartHold(show);
+  }
+
+  /// <summary>
+  /// Что показать по карточке в точке стола (в мировых координатах); <c>null</c> — там нет карточки.
+  /// </summary>
+  private Action? InfoAt(Vector2 point)
+  {
+    if (_board.CellAt(point) is not { } cell)
+      return null;
 
     Action? show = null;
     if (_board.TheoryCardAt(cell) is { } owned)
@@ -97,12 +132,7 @@ public partial class CardInfoController : Node
       show = () => ShowCard(market.Card, null);
     else if (_board.ViewAt(cell) is { } view)
       show = () => ShowCard(view.Card, cell.ToCell());
-
-    if (show is null)
-      return;
-
-    GetViewport().SetInputAsHandled();
-    StartHold(show);
+    return show;
   }
 
   private void OnHandCardPressed(Card card) => StartHold(() => ShowCard(card, null));

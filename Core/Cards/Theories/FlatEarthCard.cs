@@ -5,7 +5,7 @@ using ConspiracyLeague.Core.Theories;
 namespace ConspiracyLeague.Core.Cards.Theories;
 
 /// <summary>
-/// Карточка теории «Плоская Земля»: добавить адептов в три любые теории. Пассивно — основатель теории имеет +3 влияния,
+/// Карточка теории «Плоская Земля»: добавить 3 адептов в любые теории (можно всех в одну). Пассивно — основатель теории имеет +3 влияния,
 /// а её штаб нельзя закрыть (<see cref="FlatEarthPassive"/>).
 /// </summary>
 public sealed class FlatEarthCard : TheoryCard
