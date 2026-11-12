@@ -28,6 +28,23 @@ public partial class CardDragController : Node
   private Drag? _drag;
 
   /// <summary>
+  /// Меню «открыто или взакрытую»: карточку бросили на теорию, куда игрок может выкладывать взакрытую
+  /// (право Спецагента, <see cref="PlayingField.AllowsHiddenPlacement"/>).
+  /// </summary>
+  private PopupMenu _placementMenu = null!;
+
+  /// <summary>
+  /// Карточка ждёт выбора в <see cref="_placementMenu"/>: куда её класть открыто (<c>null</c> — открыто нельзя)
+  /// и в какую теорию — взакрытую.
+  /// </summary>
+  private HiddenChoice? _hiddenChoice;
+
+  private sealed record HiddenChoice(HandDrag Drag, Vector2I? OpenCell, TheoryColumn Column);
+
+  private const int OpenPlacementId = 0;
+  private const int HiddenPlacementId = 1;
+
+  /// <summary>
   /// Карточку не дали положить; аргумент — причина.
   /// </summary>
   public event Action<string>? PlacementDenied;
@@ -71,6 +88,16 @@ public partial class CardDragController : Node
     _dragLayer = dragLayer;
     _hand = hand;
     _hand.CardDragStarted += OnHandCardDragStarted;
+  }
+
+  public override void _Ready()
+  {
+    _placementMenu = new PopupMenu { Name = "PlacementMenu" };
+    _placementMenu.IdPressed += OnPlacementMenuIdPressed;
+    // Меню закрыли, ничего не выбрав (Esc, щелчок мимо): карточка возвращается в руку. Откладываем, чтобы сначала
+    // успел сработать выбор пункта.
+    _placementMenu.PopupHide += () => Callable.From(CancelHiddenChoice).CallDeferred();
+    AddChild(_placementMenu);
   }
 
   public override void _ExitTree()
@@ -135,7 +162,7 @@ public partial class CardDragController : Node
     {
       case HandDrag:
         var cell = TargetCell(_drag.View);
-        var check = cell is { } target ? Check(_drag.View, target) : null;
+        var check = cell is { } target ? DropCheck(_drag.View, target) : null;
         _board.Highlight(cell, check);
         var hqCell = _personalHq.CellAtScreenPoint(MouseOnScreen());
         _personalHq.Highlight(hqCell, check?.IsAllowed ?? false);
@@ -155,6 +182,10 @@ public partial class CardDragController : Node
     _hand.DraggedCard = source.Card;
     StartDrag(new HandDrag(CardView.Create(source.Card), source));
     var available = _board.Field.AvailableCells(source.Card, _session.CurrentPlayer).ToList();
+    // Теории, куда карточку можно положить взакрытую по праву Спецагента, тоже подсвечиваются.
+    available.AddRange(_board.Field.HiddenPlacementTargets(source.Card, _session.CurrentPlayer)
+      .Where(target => target.Check.IsAllowed && available.All(pair => pair.Cell != target.Column.Top.Above))
+      .Select(target => (target.Column.Top.Above, target.Check)));
     _board.ShowAvailable(available);
     _personalHq.ShowAvailable(available.Where(pair => pair.Check.IsAllowed).Select(pair => pair.Cell));
     _board.ShowArrows(_board.Field.ArrowTargets(source.Card, _session.CurrentPlayer));
@@ -184,11 +215,16 @@ public partial class CardDragController : Node
     }
   }
 
-  private void DropFromHand(HandDrag drag)
+  private void DropFromHand(HandDrag drag) => RunPlacement(drag, () => PlaceFromHand(drag));
+
+  /// <summary>
+  /// Выложить карточку из руки; если не получилось, вернуть её в руку и сказать почему.
+  /// </summary>
+  private void RunPlacement(HandDrag drag, Action place)
   {
     try
     {
-      PlaceFromHand(drag);
+      place();
     }
     // Любая ошибка выкладывания, а не только запрет правил: иначе карточка зависла бы над столом, а в руке — невидимой.
     catch (Exception error)
@@ -237,6 +273,16 @@ public partial class CardDragController : Node
     }
 
     var check = Check(drag.View, cell);
+    var player = _session.CurrentPlayer;
+    // Теория, куда игрок может выкладывать взакрытую: спрашиваем, как класть.
+    if (_board.Field.HiddenPlacementColumnAt(cell.ToCell(), player) is { } hiddenColumn
+      && _board.Field.CheckHiddenFromHand(drag.View.Card, hiddenColumn, player) is { IsAllowed: true } hiddenCheck)
+    {
+      var openCell = check.IsAllowed ? cell : (Vector2I?)null;
+      ShowPlacementMenu(new HiddenChoice(drag, openCell, hiddenColumn), check, hiddenCheck);
+      return;
+    }
+
     if (!check.IsAllowed)
     {
       PlacementDenied?.Invoke(check.Reason!);
@@ -244,6 +290,14 @@ public partial class CardDragController : Node
       return;
     }
 
+    PlaceOpen(drag, cell);
+  }
+
+  /// <summary>
+  /// Положить карточку из руки лицом вверх в ячейку (правила уже проверены).
+  /// </summary>
+  private void PlaceOpen(HandDrag drag, Vector2I cell)
+  {
     // Соседнюю карточку семейства теорий не занимают: над ней карточка вставляется, а она и её сторона сдвигаются.
     if (_board.Field.NeighbourBoundary(drag.View.Card, cell.ToCell()) is { } boundary)
     {
@@ -262,6 +316,57 @@ public partial class CardDragController : Node
       drag.View.CardOwner = player;
     _dragLayer.RemoveChild(drag.View);
     _board.Place(drag.View, cell);
+  }
+
+  /// <summary>
+  /// Спросить, как положить карточку в теорию, куда игрок может выкладывать взакрытую. Пока меню открыто,
+  /// карточка висит над столом.
+  /// </summary>
+  private void ShowPlacementMenu(HiddenChoice choice, PlacementCheck open, PlacementCheck hidden)
+  {
+    _hiddenChoice = choice;
+    _placementMenu.Clear();
+    _placementMenu.AddSeparator($"{choice.Drag.View.Card.Name} → «{choice.Column.Theory}»");
+    if (choice.OpenCell is not null)
+      _placementMenu.AddItem($"Выложить открыто{CostSuffix(open.Cost)}", OpenPlacementId);
+    _placementMenu.AddItem($"Выложить взакрытую{CostSuffix(hidden.Cost)}", HiddenPlacementId);
+    _placementMenu.ResetSize();
+    _placementMenu.Popup(new Rect2I((Vector2I)MouseOnScreen(), Vector2I.Zero));
+  }
+
+  private static string CostSuffix(int cost) => cost > 0 ? $" ({cost}$)" : " (бесплатно)";
+
+  private void OnPlacementMenuIdPressed(long id)
+  {
+    if (_hiddenChoice is not { } choice)
+      return;
+    _hiddenChoice = null;
+    if (id == OpenPlacementId && choice.OpenCell is { } cell)
+      RunPlacement(choice.Drag, () => PlaceOpen(choice.Drag, cell));
+    else if (id == HiddenPlacementId)
+      RunPlacement(choice.Drag, () => PlaceHidden(choice.Drag, choice.Column));
+    else
+      ReturnToHand(choice.Drag);
+  }
+
+  private void CancelHiddenChoice()
+  {
+    if (_hiddenChoice is not { } choice)
+      return;
+    _hiddenChoice = null;
+    ReturnToHand(choice.Drag);
+  }
+
+  /// <summary>
+  /// Положить карточку из руки взакрытую сверху стопки теории. Закрытую карточку на столе рисует сам стол
+  /// (<see cref="PlayingField.HiddenCardPlaced"/>), поэтому летящая карточка больше не нужна.
+  /// </summary>
+  private void PlaceHidden(HandDrag drag, TheoryColumn column)
+  {
+    _session.PlaceHiddenFromHand(drag.View.Card, column);
+    drag.View.QueueFree();
+    if (_hand.DraggedCard == drag.View.Card)
+      _hand.DraggedCard = null;
   }
 
   /// <summary>
@@ -399,6 +504,19 @@ public partial class CardDragController : Node
   private PlacementCheck Check(CardView view, Vector2I cell) => _board.Field.CheckDrop(view.Card, cell.ToCell(), _session.CurrentPlayer);
 
   /// <summary>
+  /// Подсветка под летящей карточкой: можно положить открыто или взакрытую (по праву Спецагента).
+  /// </summary>
+  private PlacementCheck DropCheck(CardView view, Vector2I cell)
+  {
+    var check = Check(view, cell);
+    var player = _session.CurrentPlayer;
+    if (check.IsAllowed || _board.Field.HiddenPlacementColumnAt(cell.ToCell(), player) is not { } column)
+      return check;
+    var hidden = _board.Field.CheckHiddenFromHand(view.Card, column, player);
+    return hidden.IsAllowed ? hidden : check;
+  }
+
+  /// <summary>
   /// Брать карточки можно только в фазе ходов игроков, когда ничего не ждёт выбора: ни проверка успеха, ни цель
   /// выложенной карточки, ни действие основной теории, ни выбор цели карточки (<see cref="IsChoosing"/>).
   /// </summary>
@@ -408,6 +526,7 @@ public partial class CardDragController : Node
     && _session.PendingCheck is null
     && _session.PendingPlacement is null
     && _session.PendingTheoryTrigger is null
+    && _hiddenChoice is null
     && !(IsChoosing?.Invoke() ?? false);
 
   /// <summary>

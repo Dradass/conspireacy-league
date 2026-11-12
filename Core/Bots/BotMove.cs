@@ -37,17 +37,30 @@ public sealed record BuyMove(Cell Cell, PersonCard Card, double Value) : BotMove
 /// <summary>
 /// Выложить карточку с руки в ячейку — в личный штаб или в общую зону.
 /// </summary>
-public sealed record PlaceMove(Card Card, Cell Cell, double Value) : BotMove(Value)
+/// <param name="Column">Штаб теории, к которому присоединится карточка, или <c>null</c>.</param>
+public sealed record PlaceMove(Card Card, Cell Cell, double Value, TheoryColumn? Column = null) : BotMove(Value)
 {
   public override string Key => $"place {Card.GetHashCode()} {Cell}";
 
   public override string Describe(GameSession session)
   {
     var where = session.Field.CommonZone.Contains(Cell)
-      ? session.Field.ColumnAt(Cell) is { } column ? $"в штаб теории «{column.Theory.Name}»" : "в общую зону"
+      ? (Column ?? session.Field.ColumnAt(Cell)) is { } column ? $"в штаб теории «{column.Theory.Name}»"
+        : Card.Theory is { } theory ? $"в общую зону — новая теория «{theory.Name}»" : "в общую зону"
       : "в личный штаб";
     return $"выкладывает «{Card.Name}»{BuyMove.TheorySuffix(Card)} {where}";
   }
+}
+
+/// <summary>
+/// Выложить карточку с руки взакрытую в теорию по праву своего Спецагента (<see cref="GameSession.PlaceHiddenFromHand"/>).
+/// </summary>
+public sealed record PlaceHiddenMove(Card Card, TheoryColumn Column, double Value) : BotMove(Value)
+{
+  public override string Key => $"hidden {Card.GetHashCode()} {Column.Theory.Name}";
+
+  public override string Describe(GameSession session) =>
+    $"выкладывает персонажа взакрытую в штаб теории «{Column.Theory.Name}»";
 }
 
 /// <summary>
@@ -58,7 +71,7 @@ public sealed record UseCardMove(Cell Cell, Effect Option, GameContext Context, 
   public override string Key => $"use {Cell} {Option.Description}";
 
   public override string Describe(GameSession session) =>
-    $"играет «{session.Field.CardAt(Cell)?.Name}»: {Option.Description}";
+    $"играет «{session.Field.CardAt(Cell)?.Name}»: {Option.Description}{Context.TheoriesSuffix()}";
 }
 
 /// <summary>
@@ -69,7 +82,7 @@ public sealed record UseTheoryCardMove(OwnedTheoryCard Card, GameContext Context
   public override string Key => $"theory {Card.Card.Name}";
 
   public override string Describe(GameSession session) =>
-    $"применяет карточку теории «{Card.Card.Name}»: {Card.Card.OnPlayFromHand.Description}";
+    $"применяет карточку теории «{Card.Card.Name}»: {Card.Card.OnPlayFromHand.Description}{Context.TheoriesSuffix()}";
 }
 
 /// <summary>

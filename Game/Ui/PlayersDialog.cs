@@ -1,15 +1,16 @@
+using ConspiracyLeague.Core.Bots;
 using ConspiracyLeague.Core.Field;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Игрок, заданный перед партией: имя и играет ли за него бот.
+/// Игрок, заданный перед партией: имя, играет ли за него бот и какого уровня.
 /// </summary>
-public sealed record PlayerSetup(string Name, bool IsBot);
+public sealed record PlayerSetup(string Name, bool IsBot, BotLevel Level = BotLevel.Easy);
 
 /// <summary>
-/// Окно перед началом партии: количество игроков и строка с именем и галочкой «Бот» для каждого. «Начать» запускает партию,
+/// Окно перед началом партии: количество игроков и строка с именем, галочкой «Бот» и уровнем бота для каждого. «Начать» запускает партию,
 /// «Назад» (или Esc) возвращает в стартовое меню.
 /// </summary>
 public partial class PlayersDialog : MenuDialog
@@ -25,6 +26,7 @@ public partial class PlayersDialog : MenuDialog
 
   private readonly List<NameField> _fields = [];
   private readonly List<CheckBox> _bots = [];
+  private readonly List<OptionButton> _levels = [];
   private string _title = string.Empty;
   private TaskCompletionSource<IReadOnlyList<PlayerSetup>?> _result = null!;
   private Label _countLabel = null!;
@@ -101,17 +103,33 @@ public partial class PlayersDialog : MenuDialog
       field.SizeFlagsHorizontal = SizeFlags.ExpandFill;
       field.TextSubmitted += _ => Start();
 
+      // Уровень бота виден, только когда за игрока играет бот. Место под него занято всегда, чтобы строки
+      // были одной ширины.
+      var level = new OptionButton { Name = $"Level{number}", FocusMode = FocusModeEnum.None };
+      ShowLevel(level, false);
+      level.AddThemeFontSizeOverride("font_size", FieldFontSize);
+      level.AddItem("Лёгкий", (int)BotLevel.Easy);
+      level.AddItem("Средний", (int)BotLevel.Medium);
+      level.AddItem("Сложный", (int)BotLevel.Hard);
+      level.AddItem("Очень сложный", (int)BotLevel.VeryHard);
+
       var bot = new CheckBox { Name = $"Bot{number}", Text = "Бот", FocusMode = FocusModeEnum.None };
       bot.AddThemeFontSizeOverride("font_size", FieldFontSize);
-      bot.Toggled += pressed => OnBotToggled(field, number, pressed);
+      bot.Toggled += pressed =>
+      {
+        ShowLevel(level, pressed);
+        OnBotToggled(field, number, pressed);
+      };
 
       var row = new HBoxContainer { Name = $"Player{number}" };
       row.AddThemeConstantOverride("separation", 8);
       row.AddChild(field);
       row.AddChild(bot);
+      row.AddChild(level);
       _rows.AddChild(row);
       _fields.Add(field);
       _bots.Add(bot);
+      _levels.Add(level);
     }
 
     while (_fields.Count > Count)
@@ -119,9 +137,16 @@ public partial class PlayersDialog : MenuDialog
       var row = _fields[^1].GetParent();
       _fields.RemoveAt(_fields.Count - 1);
       _bots.RemoveAt(_bots.Count - 1);
+      _levels.RemoveAt(_levels.Count - 1);
       _rows.RemoveChild(row);
       row.QueueFree();
     }
+  }
+
+  private static void ShowLevel(OptionButton level, bool visible)
+  {
+    level.Disabled = !visible;
+    level.Modulate = visible ? Colors.White : Colors.Transparent;
   }
 
   /// <summary>
@@ -141,7 +166,8 @@ public partial class PlayersDialog : MenuDialog
     var players = _fields
       .Select((field, index) => new PlayerSetup(
         field.Text.Trim() is { Length: > 0 } name ? name : field.DefaultName,
-        _bots[index].ButtonPressed))
+        _bots[index].ButtonPressed,
+        (BotLevel)_levels[index].GetSelectedId()))
       .ToList();
     _result.TrySetResult(players);
     QueueFree();

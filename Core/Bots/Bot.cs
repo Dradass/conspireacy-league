@@ -15,20 +15,10 @@ namespace ConspiracyLeague.Core.Bots;
 /// (<see cref="BotEvaluator"/>) и выбирает самое выгодное. Если выгодных действий нет, бот пасует.
 /// Что можно сделать и какие цели доступны, бот спрашивает у тех же правил, что и интерфейс игрока
 /// (<see cref="PlayingField"/>, <see cref="Effect.TargetCells"/>), поэтому сам правил не дублирует.
+/// Уровень бота (<see cref="BotLevel"/>) задаёт веса оценки — <see cref="BotProfile"/>.
 /// </remarks>
 public sealed class Bot
 {
-  /// <summary>
-  /// Меньше этой выгоды действие не делается — бот пасует.
-  /// </summary>
-  private const double MinValue = 0.15;
-
-  /// <summary>
-  /// Порог для розыгрыша карточки из личного штаба: он не тратит ни денег, ни карточек, а риск провала уже учтён
-  /// в оценке, поэтому любая выгода лучше паса.
-  /// </summary>
-  private const double MinUseValue = 0.01;
-
   /// <summary>
   /// Больше стольких вариантов целей для одного действия не перебираем.
   /// </summary>
@@ -39,11 +29,25 @@ public sealed class Bot
   /// </summary>
   public Player Player { get; }
 
+  /// <summary>
+  /// Настройки оценки ходов — уровень бота.
+  /// </summary>
+  public BotProfile Profile { get; }
+
+  /// <param name="player">Игрок, за которого играет бот; уровень — <see cref="Player.BotLevel"/>.</param>
+  public Bot(Player player) : this(player, BotProfile.For(player.BotLevel))
+  {
+  }
+
   /// <param name="player">Игрок, за которого играет бот.</param>
-  public Bot(Player player)
+  /// <param name="profile">Настройки оценки ходов.</param>
+  public Bot(Player player, BotProfile profile)
   {
     Player = player;
+    Profile = profile;
   }
+
+  private BotEvaluator Evaluator(GameSession session) => new(session, Player, Profile);
 
   /// <summary>
   /// Выбрать следующий ход. Вызывается, когда ходит игрок бота и ничего не ждёт выбора.
@@ -52,16 +56,17 @@ public sealed class Bot
   /// <param name="excluded">Ключи ходов (<see cref="BotMove.Key"/>), которые пробовать не нужно: они уже не удались.</param>
   public BotMove ChooseMove(GameSession session, IReadOnlySet<string>? excluded = null)
   {
-    var evaluator = new BotEvaluator(session, Player);
+    var evaluator = Evaluator(session);
     var moves = new List<BotMove>();
     moves.AddRange(UseCardMoves(session, evaluator));
     moves.AddRange(TheoryCardMoves(session, evaluator));
     moves.AddRange(PlaceMoves(session, evaluator));
+    moves.AddRange(HiddenPlaceMoves(session, evaluator));
     moves.AddRange(BuyMoves(session, evaluator));
 
     var best = moves
       .Where(move => excluded is null || !excluded.Contains(move.Key))
-      .Where(move => move.Value >= (move is UseCardMove ? MinUseValue : MinValue))
+      .Where(move => move.Value >= (move is UseCardMove ? Profile.MinUseValue : Profile.MinValue))
       .MaxBy(move => move.Value);
     return best ?? new PassMove();
   }
@@ -71,7 +76,7 @@ public sealed class Bot
   /// </summary>
   public PlacementResponse ChoosePlacement(GameSession session, PlacementChoice choice)
   {
-    var evaluator = new BotEvaluator(session, Player);
+    var evaluator = Evaluator(session);
     var effect = choice.Effect;
     var context = session.PlacementContext(choice);
     var best = CellCandidates(effect, context, evaluator)
@@ -90,7 +95,7 @@ public sealed class Bot
   /// </summary>
   public TriggerResponse ChooseTrigger(GameSession session, TheoryTrigger trigger)
   {
-    var evaluator = new BotEvaluator(session, Player);
+    var evaluator = Evaluator(session);
     var effect = trigger.Effect;
     var best = Candidates(effect, trigger.Context, evaluator)
       .Take(MaxCandidates)
@@ -122,6 +127,9 @@ public sealed class Bot
         break;
       case PlaceMove place:
         session.PlaceFromHand(place.Card, place.Cell);
+        break;
+      case PlaceHiddenMove hidden:
+        session.PlaceHiddenFromHand(hidden.Card, hidden.Column);
         break;
       case UseCardMove use:
         session.CheckSuccess(use.Cell);
@@ -231,7 +239,7 @@ public sealed class Bot
         var value = chance * plan.Value + evaluator.FailurePenalty(cell);
         // Быстрое действие не тратит действие хода — его не жалко сыграть.
         if (option.IsQuick)
-          value += 0.2;
+          value += Profile.QuickBonus;
         yield return new UseCardMove(cell, option, plan.Context, value);
       }
     }
@@ -258,7 +266,23 @@ public sealed class Bot
     foreach (var card in Player.Hand.Cards.Distinct())
     {
       if (BestPlacement(session, evaluator, card, extraCost: 0) is { } placement)
-        yield return new PlaceMove(card, placement.Cell, placement.Value);
+        yield return new PlaceMove(card, placement.Cell, placement.Value, placement.Column);
+    }
+  }
+
+  /// <summary>
+  /// Выложить карточку с руки взакрытую в теорию, где лежит открытый Спецагент бота.
+  /// </summary>
+  private IEnumerable<BotMove> HiddenPlaceMoves(GameSession session, BotEvaluator evaluator)
+  {
+    foreach (var card in Player.Hand.Cards.Distinct())
+    {
+      foreach (var (column, check) in session.Field.HiddenPlacementTargets(card, Player))
+      {
+        if (!check.IsAllowed || !Player.CanAfford(check.Cost))
+          continue;
+        yield return new PlaceHiddenMove(card, column, evaluator.HiddenPlacementValue(card, column, check));
+      }
     }
   }
 
@@ -272,21 +296,31 @@ public sealed class Bot
         continue;
 
       // Купленную карточку ещё нужно выложить — это второе действие, поэтому выгода меньше.
-      var value = placement.Value * 0.7 - card.Cost * evaluator.MoneyWeight - evaluator.HandCrowding;
+      var value = placement.Value * Profile.BuyFactor - card.Cost * evaluator.MoneyWeight - evaluator.HandCrowding
+        + ThemedBuyBonus(card, placement.Column);
       yield return new BuyMove(cell, card, value);
     }
   }
 
   /// <summary>
+  /// Прибавка к покупке карточки с теорией, которую бот подложит в штаб этой же теории: чем больше там адептов,
+  /// тем выгоднее (<see cref="BotProfile.ThemedBuyBonus"/> за адепта, не больше <see cref="BotProfile.ThemedBuyAdeptsCap"/> адептов).
+  /// </summary>
+  private double ThemedBuyBonus(Card card, TheoryColumn? target) =>
+    card.Theory is { } theory && target is { IsClosed: false } column && column.Theory == theory
+      ? Profile.ThemedBuyBonus * Math.Min(column.Adepts, Profile.ThemedBuyAdeptsCap)
+      : 0;
+
+  /// <summary>
   /// Лучшее место для карточки: в личном штабе или в общей зоне, с оценкой выгоды.
   /// </summary>
   /// <param name="extraCost">Сколько $ потратится до выкладывания (покупка карточки).</param>
-  private (Cell Cell, double Value)? BestPlacement(GameSession session, BotEvaluator evaluator, Card card, int extraCost)
+  private (Cell Cell, double Value, TheoryColumn? Column)? BestPlacement(GameSession session, BotEvaluator evaluator, Card card, int extraCost)
   {
     if (card is not PersonCard person)
       return null;
 
-    (Cell Cell, double Value)? best = null;
+    (Cell Cell, double Value, TheoryColumn? Column)? best = null;
     foreach (var (cell, check) in session.Field.AvailableCells(card, Player))
     {
       if (!Player.CanAfford(check.Cost + extraCost))
@@ -297,7 +331,7 @@ public sealed class Bot
         : evaluator.PersonalPlacementValue(person, cell);
       value -= check.Cost * evaluator.MoneyWeight;
       if (best is null || value > best.Value.Value)
-        best = (cell, value);
+        best = (cell, value, check.Column);
     }
 
     return best;

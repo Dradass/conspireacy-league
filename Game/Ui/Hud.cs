@@ -151,8 +151,6 @@ public partial class Hud : CanvasLayer
         (size, screen) => new Vector2(screen.X - size.X - Margin, Margin)));
       layout.AddChild(CreateWindow(player, HudWindowKind.Hand, pinned: true,
         (size, screen) => screen - size - new Vector2(Margin, Margin)));
-      layout.AddChild(CreateWindow(player, HudWindowKind.PersonalHq, pinned: true,
-        (size, screen) => new Vector2(Margin, screen.Y - size.Y - Margin)));
     }
 
     return windows;

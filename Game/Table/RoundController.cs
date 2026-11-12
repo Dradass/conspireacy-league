@@ -25,6 +25,12 @@ public partial class RoundController : Node
   private TableCamera _camera = null!;
 
   /// <summary>
+  /// Показывать анимацию получения денег: камера по очереди едет к каждой теории, над карточками всплывают суммы.
+  /// Выключено — деньги начисляются сразу, одним шагом.
+  /// </summary>
+  public bool IncomeAnimation { get; set; }
+
+  /// <summary>
   /// Сообщение игрокам о том, что происходит.
   /// </summary>
   public event Action<string>? Hint;
@@ -94,11 +100,22 @@ public partial class RoundController : Node
       }.OfType<string>())}");
     await Pause(StepPause);
 
-    while (_session.PayNextTheoryIncome() is { } income)
+    if (IncomeAnimation)
     {
-      _camera.FocusOn(_board.CellCenter(income.Column.TheoryCell.ToVector2I()));
-      Hint?.Invoke($"Адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
-      await _board.ShowIncome(income);
+      while (_session.PayNextTheoryIncome() is { } income)
+      {
+        _camera.FocusOn(_board.CellCenter(income.Column.TheoryCell.ToVector2I()));
+        Hint?.Invoke($"Адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
+        await _board.ShowIncome(income);
+      }
+    }
+    else
+    {
+      var total = 0;
+      while (_session.PayNextTheoryIncome() is { } income)
+        total += income.Total;
+      if (total > 0)
+        Hint?.Invoke($"Адепты приносят деньги: всего {total}$.");
     }
 
     var zones = _session.Field.PlayerZones.Values.ToList();
@@ -147,6 +164,17 @@ public partial class RoundController : Node
   /// </summary>
   private async Task PlayFinalScoring()
   {
+    if (!IncomeAnimation)
+    {
+      while (_session.PayNextLeadersBonus() is not null)
+      {
+      }
+      while (_session.PayNextTheoryIncome() is not null)
+      {
+      }
+      return;
+    }
+
     while (_session.PayNextLeadersBonus() is { } bonus)
     {
       _camera.FocusOn(_board.CellCenter(bonus.Column.TheoryCell.ToVector2I()));

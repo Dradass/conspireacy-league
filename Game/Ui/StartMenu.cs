@@ -126,13 +126,14 @@ public partial class StartMenu : Control
       PlayerCount = players.Count,
       PlayerNames = players.Select(player => player.Name).ToList(),
       BotSeats = players.Select(player => player.IsBot).ToList(),
+      BotLevels = players.Select(player => player.Level).ToList(),
       DevMode = devMode,
       Mode = mode,
       FailureConsequences = GameOptions.CriticalFailure,
       RadialField = GameOptions.RadialField,
       BotSlowdown = GameOptions.BotSlowdown,
       FollowBots = GameOptions.FollowBots,
-      RoundSummaryChart = GameOptions.RoundSummary == RoundSummaryView.BarChart,
+      IncomeAnimation = GameOptions.IncomeAnimation,
     };
     tree.Root.AddChild(game);
     tree.CurrentScene = game;

@@ -4,8 +4,8 @@ using Godot;
 namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
-/// Окно «Опции» стартового меню: вид поля (классический или круг), критический провал, вид итогов раунда,
-/// скорость ботов и слежение камеры за ботами. Изменения сразу
+/// Окно «Опции» стартового меню: вид поля (классический или круг), критический провал, скорость ботов и слежение
+/// камеры за ботами. Изменения сразу
 /// сохраняются (<see cref="GameOptions"/>) и действуют для следующих партий.
 /// </summary>
 public partial class OptionsDialog : MenuDialog
@@ -60,19 +60,6 @@ public partial class OptionsDialog : MenuDialog
     hint.AddThemeColorOverride("font_color", HintColor);
     column.AddChild(hint);
 
-    column.AddChild(CreateLabel("Вид итогов раунда"));
-    var summary = new OptionButton { Name = "RoundSummaryView", FocusMode = FocusModeEnum.None };
-    summary.AddThemeFontSizeOverride("font_size", LabelFontSize);
-    summary.AddItem("Текст", (int)RoundSummaryView.Text);
-    summary.AddItem("Столбчатая диаграмма", (int)RoundSummaryView.BarChart);
-    summary.Selected = summary.GetItemIndex((int)GameOptions.RoundSummary);
-    summary.ItemSelected += index =>
-    {
-      GameOptions.RoundSummary = (RoundSummaryView)summary.GetItemId((int)index);
-      GameOptions.Save();
-    };
-    column.AddChild(summary);
-
     var speedLabel = CreateLabel(BotSpeedText());
     column.AddChild(speedLabel);
     var speed = new HSlider
@@ -113,6 +100,25 @@ public partial class OptionsDialog : MenuDialog
     var followHint = CreateLabel("Камера следует за действиями ботов: куда бот кладёт карточку и на что действует.", HintFontSize);
     followHint.AddThemeColorOverride("font_color", HintColor);
     column.AddChild(followHint);
+
+    var incomeAnimation = new CheckButton
+    {
+      Name = "IncomeAnimation",
+      Text = "Анимация получения денег",
+      ButtonPressed = GameOptions.IncomeAnimation,
+      FocusMode = FocusModeEnum.None,
+    };
+    incomeAnimation.AddThemeFontSizeOverride("font_size", LabelFontSize);
+    incomeAnimation.Toggled += pressed =>
+    {
+      GameOptions.IncomeAnimation = pressed;
+      GameOptions.Save();
+    };
+    column.AddChild(incomeAnimation);
+
+    var incomeHint = CreateLabel("В конце раунда камера показывает каждую теорию и сколько денег принесли её адепты.", HintFontSize);
+    incomeHint.AddThemeColorOverride("font_color", HintColor);
+    column.AddChild(incomeHint);
 
     column.AddChild(CreateButton("Back", "Назад", Cancel));
   }

@@ -21,12 +21,16 @@ internal sealed class BotEvaluator
 {
   private readonly GameSession _session;
   private readonly Player _player;
+  private readonly BotProfile _profile;
+  private readonly Dictionary<Player, double> _rivalWeights;
 
-  public BotEvaluator(GameSession session, Player player)
+  public BotEvaluator(GameSession session, Player player, BotProfile profile)
   {
     _session = session;
     _player = player;
+    _profile = profile;
     RoundsLeft = EstimateRoundsLeft();
+    _rivalWeights = RivalWeights();
     var early = RoundsLeft > 2;
     switch (session.Mode)
     {
@@ -58,6 +62,42 @@ internal sealed class BotEvaluator
   }
 
   /// <summary>
+  /// Вес каждого соперника: в сумме <see cref="BotProfile.RivalShare"/>. Если <see cref="BotProfile.ThreatFocus"/>
+  /// больше нуля, тот, кто впереди, весит больше: боту важнее не дать выиграть лидеру.
+  /// </summary>
+  private Dictionary<Player, double> RivalWeights()
+  {
+    var rivals = Rivals.ToList();
+    if (rivals.Count == 0)
+      return new Dictionary<Player, double>();
+    if (_profile.ThreatFocus <= 0)
+      return rivals.ToDictionary(rival => rival, _ => RivalWeight);
+
+    var standings = _session.Players.ToDictionary(player => player, Standing);
+    var scale = Math.Max(5, standings.Values.Select(Math.Abs).Max() * 0.25);
+    var top = standings.Values.Max();
+    var raw = rivals.ToDictionary(rival => rival, rival => Math.Exp(_profile.ThreatFocus * (standings[rival] - top) / scale));
+    var sum = raw.Values.Sum();
+    return raw.ToDictionary(entry => entry.Key, entry => _profile.RivalShare * entry.Value / sum);
+  }
+
+  /// <summary>
+  /// Насколько игрок близок к победе сейчас — в единицах счёта режима.
+  /// </summary>
+  private double Standing(Player player) => _session.Mode switch
+  {
+    GameMode.Money => player.Money + VictoryPoints.AdeptPoints(Field).GetValueOrDefault(player) * (RoundsLeft + 1),
+    GameMode.Race => _session.RaceScoreOf(player).Total + player.Money * 0.05,
+    _ => _session.ScoreOf(player).Total,
+  };
+
+  /// <summary>
+  /// С каким весом учитывается выгода соперника (<c>null</c> — неизвестно чья: средний вес).
+  /// </summary>
+  public double RivalWeightOf(Player? rival) =>
+    rival is not null && _rivalWeights.TryGetValue(rival, out var weight) ? weight : RivalWeight;
+
+  /// <summary>
   /// На сколько $ больше текущих денег может стоить персонаж, на которого бот копит.
   /// </summary>
   private const int MaxSavingsGap = 8;
@@ -87,7 +127,7 @@ internal sealed class BotEvaluator
       if (perDollar > best)
         (goal, best) = (card, perDollar);
     }
-    return (goal, best * 0.6);
+    return (goal, best * _profile.SavingsShare);
   }
 
   /// <summary>
@@ -136,7 +176,7 @@ internal sealed class BotEvaluator
   /// <summary>
   /// С каким весом учитывается выгода каждого соперника.
   /// </summary>
-  public double RivalWeight => 0.6 / Math.Max(1, _session.Players.Count - 1);
+  public double RivalWeight => _profile.RivalShare / Math.Max(1, _session.Players.Count - 1);
 
   /// <summary>
   /// Соперники бота.
@@ -146,7 +186,7 @@ internal sealed class BotEvaluator
   /// <summary>
   /// Слишком много карточек в руке — новые покупать незачем.
   /// </summary>
-  public double HandCrowding => Math.Max(0, _player.Hand.Cards.Count - 3) * 0.4;
+  public double HandCrowding => Math.Max(0, _player.Hand.Cards.Count - _profile.HandLimit) * 0.4;
 
   private int EstimateRoundsLeft()
   {
@@ -196,9 +236,9 @@ internal sealed class BotEvaluator
     var value = (ownedAfter ? totalAfter : 0) * InfluenceWeight - (ownedBefore ? column.Influence : 0) * InfluenceWeight;
     value += TheoryCardsDelta(cardBefore, cardAfter);
     if (!ownedBefore && ownedAfter)
-      value += RivalWeight * (column.Influence * InfluenceWeight + (cardExists ? TheoryCardWorth : 0));
+      value += RivalWeightOf(column.Owner) * (column.Influence * InfluenceWeight + (cardExists ? TheoryCardWorth : 0));
     if (!ownedAfter)
-      value -= RivalWeight * (influence * InfluenceWeight + (cardGranted ? TheoryCardWorth : 0) + RaceProgressValue(column, leadersAfter));
+      value -= RivalWeightOf(column.Owner ?? BestRivalIn(column)) * (influence * InfluenceWeight + (cardGranted ? TheoryCardWorth : 0) + RaceProgressValue(column, leadersAfter));
     else
       value += LeaderWeight + RaceProgressValue(column, leadersAfter);
 
@@ -234,6 +274,9 @@ internal sealed class BotEvaluator
       value += RaceScoring.FinishBonus + column.Adepts * ShareOf(column, _player);
     return value;
   }
+
+  private Player? BestRivalIn(TheoryColumn column) =>
+    Rivals.Where(rival => column.InfluenceOf(rival) > 0).MaxBy(column.InfluenceOf);
 
   private bool WillFinish(TheoryColumn column, int leaders) =>
     !RaceScoring.IsFinished(column, _session.Players.Count) && leaders >= RaceScoring.FinishLeaders(column, _session.Players.Count);
@@ -276,6 +319,13 @@ internal sealed class BotEvaluator
       && Field.TheoryCards.Any(owned => owned.Owner == _player && owned.Card.Theory == column.Theory));
 
   /// <summary>
+  /// Выгода от того, чтобы выложить карточку с руки взакрытую в теорию (по праву Спецагента): ещё один лидер
+  /// с влиянием гражданина, но сама карточка из руки уходит.
+  /// </summary>
+  public double HiddenPlacementValue(Card card, TheoryColumn column, PlacementCheck check) =>
+    JoinValue(column, new HiddenCard(card).Influence, homeless: false) - HandCardWorth(card) - check.Cost * MoneyWeight;
+
+  /// <summary>
   /// Выгода от действия при выкладывании в штаб теории.
   /// </summary>
   private double PlacedEffectValue(PersonCard card, TheoryColumn? column)
@@ -283,6 +333,9 @@ internal sealed class BotEvaluator
     var effect = card.OnPlacedInHeadquarters;
     if (effect == Effect.None)
       return 0;
+    // Право выкладывать взакрытую: потом можно будет класть сюда лидеров с руки.
+    if (effect is AllowHiddenPlacementEffect)
+      return column is null ? 0.3 : 0.5 + 0.5 * InfluenceWeight;
     // Цель выберем потом; обычно найдётся что-то полезное.
     if (effect.RequiresTargetCell)
       return 0.6;
@@ -304,7 +357,7 @@ internal sealed class BotEvaluator
   /// </summary>
   public double PersonalPlacementValue(PersonCard card, Cell cell)
   {
-    var uses = Math.Min(RoundsLeft, 5) * 0.8;
+    var uses = Math.Min(RoundsLeft, _profile.UsesCap) * _profile.UsesFactor;
     var zone = Field.PlayerZones[_player];
     var neighbours = cell.Surrounding.Where(zone.Contains).Select(Field.CardAt).OfType<Card>().ToList();
 
@@ -515,7 +568,7 @@ internal sealed class BotEvaluator
     if (!Field.FailureConsequences || Field.CardAt(cell) is not PersonCard card)
       return 0;
 
-    var futureUses = Math.Min(RoundsLeft - 1, 5) * 0.8;
+    var futureUses = Math.Min(RoundsLeft - 1, _profile.UsesCap) * _profile.UsesFactor;
     if (futureUses <= 0)
       return 0;
 
@@ -556,8 +609,12 @@ internal sealed class BotEvaluator
   {
     if (column is { IsClosed: true })
       return 0;
-    var share = column is null ? 1 : ShareOf(column, _player);
-    return count * AdeptUnit(column) * (share - (1 - share) * RivalWeight);
+    if (column is null)
+      return count * AdeptUnit(null);
+    var share = ShareOf(column, _player);
+    // Доля соперников — с весом каждого; без слежения за лидером все весят одинаково.
+    var rivals = _profile.ThreatFocus > 0 ? Rivals.Sum(rival => ShareOf(column, rival) * RivalWeightOf(rival)) : (1 - share) * RivalWeight;
+    return count * AdeptUnit(column) * (share - rivals);
   }
 
   /// <summary>
@@ -629,13 +686,13 @@ internal sealed class BotEvaluator
   {
     if (IsMine(cell))
       return -2 - WorthAt(cell);
-    return IsRival(cell) ? RivalWeight * WorthAt(cell) * worthFactor + 0.2 : 0;
+    return IsRival(cell) ? RivalWeightOf(OwnerOf(cell)) * WorthAt(cell) * worthFactor + 0.2 : 0;
   }
 
   /// <summary>
   /// Полезное действие: выгодно для своего персонажа, невыгодно для чужого.
   /// </summary>
-  private double Friendly(Cell? cell, double value) => IsMine(cell) ? value : -value * RivalWeight;
+  private double Friendly(Cell? cell, double value) => IsMine(cell) ? value : -value * RivalWeightOf(OwnerOf(cell));
 
   private double HandCardWorth(Card card) => card is PersonCard person ? 0.3 + person.Cost * MoneyWeight * 0.5 : 0.3;
 

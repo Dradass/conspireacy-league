@@ -257,15 +257,15 @@ public partial class Board : Node2D
     var peeked = new HashSet<CardView>(_views.Values.Where(view => view.Card is HiddenCard { IsRevealed: false } seen && seen.IsKnownBy(player)));
     if (known)
       peeked.Add(hovered!);
-    // Свою карточку, лежащую рубашкой вверх (сыгранную в личном штабе или перевёрнутую карточку теории), игрок видит,
-    // пока на неё наведён курсор.
+    // Карточку, лежащую рубашкой вверх в личном штабе (сыгранного персонажа или перевёрнутую карточку теории), видно,
+    // пока на неё наведён курсор, — и свою, и чужую: её уже играли открыто, это не тайна. Закрытые карты так не видны.
     if (CellAt(GetGlobalMousePosition()) is { } hoverCell)
     {
       var hoveredCell = hoverCell.ToCell();
-      if (Field.PlayerZones.TryGetValue(player, out var zone) && zone.Contains(hoveredCell) && Field.IsUsed(hoveredCell)
-        && ViewAt(hoverCell) is { } playedView)
+      if (Field.PlayerZones.Values.Any(zone => zone.Contains(hoveredCell)) && Field.IsUsed(hoveredCell)
+        && ViewAt(hoverCell) is { Card: not HiddenCard { IsRevealed: false } } playedView)
         peeked.Add(playedView);
-      if (TheoryCardAt(hoverCell) is { Owner: var owner } theory && owner == player
+      if (TheoryCardAt(hoverCell) is { } theory
         && (theory.IsUsed || Field.IsTheoryClosed(theory.Card.Theory))
         && _theoryViews.TryGetValue(theory, out var theoryView))
         peeked.Add(theoryView);

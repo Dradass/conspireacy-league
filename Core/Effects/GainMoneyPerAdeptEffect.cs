@@ -4,7 +4,7 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Получить 1$ за каждые <see cref="AdeptsPerDollar"/> адепта в выбранной теории, где у игрока есть лидер,
+/// Получить 1$ за каждые <see cref="AdeptsPerDollar"/> адепта в выбранной теории, владелец которой — игрок (<see cref="TheoryColumn.Owner"/>),
 /// или на своей карточке в личном штабе, на которую приводят адептов (<see cref="GameContext.TargetAdeptCard"/>).
 /// Теорию или карточку, где адептов меньше <see cref="AdeptsPerDollar"/>, выбрать нельзя.
 /// </summary>
@@ -15,12 +15,12 @@ public sealed class GainMoneyPerAdeptEffect : Effect
   /// </summary>
   public const int AdeptsPerDollar = 2;
 
-  public override string Description => $"Получить 1$ за каждые {AdeptsPerDollar} адепта в своей теории";
+  public override string Description => $"Получить 1$ за каждые {AdeptsPerDollar} адепта в теории, владельцем которой ты являешься, или на своей карточке";
 
   public override bool RequiresTheory => true;
 
   public override bool CanTargetTheory(TheoryColumn column, Player player) =>
-    base.CanTargetTheory(column, player) && column.IsLeader(player) && column.Adepts >= AdeptsPerDollar;
+    base.CanTargetTheory(column, player) && column.Owner == player && column.Adepts >= AdeptsPerDollar;
 
   public override bool CanTargetAdeptCard(Cell cell, PlayingField field) => field.AdeptsAt(cell) >= AdeptsPerDollar;
 

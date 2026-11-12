@@ -21,6 +21,11 @@ public sealed class Player
   public bool IsBot { get; init; }
 
   /// <summary>
+  /// Уровень бота, если игроком управляет бот.
+  /// </summary>
+  public Bots.BotLevel BotLevel { get; init; }
+
+  /// <summary>
   /// Баланс в $.
   /// </summary>
   public int Money { get; private set; }

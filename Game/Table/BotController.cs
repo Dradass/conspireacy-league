@@ -172,7 +172,7 @@ public partial class BotController : Node
             Bot.ApplyTrigger(_session, trigger, response);
             Hint?.Invoke(response.Skip
               ? $"{owner.Player.Name} не играет действие теории \"{theory}\"."
-              : $"{owner.Player.Name}: сработал эффект теории \"{theory}\": \"{trigger.Effect.Description}\".");
+              : $"{owner.Player.Name}: сработал эффект теории \"{theory}\": \"{trigger.Effect.Description}\"{TargetSuffix(response)}.");
           });
         });
       return;
@@ -203,6 +203,14 @@ public partial class BotController : Node
     Hint?.Invoke($"{bot.Player.Name} {move.Describe(_session)}.");
     Plan(PlaceOf(move), () => Run(move));
   }
+
+  /// <summary>
+  /// На какую теорию бот направил действие основной теории — для сообщения: « (теория «X»)».
+  /// </summary>
+  private string TargetSuffix(TriggerResponse response) =>
+    (response.Theory ?? (response.Cell is { } cell ? _session.Field.ColumnAt(cell) : null)) is { } column
+      ? $" (теория «{column.Theory.Name}»)"
+      : string.Empty;
 
   /// <summary>
   /// Выполнить ход бота; неудачный ход больше не предлагается до конца хода.
@@ -237,6 +245,10 @@ public partial class BotController : Node
       case PlaceMove place:
         _drag.PlaceForBot(place.Card, place.Cell);
         return true;
+      case PlaceHiddenMove hidden:
+        // Закрытую карточку на столе рисует сам стол (PlayingField.HiddenCardPlaced).
+        _session.PlaceHiddenFromHand(hidden.Card, hidden.Column);
+        return true;
       case UseCardMove use:
         // Розыгрыш с анимацией кубика; если проверка не началась, ход не удался.
         return _use.UseForBot(use.Cell, use.Option, use.Context) && _session.PendingCheck is not null;
@@ -258,6 +270,7 @@ public partial class BotController : Node
   {
     BuyMove buy => buy.Cell,
     PlaceMove place => place.Cell,
+    PlaceHiddenMove hidden => hidden.Column.Top.Above,
     UseCardMove use => use.Cell,
     UseTheoryCardMove theory => theory.Card.Cell,
     _ => null,

@@ -18,7 +18,7 @@ public static class GameOptions
   private const string CriticalFailureKey = "critical_failure";
   private const string BotSpeedKey = "bot_speed";
   private const string FollowBotsKey = "follow_bots";
-  private const string RoundSummaryKey = "round_summary_view";
+  private const string IncomeAnimationKey = "income_animation";
 
   /// <summary>
   /// Во сколько раз медленнее исходной скорости ходят боты на каждом делении ползунка «Скорость ботов»:
@@ -59,9 +59,10 @@ public static class GameOptions
   public static bool FollowBots { get; set; }
 
   /// <summary>
-  /// Как показывать итоги конца раунда (доход от адептов): текстом или столбчатой диаграммой.
+  /// Анимация получения денег в конце раунда: камера по очереди показывает каждую теорию и всплывающие суммы.
+  /// Выключена — деньги начисляются сразу.
   /// </summary>
-  public static RoundSummaryView RoundSummary { get; set; } = RoundSummaryView.Text;
+  public static bool IncomeAnimation { get; set; }
 
   /// <summary>
   /// Сохранить опции на диск.
@@ -73,7 +74,7 @@ public static class GameOptions
     config.SetValue(Section, CriticalFailureKey, CriticalFailure);
     config.SetValue(Section, BotSpeedKey, BotSpeed);
     config.SetValue(Section, FollowBotsKey, FollowBots);
-    config.SetValue(Section, RoundSummaryKey, (int)RoundSummary);
+    config.SetValue(Section, IncomeAnimationKey, IncomeAnimation);
     var error = config.Save(FilePath);
     if (error != Error.Ok)
       GD.PrintErr($"Не удалось сохранить опции в {FilePath}: {error}");
@@ -89,23 +90,6 @@ public static class GameOptions
     CriticalFailure = config.GetValue(Section, CriticalFailureKey, CriticalFailure).AsBool();
     BotSpeed = Math.Clamp(config.GetValue(Section, BotSpeedKey, BotSpeed).AsInt32(), 0, BotSlowdowns.Length - 1);
     FollowBots = config.GetValue(Section, FollowBotsKey, FollowBots).AsBool();
-    var summary = config.GetValue(Section, RoundSummaryKey, (int)RoundSummary).AsInt32();
-    RoundSummary = Enum.IsDefined(typeof(RoundSummaryView), summary) ? (RoundSummaryView)summary : RoundSummaryView.Text;
+    IncomeAnimation = config.GetValue(Section, IncomeAnimationKey, IncomeAnimation).AsBool();
   }
-}
-
-/// <summary>
-/// Вид итогов конца раунда.
-/// </summary>
-public enum RoundSummaryView
-{
-  /// <summary>
-  /// Текстом: строка на теорию с доходом каждого игрока.
-  /// </summary>
-  Text,
-
-  /// <summary>
-  /// Столбчатой диаграммой: столбец на теорию, сложенный из столбиков игроков.
-  /// </summary>
-  BarChart,
 }

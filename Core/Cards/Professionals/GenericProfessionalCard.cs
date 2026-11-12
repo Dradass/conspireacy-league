@@ -96,7 +96,6 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Scientist => new ScientistPassive(),
     Profession.Policeman => new PolicemanPassive(),
     Profession.TheoryMaster => new TheoryMasterPassive(),
-    Profession.Coach => new CoachPassive(),
     _ => null,
   };
 
@@ -107,7 +106,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Policeman => new RemoveHomelessEffect(),
     Profession.Journalist => new AddAdeptsPerProfessionalEffect(2),
     Profession.Actor => new AddAdeptsInOwnTheoryEffect(5),
-    Profession.SpecialAgent => new CloseLeaderEffect(),
+    Profession.SpecialAgent => new AllowHiddenPlacementEffect(),
     Profession.Coach => new TrainHomelessEffect(),
     Profession.Driver => new SwapCardsEffect(),
     _ => Effect.None,

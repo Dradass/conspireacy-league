@@ -7,8 +7,9 @@ namespace ConspiracyLeague.Game.Ui;
 
 /// <summary>
 /// Сводка дохода от адептов в начале раунда: каждая строка — теория, которая принесла деньги. Сначала общий доход
-/// адептов теории, затем сколько заработал каждый игрок. Если включён <see cref="Chart"/>, доход показан столбчатой
-/// диаграммой (<see cref="IncomeBarChart"/>). Закрывается кнопкой «Закрыть» или нажатием вне окна.
+/// адептов теории, затем сколько заработал каждый игрок. Сначала доход показан столбчатой диаграммой
+/// (<see cref="IncomeBarChart"/>); переключатель «График / Текст» рядом с кнопкой «Закрыть» меняет вид.
+/// Закрывается кнопкой «Закрыть» или нажатием вне окна.
 /// </summary>
 public partial class IncomeSummaryPanel : Control
 {
@@ -21,11 +22,15 @@ public partial class IncomeSummaryPanel : Control
   private CenterContainer _center = null!;
   private RichTextLabel _text = null!;
   private IncomeBarChart _chart = null!;
+  private Button _chartButton = null!;
+  private Button _textButton = null!;
+  private IReadOnlyList<TheoryIncome> _incomes = [];
+  private SolvencyChanges? _solvency;
 
   /// <summary>
-  /// Показывать доход столбчатой диаграммой, а не текстом.
+  /// Сейчас показана диаграмма, а не текст.
   /// </summary>
-  public bool Chart { get; init; }
+  private bool _showChart = true;
 
   public override void _Ready()
   {
@@ -64,7 +69,17 @@ public partial class IncomeSummaryPanel : Control
     column.AddChild(_text);
 
     var buttons = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
+    buttons.AddThemeConstantOverride("separation", 4);
     column.AddChild(buttons);
+
+    // Переключатель вида: две кнопки, нажата всегда одна.
+    var view = new ButtonGroup();
+    _chartButton = CreateViewButton("График", view, chart: true);
+    buttons.AddChild(_chartButton);
+    _textButton = CreateViewButton("Текст", view, chart: false);
+    buttons.AddChild(_textButton);
+    buttons.AddChild(new Control { CustomMinimumSize = new Vector2(16, 0) });
+
     var close = new Button { Text = "Закрыть", FocusMode = FocusModeEnum.None };
     close.Pressed += Close;
     buttons.AddChild(close);
@@ -92,7 +107,41 @@ public partial class IncomeSummaryPanel : Control
   /// <param name="incomes">Доход по теориям за конец раунда.</param>
   public void Open(IReadOnlyList<TheoryIncome> incomes, SolvencyChanges solvency)
   {
-    var chart = Chart && incomes.Any(income => income.Total > 0);
+    _incomes = incomes;
+    _solvency = solvency;
+    // Каждый раз итоги открываются графиком; без дохода графика нет — только текст.
+    var hasChart = incomes.Any(income => income.Total > 0);
+    _chartButton.Disabled = !hasChart;
+    _textButton.Disabled = !hasChart;
+    SetView(true);
+    Layout();
+    Visible = true;
+  }
+
+  private Button CreateViewButton(string text, ButtonGroup group, bool chart)
+  {
+    var button = new Button { Name = chart ? "ChartView" : "TextView", Text = text, ToggleMode = true, ButtonGroup = group, FocusMode = FocusModeEnum.None };
+    button.Pressed += () => SetView(chart);
+    return button;
+  }
+
+  /// <summary>
+  /// Показать итоги графиком или текстом.
+  /// </summary>
+  private void SetView(bool chart)
+  {
+    _showChart = chart;
+    _chartButton.SetPressedNoSignal(chart);
+    _textButton.SetPressedNoSignal(!chart);
+    Render();
+  }
+
+  private void Render()
+  {
+    if (_solvency is not { } solvency)
+      return;
+    var incomes = _incomes;
+    var chart = _showChart && incomes.Any(income => income.Total > 0);
     _chart.Visible = chart;
     if (chart)
       _chart.Show(incomes);
@@ -108,8 +157,6 @@ public partial class IncomeSummaryPanel : Control
       lines.Add($"[b]Открылись:[/b] {string.Join(", ", solvency.Reopened.Select(column => $"[color=#60e080]{column.Theory}[/color]"))}");
     _text.Text = string.Join("\n", lines);
     _text.Visible = lines.Count > 0;
-    Layout();
-    Visible = true;
   }
 
   private static string FormatLine(TheoryIncome income)

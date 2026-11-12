@@ -10,8 +10,7 @@ namespace ConspiracyLeague.Game.Ui;
 public partial class HandCardView : Control
 {
   /// <summary>
-  /// Карточки в руке мельче, чем на столе: рука не должна закрывать зону игрока и оставляет место
-  /// закреплённому личному штабу слева внизу.
+  /// Карточки в руке мельче, чем на столе: рука не должна закрывать зону игрока.
   /// </summary>
   public static readonly Vector2 CardSize = CardPainter.CardSize * 0.64f;
 

@@ -221,6 +221,30 @@ public sealed class GameSession
   public PlacementCheck PlaceInWallFromHand(Card card, int boundary) =>
     PlaceCardFromHand(card, () => Field.PlaceInWall(card, boundary, CurrentPlayer));
 
+  /// <summary>
+  /// Игрок, который сейчас ходит, выкладывает карточку с руки взакрытую сверху стопки теории — по праву своего
+  /// Спецагента в её штабе (<see cref="PlayingField.CheckHiddenFromHand"/>). Это действие хода. Платят, как за
+  /// закрытую карту; действия при выкладывании у закрытой карты нет.
+  /// </summary>
+  /// <returns>Условия, на которых карточка положена.</returns>
+  /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
+  public PlacementCheck PlaceHiddenFromHand(Card card, TheoryColumn column)
+  {
+    RequireAction();
+    var hand = CurrentPlayer.Hand;
+    if (!hand.Contains(card))
+      throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
+    var check = Field.CheckHiddenFromHand(card, column, CurrentPlayer);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    using var scope = CurrentPlayer.EarningFrom($"Выкладывание взакрытую: {card.Name}");
+    var placed = Field.PlaceHidden(card, column, CurrentPlayer);
+    hand.Remove(card);
+    CompleteAction();
+    return placed;
+  }
+
   private PlacementCheck PlaceCardFromHand(Card card, Func<PlacementCheck> place)
   {
     RequireAction();

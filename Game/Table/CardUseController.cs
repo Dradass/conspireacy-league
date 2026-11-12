@@ -375,7 +375,7 @@ public partial class CardUseController : Node
       // Эффект основной теории сработал без выбора: подсвечиваем её карточку.
       if (BaseCardOf(owned.Card.Theory) is { } baseCard)
         _board.FlashTheoryCard(baseCard);
-      Hint?.Invoke(TheoryTriggerPrefix(owned.Card.Theory) + $"Применена карточка теории «{owned.Card.Name}»: {owned.Card.OnPlayFromHand.Description}.");
+      Hint?.Invoke(TheoryTriggerPrefix(owned.Card.Theory) + $"Применена карточка теории «{owned.Card.Name}»: {owned.Card.OnPlayFromHand.Description}{context.TheoriesSuffix()}.");
     }
   }
 
@@ -1179,7 +1179,7 @@ public partial class CardUseController : Node
       return;
     var action = context.BorrowedOption is { } borrowed ? $"{option.Description}: {Lowercase(borrowed.Description)}" : option.Description;
     Hint?.Invoke(check.Succeeded
-      ? $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — успех! {action}."
+      ? $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — успех! {action}{context.TheoriesSuffix()}."
       : $"«{view.Card.Name}» (вероятность успеха {check.Chance}%): на кубике {check.Die} — провал, действие не выполняется.");
     await ToSignal(GetTree().CreateTimer(ResultPause), SceneTreeTimer.SignalName.Timeout);
     if (!IsInstanceValid(this) || !IsInsideTree())

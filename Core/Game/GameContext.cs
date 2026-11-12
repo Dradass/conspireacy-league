@@ -102,6 +102,40 @@ public sealed class GameContext
   /// </summary>
   public Market? Market { get; }
 
+  /// <summary>
+  /// С какими теориями работает действие — для сообщения на экране: « (теория «X»)», « (теории «X», «Y»)»,
+  /// « (из теории «X» в «Y»)». Пустая строка, если теории не выбраны и выбранные карточки лежат не в штабах теорий.
+  /// </summary>
+  public string TheoriesSuffix()
+  {
+    static string Name(TheoryColumn column) => $"«{column.Theory.Name}»";
+
+    if (SourceTheory is { } source && TargetTheory is { } target && source != target)
+      return $" (из теории {Name(source)} в {Name(target)})";
+
+    var columns = new List<TheoryColumn>();
+    void Add(TheoryColumn? column)
+    {
+      if (column is not null && !columns.Contains(column))
+        columns.Add(column);
+    }
+
+    Add(SourceTheory);
+    Add(TargetTheory);
+    foreach (var column in TargetTheories)
+      Add(column);
+    foreach (var cell in new[] { TargetCell, SecondTargetCell, BorrowedCell, CopiedCell })
+      if (cell is { } value)
+        Add(Field.ColumnAt(value));
+
+    return columns.Count switch
+    {
+      0 => string.Empty,
+      1 => $" (теория {Name(columns[0])})",
+      _ => $" (теории {string.Join(", ", columns.Select(Name))})",
+    };
+  }
+
   /// <param name="currentPlayer">Игрок, для которого выполняются эффекты.</param>
   /// <param name="field">Игровое поле.</param>
   /// <param name="random">Источник случайности; по умолчанию — общий.</param>

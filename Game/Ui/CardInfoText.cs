@@ -81,21 +81,29 @@ public static class CardInfoText
 
   /// <summary>
   /// Эффекты персонажа в личном штабе: действие, пассивные способности и адепты.
-  /// Пассивная способность полицейского работает в штабе теории и сюда не входит.
+  /// Пассивные способности полицейского и Мастера теорий работают в штабе теории и сюда не входят.
   /// </summary>
   private static IEnumerable<string> PersonalEffects(PersonCard person)
   {
     if (!ReferenceEquals(person.OnPlayFromHand, Effect.None))
       yield return $"Действие: {Escape(person.OnPlayFromHand.Description)}";
-    if (person.Passive is not PolicemanPassive && !ReferenceEquals(person.Passive, PassiveAbility.None))
+    if (person.Passive is not (PolicemanPassive or TheoryMasterPassive) && !ReferenceEquals(person.Passive, PassiveAbility.None))
       yield return $"Пассивно: {Escape(person.Passive.Description)}";
     if (person is HomelessCard)
       yield return $"Пассивно: соседи в личном штабе −{HomelessCard.NeighborSuccessPenalty}% успеха";
     if (person.AdeptsBonus is not null)
       yield return "На карточку в личном штабе можно приводить адептов";
+    if (person is GenericProfessionalCard { Profession: Profession.TheoryMaster })
+      yield return MasterAdeptsText;
     if (person.Passive is PolicemanPassive)
       yield return PolicemanTollText;
   }
+
+  /// <summary>
+  /// Адепты, которых Мастер теорий приводит на свою карточку после паса (см. PlayingField.AddMasterAdepts).
+  /// </summary>
+  private const string MasterAdeptsText =
+    "Пассивно: после паса владельца приводит на свою карточку по 1 адепту за каждого соседнего профессионала в личном штабе и ещё 1 за себя";
 
   /// <summary>
   /// Плата владельцу полицейского за действие, применённое к нему другим игроком.
@@ -110,7 +118,7 @@ public static class CardInfoText
   {
     if (!ReferenceEquals(person.OnPlacedInHeadquarters, Effect.None))
       yield return $"При выкладывании: {Escape(person.OnPlacedInHeadquarters.Description)}";
-    if (person.Passive is PolicemanPassive)
+    if (person.Passive is PolicemanPassive or TheoryMasterPassive)
       yield return $"Пассивно: {Escape(person.Passive.Description)}";
     if (person.Passive is PolicemanPassive)
       yield return PolicemanTollText;

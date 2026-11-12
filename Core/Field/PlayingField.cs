@@ -393,70 +393,7 @@ public sealed class PlayingField
   /// Итоговое изменение вероятности успеха персонажа в ячейке: повышение (<see cref="SuccessBonusAt"/>)
   /// минус снижение (<see cref="SuccessPenaltyAt"/>).
   /// </summary>
-  public int SuccessModifierAt(Cell cell) => SuccessBonusAt(cell) + CoachBonusAt(cell) - SuccessPenaltyAt(cell);
-
-  /// <summary>
-  /// Вероятность успеха без бонуса тренера (<see cref="CoachPassive"/>): по ней тренер выбирает, кого поддержать,
-  /// поэтому расчёт не зависит от самого бонуса тренера.
-  /// </summary>
-  private int BaseSuccessChanceAt(Cell cell) =>
-    CardAt(cell) is PersonCard person
-      ? IsFoiled(cell)
-        ? SuccessCheck.MaxChance
-        : Math.Clamp(person.SuccessChancePercent + SuccessBonusAt(cell) - SuccessPenaltyAt(cell), 0, SuccessCheck.MaxChance)
-      : 0;
-
-  /// <summary>
-  /// На сколько процентов пассивный тренер (<see cref="CoachPassive"/>) повышает вероятность успеха персонажа в ячейке.
-  /// Каждый тренер в личном штабе поддерживает одного соседа (см. <see cref="CoachTargets"/>).
-  /// </summary>
-  public int CoachBonusAt(Cell cell)
-  {
-    if (CardAt(cell) is not PersonCard || _playerZones.FirstOrDefault(pair => pair.Value.Contains(cell)) is not { Value: { } zone } pair)
-      return 0;
-
-    return CoachTargets(pair.Key, zone).Count(target => target == cell) * CoachPassive.SuccessBonus;
-  }
-
-  /// <summary>
-  /// Персонажи, которых поддерживают тренеры личного штаба: каждый тренер — один сосед с самой низкой вероятностью
-  /// успеха (из равных — случайный, но постоянный для ячейки).
-  /// </summary>
-  private IEnumerable<Cell> CoachTargets(Player owner, Zone zone) =>
-    zone.Cells
-      .Where(cell => CardAt(cell)?.Passive is CoachPassive)
-      .Select(coach => CoachTargetOf(coach, zone))
-      .Where(target => target is not null)
-      .Select(target => target!.Value);
-
-  private Cell? CoachTargetOf(Cell coach, Zone zone)
-  {
-    var candidates = coach.Surrounding
-      .Where(neighbour => zone.Contains(neighbour) && CardAt(neighbour) is PersonCard && BaseSuccessChanceAt(neighbour) < SuccessCheck.MaxChance)
-      .ToList();
-    if (candidates.Count == 0)
-      return null;
-
-    var lowest = candidates.Min(BaseSuccessChanceAt);
-    return candidates.Where(cell => BaseSuccessChanceAt(cell) == lowest).MinBy(TieBreakOf);
-  }
-
-  /// <summary>
-  /// Случайный, но постоянный для ячейки приоритет при равенстве шансов у соседей тренера.
-  /// </summary>
-  private int TieBreakOf(Cell cell)
-  {
-    if (!_tieBreaks.TryGetValue(cell, out var value))
-    {
-      value = _tieBreakRandom.Next();
-      _tieBreaks[cell] = value;
-    }
-
-    return value;
-  }
-
-  private readonly Dictionary<Cell, int> _tieBreaks = new();
-  private readonly Random _tieBreakRandom = new();
+  public int SuccessModifierAt(Cell cell) => SuccessBonusAt(cell) - SuccessPenaltyAt(cell);
 
   /// <summary>
   /// Сколько $ добавляют учёные (<see cref="ScientistPassive"/>) к деньгам, которые приносит карточка личного штаба:
@@ -2459,6 +2396,50 @@ public sealed class PlayingField
   }
 
   /// <summary>
+  /// Может ли игрок выкладывать в эту теорию персонажей с руки взакрытую: в её штабе лежит его открытый Спецагент
+  /// (действие при выкладывании <see cref="AllowHiddenPlacementEffect"/>). Закрытый Спецагент права не даёт —
+  /// у закрытой карты действие гражданина.
+  /// </summary>
+  public bool AllowsHiddenPlacement(TheoryColumn column, Player player) =>
+    column.MembersOf(player).Any(member =>
+      CardAt(member.Cell) is PersonCard { OnPlacedInHeadquarters: AllowHiddenPlacementEffect } and not HiddenCard);
+
+  /// <summary>
+  /// Проверить, может ли игрок выложить карточку с руки взакрытую в теорию своим действием хода — по праву Спецагента
+  /// (<see cref="AllowsHiddenPlacement"/>). Оплата та же, что у закрытой карты (<see cref="CheckHidden"/>).
+  /// Выкладывание в свою же теорию не вредит другим игрокам, поэтому защита полицейского его не запрещает.
+  /// </summary>
+  public PlacementCheck CheckHiddenFromHand(Card card, TheoryColumn column, Player player)
+  {
+    if (!_theoryColumns.Contains(column))
+      return PlacementCheck.Deny("Этой теории нет на поле.");
+    if (!AllowsHiddenPlacement(column, player))
+    {
+      return PlacementCheck.Deny(
+        $"Выкладывать взакрытую в теорию «{column.Theory}» можно, только пока в её штабе лежит ваш открытый Спецагент.");
+    }
+
+    return CheckHidden(card, column, player);
+  }
+
+  /// <summary>
+  /// Теории, куда игрок может выложить карточку с руки взакрытую по праву Спецагента, с условиями выкладывания.
+  /// </summary>
+  public IEnumerable<(TheoryColumn Column, PlacementCheck Check)> HiddenPlacementTargets(Card card, Player player) =>
+    _theoryColumns
+      .Where(column => AllowsHiddenPlacement(column, player))
+      .Select(column => (column, CheckHidden(card, column, player)))
+      .ToList();
+
+  /// <summary>
+  /// Теория, в которую ляжет карточка взакрытую, если её бросить на ячейку <paramref name="cell"/>: ячейка над стопкой
+  /// или сама стопка теории, куда игрок может выкладывать взакрытую (<see cref="AllowsHiddenPlacement"/>).
+  /// </summary>
+  public TheoryColumn? HiddenPlacementColumnAt(Cell cell, Player player) =>
+    _theoryColumns.FirstOrDefault(column =>
+      (column.Top.Above == cell || column.Cells.Contains(cell)) && AllowsHiddenPlacement(column, player));
+
+  /// <summary>
   /// Закрытые персонажи (<see cref="HiddenCard"/>) игрока на поле — во всех стопках теорий, включая закрытые штабы.
   /// Раскрытые не считаются.
   /// </summary>
@@ -3040,11 +3021,7 @@ public sealed class PlayingField
       return PlacementCheck.Deny(
         $"«{theory}» — дочерняя теория: её можно выложить, только когда на поле есть родительская теория «{parentTheory}».");
     }
-    if (parent.IsClosed)
-    {
-      return PlacementCheck.Deny(
-        $"«{theory}» — дочерняя теория, а штаб её родительской теории «{parentTheory}» закрыт — выложить её нельзя.");
-    }
+    // Закрытый штаб родительской теории не мешает выкладывать дочерние: важно лишь, что её стопка лежит на поле.
 
     // Дочерние теории выстраиваются в ряд по обе стороны от родительской: новую можно положить вплотную
     // к стопке родительской теории или к стопке любой уже выложенной дочерней теории того же родителя.
@@ -3161,8 +3138,8 @@ public sealed class PlayingField
       return deny("В перегородку можно вставить только дочернюю теорию.");
     if (ColumnOf(theory) is not null)
       return deny($"Теория «{theory}» уже выложена.");
-    if (ColumnOf(parentTheory) is not { } parent || parent.IsClosed)
-      return deny($"Родительская теория «{parentTheory}» не выложена или её штаб закрыт.");
+    if (ColumnOf(parentTheory) is not { } parent)
+      return deny($"Родительская теория «{parentTheory}» не выложена.");
 
     var row = SideTheoryRow;
     var leftCell = new Cell(boundary - 1, row);

@@ -1,3 +1,4 @@
+using ConspiracyLeague.Core.Bots;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Table;
 using ConspiracyLeague.Game.Ui;
@@ -24,9 +25,14 @@ public partial class Main : Node2D
   public IReadOnlyList<string>? PlayerNames { get; init; }
 
   /// <summary>
-  /// За каких игроков играет бот (<see cref="Core.Bots.Bot"/>), по порядку; задаётся в стартовом меню. Если не задано — все люди.
+  /// За каких игроков играет бот (<see cref="Bot"/>), по порядку; задаётся в стартовом меню. Если не задано — все люди.
   /// </summary>
   public IReadOnlyList<bool>? BotSeats { get; init; }
+
+  /// <summary>
+  /// Уровни ботов по порядку игроков; для людей не важны. Если не задано — лёгкие.
+  /// </summary>
+  public IReadOnlyList<BotLevel>? BotLevels { get; init; }
 
   /// <summary>
   /// Режим разработчика: под рынком панель со всеми персонажами, которых можно поставить в личный штаб.
@@ -60,9 +66,9 @@ public partial class Main : Node2D
   public bool FollowBots { get; init; }
 
   /// <summary>
-  /// Показывать итоги конца раунда столбчатой диаграммой, а не текстом.
+  /// Показывать анимацию получения денег в конце раунда.
   /// </summary>
-  public bool RoundSummaryChart { get; init; }
+  public bool IncomeAnimation { get; init; }
 
   public override void _Ready()
   {
@@ -73,6 +79,7 @@ public partial class Main : Node2D
 	  .Select((color, index) => new Player(PlayerNames is { } names ? names[index] : $"Игрок {index + 1}", color, GameSession.StartingMoney)
 	  {
 		IsBot = BotSeats is { } bots && index < bots.Count && bots[index],
+		BotLevel = BotLevels is { } levels && index < levels.Count ? levels[index] : BotLevel.Easy,
 	  }), mode: Mode);
 	session.Field.FailureConsequences = FailureConsequences;
 
@@ -136,7 +143,7 @@ public partial class Main : Node2D
 	botController.Initialize(session, board, dragController, useController, camera);
 	botController.Hint += hud.ShowMessage;
 
-	var roundController = new RoundController { Name = "RoundController" };
+	var roundController = new RoundController { Name = "RoundController", IncomeAnimation = IncomeAnimation };
 	AddChild(roundController);
 	roundController.Initialize(board, session, camera);
 	roundController.Hint += hud.ShowMessage;
@@ -149,7 +156,7 @@ public partial class Main : Node2D
 	AddChild(infoController);
 	infoController.Initialize(board, session, infoPanel, hand, market, theories);
 
-	var incomeSummary = new IncomeSummaryPanel { Name = "IncomeSummary", Chart = RoundSummaryChart };
+	var incomeSummary = new IncomeSummaryPanel { Name = "IncomeSummary" };
 	infoLayer.AddChild(incomeSummary);
 	roundController.IncomeSummaryRequested += incomeSummary.Open;
 
