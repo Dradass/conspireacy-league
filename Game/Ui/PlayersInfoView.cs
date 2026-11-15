@@ -60,6 +60,7 @@ public partial class PlayersInfoView : VBoxContainer
     Session.ActionsLeftChanged += OnActionsLeftChanged;
     Session.LastRoundDeclared += OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
+    Session.Restored += OnRestored;
     OnPhaseChanged(Session.Phase);
   }
 
@@ -74,7 +75,13 @@ public partial class PlayersInfoView : VBoxContainer
     Session.ActionsLeftChanged -= OnActionsLeftChanged;
     Session.LastRoundDeclared -= OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    Session.Restored -= OnRestored;
   }
+
+  /// <summary>
+  /// Игра через сервер: партию целиком заменило обновление — показываем всё заново.
+  /// </summary>
+  private void OnRestored() => OnPhaseChanged(Session.Phase);
 
   private void OnMoneyChanged(Player player) =>
     _balances[player].Text = (player == Turns.FirstPlayer ? "(1) " : string.Empty)

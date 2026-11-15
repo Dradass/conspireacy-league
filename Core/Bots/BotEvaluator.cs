@@ -28,7 +28,7 @@ internal sealed class BotEvaluator
   {
     _session = session;
     _player = player;
-    _profile = profile;
+    _profile = profile.ForMode(session.Mode);
     RoundsLeft = EstimateRoundsLeft();
     _rivalWeights = RivalWeights();
     var early = RoundsLeft > 2;
@@ -54,6 +54,16 @@ internal sealed class BotEvaluator
         NewTheoryWeight = 3;
         break;
     }
+
+    MoneyWeight *= _profile.MoneyFactor;
+    InfluenceWeight *= _profile.InfluenceFactor;
+    LeaderWeight *= _profile.LeaderFactor;
+    NewTheoryWeight *= _profile.NewTheoryFactor;
+
+    // В последнем раунде развития теорий деньги уже ничего не купят: они стоят ровно столько очков, сколько дают.
+    // Колода рынка пуста — после этого раунда начнётся итоговый подсчёт.
+    if (session.Mode == GameMode.TheoryDevelopment && session.Market.DeckCount == 0)
+      MoneyWeight = 1.0 / VictoryPoints.MoneyPerPoint;
 
     // Копим на сильного персонажа: пока он не по карману, каждый $ стоит дороже — дешёвые покупки
     // становятся невыгодными, а «получить $» — выгоднее.
@@ -149,6 +159,11 @@ internal sealed class BotEvaluator
   public PlayingField Field => _session.Field;
 
   /// <summary>
+  /// Настройки оценки для режима этой партии (<see cref="BotProfile.ForMode"/>).
+  /// </summary>
+  public BotProfile Profile => _profile;
+
+  /// <summary>
   /// Сколько примерно раундов осталось, включая текущий.
   /// </summary>
   public int RoundsLeft { get; }
@@ -192,8 +207,10 @@ internal sealed class BotEvaluator
   {
     if (_session.Mode == GameMode.Race && _session.IsLastRound)
       return 1;
+    // Партия кончается на обновлении рынка с пустой колодой. Пока в колоде есть хоть одна карточка, после этого
+    // раунда будет ещё как минимум один: остаток колоды выложится при обновлении, а раунд с пустой колодой — последний.
     var perRound = Math.Max(1.0, _session.MarketCardsPerRow * 1.5);
-    return 1 + (int)(_session.Market.DeckCount / perRound);
+    return 1 + (int)Math.Ceiling(_session.Market.DeckCount / perRound);
   }
 
   // ---------- Выкладывание ----------
@@ -233,19 +250,28 @@ internal sealed class BotEvaluator
     var cardBefore = ownedBefore && cardExists;
     var cardAfter = ownedAfter && (cardExists || cardGranted);
 
-    var value = (ownedAfter ? totalAfter : 0) * InfluenceWeight - (ownedBefore ? column.Influence : 0) * InfluenceWeight;
-    value += TheoryCardsDelta(cardBefore, cardAfter);
-    if (!ownedBefore && ownedAfter)
-      value += RivalWeightOf(column.Owner) * (column.Influence * InfluenceWeight + (cardExists ? TheoryCardWorth : 0));
+    // Владение, которое соперник может перехватить одной картой, стоит меньше: укрепить шаткое лидерство выгодно.
+    var keepBefore = ownedBefore ? KeepChance(column, column.InfluenceOf(_player)) : 0;
+    var keepAfter = ownedAfter ? KeepChance(column, myInfluence) : 0;
+    var cardWorth = cardBefore ? -TheoryCardsDelta(true, false) : TheoryCardsDelta(false, true);
+    var value = keepAfter * (totalAfter * InfluenceWeight + (cardAfter ? cardWorth : 0))
+      - keepBefore * (column.Influence * InfluenceWeight + (cardBefore ? cardWorth : 0));
+    if (!ownedBefore && ownedAfter && column.Owner is { } loser)
+      value += keepAfter * RivalWeightOf(loser)
+        * (column.Influence * InfluenceWeight + (cardExists ? RivalCardWorth(loser, losing: true) : 0));
     if (!ownedAfter)
-      value -= RivalWeightOf(column.Owner ?? BestRivalIn(column)) * (influence * InfluenceWeight + (cardGranted ? TheoryCardWorth : 0) + RaceProgressValue(column, leadersAfter));
+    {
+      var gainer = column.Owner ?? BestRivalIn(column);
+      value -= RivalWeightOf(gainer) * (influence * InfluenceWeight
+        + (cardGranted ? RivalCardWorth(gainer, losing: false) : 0) + RaceProgressValue(column, leadersAfter));
+    }
     else
       value += LeaderWeight + RaceProgressValue(column, leadersAfter);
 
     // Доля адептов: у бота больше лидеров в теории — больше доход и очки от адептов.
     var shareBefore = ShareOf(column, _player);
     var shareAfter = (LeadersOf(column, _player) + 1.0) / leadersAfter;
-    value += (shareAfter - shareBefore) * column.Adepts * AdeptUnit(column) * (1 + RivalWeight);
+    value += (shareAfter - shareBefore) * ExpectedAdepts(column) * AdeptUnit(column) * (1 + RivalWeight);
 
     // Ещё не владеет — но приблизился: потом можно будет перехватить.
     if (!ownedAfter && myInfluence + 2 >= bestRival)
@@ -305,7 +331,8 @@ internal sealed class BotEvaluator
       return (after ? 1 : -1) * TheoryCardWorth;
 
     var count = OwnedTheoryCount();
-    var changed = count + (after ? 1 : 0) - (before ? 1 : 0);
+    // Карточка недействующей теории в счёт не входит: её потеря не уменьшит число теорий ниже нуля.
+    var changed = Math.Max(0, count + (after ? 1 : 0) - (before ? 1 : 0));
     return VictoryPoints.TheoryPointsFor(changed) - VictoryPoints.TheoryPointsFor(count);
   }
 
@@ -314,9 +341,66 @@ internal sealed class BotEvaluator
   /// </summary>
   private double TheoryCardWorth => _session.Mode == GameMode.TheoryDevelopment ? 6 : 3;
 
-  private int OwnedTheoryCount() =>
-    Field.TheoryColumns.Count(column => column.Owner == _player
-      && Field.TheoryCards.Any(owned => owned.Owner == _player && owned.Card.Theory == column.Theory));
+  private int OwnedTheoryCount() => OwnedTheoryCountOf(_player);
+
+  private int OwnedTheoryCountOf(Player player) =>
+    Field.TheoryColumns.Count(column => column.Owner == player && column.IsActive
+      && Field.TheoryCards.Any(owned => owned.Owner == player && owned.Card.Theory == column.Theory));
+
+  /// <summary>
+  /// Сколько очков соперник потеряет (<paramref name="losing"/>) или получит от карточки теории. В развитии теорий
+  /// очки за теории растут всё быстрее, поэтому теория у того, у кого их много, стоит дороже
+  /// (<see cref="BotProfile.TheoryTableDenial"/>).
+  /// </summary>
+  private double RivalCardWorth(Player? rival, bool losing)
+  {
+    if (rival is null || _session.Mode != GameMode.TheoryDevelopment || _profile.TheoryTableDenial <= 0)
+      return TheoryCardWorth;
+    var count = OwnedTheoryCountOf(rival);
+    var table = losing
+      ? VictoryPoints.TheoryPointsFor(count) - VictoryPoints.TheoryPointsFor(Math.Max(0, count - 1))
+      : VictoryPoints.TheoryPointsFor(count + 1) - VictoryPoints.TheoryPointsFor(count);
+    return (1 - _profile.TheoryTableDenial) * TheoryCardWorth + _profile.TheoryTableDenial * table;
+  }
+
+  /// <summary>
+  /// Насколько бот уверен, что удержит теорию с влиянием <paramref name="myInfluence"/>: если ещё не спасовавший
+  /// соперник может обогнать его одной картой, засчитывается только часть (<see cref="BotProfile.TakeoverRisk"/>) —
+  /// тем меньшая, чем сильнее он обгонит.
+  /// </summary>
+  private double KeepChance(TheoryColumn column, int myInfluence)
+  {
+    // Только в развитии теорий: там владение теорией даёт очки; в остальных режимах учёт перехвата не помог.
+    if (_profile.TakeoverRisk <= 0 || column.IsClosed || _session.Mode != GameMode.TheoryDevelopment)
+      return 1;
+    // На сколько соперник обгонит бота, положив свою лучшую карту: чем больше, тем легче ему перехватить теорию.
+    var overtake = Rivals.Where(rival => !_session.Turns.HasPassed(rival))
+      .Select(rival => column.InfluenceOf(rival) + TakeoverReach(rival) - myInfluence)
+      .DefaultIfEmpty(0).Max();
+    return 1 - _profile.TakeoverRisk * Math.Clamp(overtake / (double)TakeoverFullRiskMargin, 0, 1);
+  }
+
+  /// <summary>
+  /// Сколько влияния соперник может добавить в теорию одной картой: с руки или купленной с рынка на свои деньги.
+  /// </summary>
+  private int TakeoverReach(Player rival)
+  {
+    var reach = _takeoverReach.GetValueOrDefault(rival, -1);
+    if (reach >= 0)
+      return reach;
+    var hand = rival.Hand.Cards.OfType<PersonCard>().Select(card => card.Influence);
+    var market = _session.Market.OpenCards.Values.Where(card => card.Cost <= rival.Money).Select(card => card.Influence);
+    reach = hand.Concat(market).DefaultIfEmpty(0).Max();
+    _takeoverReach[rival] = reach;
+    return reach;
+  }
+
+  private readonly Dictionary<Player, int> _takeoverReach = new();
+
+  /// <summary>
+  /// С какого перевеса соперника после его лучшей карты риск перехвата засчитывается полностью.
+  /// </summary>
+  private const int TakeoverFullRiskMargin = 3;
 
   /// <summary>
   /// Выгода от того, чтобы выложить карточку с руки взакрытую в теорию (по праву Спецагента): ещё один лидер
@@ -359,26 +443,91 @@ internal sealed class BotEvaluator
   {
     var uses = Math.Min(RoundsLeft, _profile.UsesCap) * _profile.UsesFactor;
     var zone = Field.PlayerZones[_player];
-    var neighbours = cell.Surrounding.Where(zone.Contains).Select(Field.CardAt).OfType<Card>().ToList();
+    var neighbourCells = cell.Surrounding.Where(zone.Contains).Where(neighbour => Field.CardAt(neighbour) is not null).ToList();
+    var neighbours = neighbourCells.Select(neighbour => Field.CardAt(neighbour)!).ToList();
 
     // Каждый бездомный рядом снижает успех нового персонажа на 5%.
     var penalty = HomelessCard.NeighborSuccessPenalty / 100.0;
     var chance = Math.Max(0, card.SuccessChancePercent / 100.0 - penalty * neighbours.Count(neighbour => neighbour is HomelessCard));
     var value = chance * UseValue(card) * uses;
 
-    // Сам учёный повышает успех соседей и добавляет $ к их доходу.
+    // Учёный повышает успех соседей и добавляет $ к их доходу: и когда кладём его самого, и когда кладём рядом с ним.
+    var openScientists = neighbourCells.Count(neighbour => Field.CardAt(neighbour)!.Passive is ScientistPassive && !Field.IsUsed(neighbour));
+    double roughScientist, exactScientist;
     if (card.Passive is ScientistPassive)
-      value += 0.4 * neighbours.Count * uses * 0.5;
+    {
+      roughScientist = 0.4 * neighbours.Count * uses * 0.5;
+      exactScientist = neighbourCells.Where(neighbour => Field.CardAt(neighbour) is PersonCard)
+        .Sum(neighbour => ScientistGainFor(Field.CardAt(neighbour)!, Field.SuccessChanceAt(neighbour) / 100.0)) * uses;
+    }
     else
-      value += 0.1 * neighbours.Count(neighbour => neighbour.Passive is ScientistPassive);
+    {
+      roughScientist = 0.1 * neighbours.Count(neighbour => neighbour.Passive is ScientistPassive);
+      exactScientist = openScientists * ScientistGainFor(card, chance) * uses;
+    }
+    value += _profile.ScientistExact * exactScientist + (1 - _profile.ScientistExact) * roughScientist;
 
     // Бездомный снижает успех всех соседей, в том числе других бездомных, — не ставим их кучей. Полную потерю
-    // соседей не вычитаем: свободных ячеек мало, соседи всё равно появятся, а с полной потерей бот перестаёт
-    // выкладывать бездомных к себе и проигрывает в режиме денег. Небольшой штраф лишь выбирает ячейку получше.
+    // соседей засчитываем лишь долей (HomelessHarm): свободных ячеек мало, соседи всё равно появятся, а с полной
+    // потерей бот перестаёт выкладывать бездомных к себе и проигрывает в режиме денег.
     if (card is HomelessCard)
-      value -= HomelessNeighbourPenalty * neighbours.Count;
+    {
+      value -= HomelessNeighbourPenalty * neighbours.Count + InspectionRisk() * uses;
+      if (_profile.HomelessHarm > 0)
+        value -= _profile.HomelessHarm * uses * neighbourCells
+          .Where(neighbour => Field.CardAt(neighbour) is PersonCard && Field.SuccessChanceAt(neighbour) > 0)
+          .Sum(neighbour => penalty * UseValue(Field.CardAt(neighbour)!));
+    }
+
+    // Полицейский защищает соседей от чужих негативных действий: кладём его к самым ценным, а ценных — к нему.
+    if (_profile.ProtectionValue > 0 && HostileThreat > 0)
+    {
+      var guarded = card.Passive is PolicemanPassive
+        ? neighbourCells.Where(neighbour => !Field.IsProtected(neighbour)).Sum(neighbour => WorthAt(neighbour))
+        : neighbourCells.Any(neighbour => Field.CardAt(neighbour)!.Passive is PolicemanPassive && !Field.IsUsed(neighbour))
+          ? card.Cost * MoneyWeight + card.Influence * 0.3
+          : 0;
+      value += _profile.ProtectionValue * HostileThreat * guarded;
+    }
     return value;
   }
+
+  /// <summary>
+  /// Выгода за раунд от учёного рядом с персонажем: +5% успеха и +1$, если его действие приносит деньги.
+  /// </summary>
+  private double ScientistGainFor(Card card, double chance) =>
+    ScientistPassive.NeighborSuccessBonus / 100.0 * UseValue(card)
+    + (card.OnPlayFromHand.Options.Any(BringsMoney) ? ScientistPassive.MoneyBonus * MoneyWeight * chance : 0);
+
+  private static bool BringsMoney(Effect effect) => effect switch
+  {
+    GainMoneyEffect => true,
+    QuickEffect quick => BringsMoney(quick.Inner),
+    AllOfEffect all => all.Effects.Any(BringsMoney),
+    _ => false,
+  };
+
+  /// <summary>
+  /// Насколько вероятно, что соперник ударит по персонажу в личном штабе бота до конца партии: по 25% за каждую
+  /// карту соперников (в личном штабе, на руке, карточку теории), которая понижает, переворачивает, убирает,
+  /// забирает или чипирует персонажа; не больше 1.
+  /// </summary>
+  private double HostileThreat => _hostileThreat ??= Math.Min(1, 0.25 * Rivals.Sum(rival =>
+    Field.PlayerZones[rival].Cells.Select(Field.CardAt).OfType<Card>()
+      .Concat(rival.Hand.Cards)
+      .Concat(Field.TheoryCards.Where(owned => owned.Owner == rival).Select(owned => owned.Card))
+      .Count(card => card.OnPlayFromHand.Options.Any(IsHostileToPerson))));
+
+  private double? _hostileThreat;
+
+  private static bool IsHostileToPerson(Effect effect) => effect switch
+  {
+    DemoteToHomelessEffect or WeakenCharacterEffect or FlipRivalCardEffect or RemoveCharacterEffect
+      or TakeRivalCharacterEffect or ChipPersonEffect => true,
+    QuickEffect quick => IsHostileToPerson(quick.Inner),
+    AllOfEffect all => all.Effects.Any(IsHostileToPerson),
+    _ => false,
+  };
 
   /// <summary>
   /// Примерная выгода от одного розыгрыша действия, пока цели не выбраны.
@@ -466,6 +615,8 @@ internal sealed class BotEvaluator
         return MeepleValue(theory);
       case RobLeadersEffect:
         return theory is null ? 0 : theory.Members.Count(member => member.Owner != _player) * RobLeadersEffect.Amount * MoneyWeight * (1 + RivalWeight);
+      case GainMoneyPerAllAdeptsEffect:
+        return (theory?.Adepts ?? 0) / 2 * MoneyWeight;
       case GainMoneyPerAdeptEffect:
         var adeptCount = context.TargetAdeptCard is { } adeptCard ? Field.AdeptsAt(adeptCard) : theory?.Adepts ?? 0;
         return adeptCount / 2 * MoneyWeight;
@@ -522,7 +673,7 @@ internal sealed class BotEvaluator
       case RevealHiddenCardEffect:
         return 0.1;
       case GainMoneyPerOwnedTheoryEffect or GainMoneyPerClosedHeadquartersEffect or GainMoneyPerLeaderInClosedTheoriesEffect
-        or GainMoneyPerCommunistLeaderEffect or GainMoneyPerOwnScientistEffect or GainMoneyPerAllAdeptsEffect:
+        or GainMoneyPerCommunistLeaderEffect or GainMoneyPerOwnScientistEffect:
         return 2 * MoneyWeight;
     }
 
@@ -614,7 +765,7 @@ internal sealed class BotEvaluator
     var share = ShareOf(column, _player);
     // Доля соперников — с весом каждого; без слежения за лидером все весят одинаково.
     var rivals = _profile.ThreatFocus > 0 ? Rivals.Sum(rival => ShareOf(column, rival) * RivalWeightOf(rival)) : (1 - share) * RivalWeight;
-    return count * AdeptUnit(column) * (share - rivals);
+    return count * AdeptUnit(column) * _profile.AdeptFactor * (share - rivals);
   }
 
   /// <summary>
@@ -628,6 +779,59 @@ internal sealed class BotEvaluator
     GameMode.Race => (column is null ? 0.2 : Math.Min(1.0, (double)column.Leaders / RaceScoring.FinishLeaders(column, _session.Players.Count))) + RoundsLeft * MoneyWeight,
     // Адепты — очки в конце партии и деньги каждый раунд.
     _ => 1 + RoundsLeft * MoneyWeight,
+  };
+
+  /// <summary>
+  /// Сколько адептов будет в теории к концу партии, по мнению бота: нынешние плюс доля
+  /// (<see cref="BotProfile.AdeptGrowth"/>) тех, что игроки приведут в неё своими персонажами.
+  /// </summary>
+  private double ExpectedAdepts(TheoryColumn column)
+  {
+    // В гонке адепты дают очки только теориям на финише — учёт роста там не помог.
+    if (_profile.AdeptGrowth <= 0 || column.IsClosed || _session.Mode == GameMode.Race)
+      return column.Adepts;
+    // Текущий раунд ещё идёт — засчитываем его половину.
+    var rounds = Math.Max(0, RoundsLeft - 0.5);
+    return column.Adepts + _profile.AdeptGrowth * rounds * AdeptGrowthOf(column);
+  }
+
+  /// <summary>
+  /// Сколько адептов за раунд приходит в теорию: каждый игрок отправляет всех адептов своих персонажей в свою главную
+  /// теорию — ту, где он владелец и где больше всего адептов.
+  /// </summary>
+  private double AdeptGrowthOf(TheoryColumn column)
+  {
+    if (_adeptGrowth is null)
+    {
+      _adeptGrowth = new Dictionary<TheoryColumn, double>();
+      foreach (var player in _session.Players)
+      {
+        var focus = Field.TheoryColumns.Where(theory => theory.Owner == player && !theory.IsClosed)
+          .MaxBy(theory => theory.Adepts);
+        if (focus is null)
+          continue;
+        var perRound = Field.PlayerZones[player].Cells
+          .Where(cell => Field.CardAt(cell) is PersonCard)
+          .Sum(cell => Field.CardAt(cell)!.OnPlayFromHand.Options.Select(AdeptsPerUse).DefaultIfEmpty(0).Max()
+            * Field.SuccessChanceAt(cell) / 100.0);
+        _adeptGrowth[focus] = _adeptGrowth.GetValueOrDefault(focus) + perRound;
+      }
+    }
+    return _adeptGrowth.GetValueOrDefault(column);
+  }
+
+  private Dictionary<TheoryColumn, double>? _adeptGrowth;
+
+  /// <summary>
+  /// Сколько адептов в теорию приводит один розыгрыш действия.
+  /// </summary>
+  private static double AdeptsPerUse(Effect effect) => effect switch
+  {
+    QuickEffect quick => AdeptsPerUse(quick.Inner),
+    AllOfEffect all => all.Effects.Sum(AdeptsPerUse),
+    AddAdeptsEffect adepts => adepts.Count,
+    AddAdeptsToOwnLeaderTheoryEffect or AddAdeptsPerProfessionalEffect => 2,
+    _ => 0,
   };
 
   private static int LeadersOf(TheoryColumn column, Player player) =>
@@ -695,6 +899,15 @@ internal sealed class BotEvaluator
   private double Friendly(Cell? cell, double value) => IsMine(cell) ? value : -value * RivalWeightOf(OwnerOf(cell));
 
   private double HandCardWorth(Card card) => card is PersonCard person ? 0.3 + person.Cost * MoneyWeight * 0.5 : 0.3;
+
+  /// <summary>
+  /// Сколько за раунд теряет бот от ещё одного открытого бездомного в личном штабе: каждый полицейский соперника
+  /// инспекцией берёт по <see cref="InspectionEffect.MoneyPerHomeless"/>$ за каждого бездомного.
+  /// </summary>
+  private double InspectionRisk() =>
+    Rivals.Sum(rival => RivalWeightOf(rival) * Field.PlayerZones[rival].Cells.Count(cell =>
+      Field.CardAt(cell) is { } card && card.OnPlayFromHand.Options.Any(option => option is InspectionEffect)))
+    * InspectionEffect.MoneyPerHomeless * MoneyWeight;
 
   private int OpenHomelessOf(Player player) =>
     Field.PlayerZones[player].Cells.Count(cell => Field.CardAt(cell) is HomelessCard && !Field.IsUsed(cell));

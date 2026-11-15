@@ -57,7 +57,7 @@ public partial class TheoryHighlights : Node2D
       if (!Styles.TryGetValue(column.Theory, out var style))
         continue;
 
-      var active = column.Leaders >= TheoryColumn.TheoryCardLeadersThreshold && column.Influence >= TheoryColumn.ActiveInfluence;
+      var active = column.IsActive;
       var color = style.Color with { A = active ? ActiveAlpha : FadedAlpha };
       foreach (var cell in ColumnCells(column))
       {

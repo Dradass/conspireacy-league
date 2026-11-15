@@ -8,7 +8,7 @@ namespace ConspiracyLeague.Core.Game;
 /// <param name="Player">Игрок.</param>
 /// <param name="LeaderPoints">Сумма влияния всех лидеров в штабах теорий, где игрок владелец, × 2.</param>
 /// <param name="AdeptPoints">Очки от адептов: каждый лидер теории получает свою долю, как при делении денег.</param>
-/// <param name="TheoryCount">Сколько разных теорий, где игрок владелец и у него есть карта эффекта этой теории.</param>
+/// <param name="TheoryCount">Сколько разных действующих теорий, где игрок владелец и у него есть карта эффекта этой теории.</param>
 /// <param name="TheoryPoints">Очки за количество теорий (<see cref="VictoryPoints.TheoryPointsFor"/>).</param>
 /// <param name="MoneyPoints">Очки за деньги на руках: 1 очко за каждые <see cref="VictoryPoints.MoneyPerPoint"/>$.</param>
 public sealed record VictoryScore(
@@ -83,7 +83,7 @@ public static class VictoryPoints
       .Sum(column => column.Influence) * LeaderPointsPerInfluence;
 
     var theoryCount = field.TheoryColumns
-      .Where(column => column.Owner == player)
+      .Where(column => column.Owner == player && column.IsActive)
       .Select(column => column.Theory)
       .Count(theory => field.TheoryCards.Any(owned => owned.Owner == player && owned.Card.Theory == theory));
 

@@ -25,6 +25,17 @@ public sealed class HandHub
     _hand = (session.Players.FirstOrDefault(player => !player.IsBot) ?? session.CurrentPlayer).Hand;
     _hand.Changed += OnHandChanged;
     session.Turns.TurnChanged += ShowHandOf;
+    // Игра через сервер: руку целиком заменяет обновление партии — событий о каждой карточке нет.
+    session.Restored += OnRestored;
+  }
+
+  private void OnRestored()
+  {
+    if (_selectedCard is { } selected && !_hand.Contains(selected))
+      SelectedCard = null;
+    if (_draggedCard is { } dragged && !_hand.Contains(dragged))
+      DraggedCard = null;
+    OnHandChanged();
   }
 
   /// <summary>

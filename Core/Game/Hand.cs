@@ -39,6 +39,15 @@ public sealed class Hand
   }
 
   /// <summary>
+  /// Клиент: заменить всю руку на присланную сервером (<see cref="Client.ClientMirror"/>). Событий не вызывает.
+  /// </summary>
+  internal void Restore(IEnumerable<Card> cards)
+  {
+    _cards.Clear();
+    _cards.AddRange(cards);
+  }
+
+  /// <summary>
   /// Заменить карточку в руке на другую на том же месте.
   /// </summary>
   internal void Replace(Card card, Card replacement)

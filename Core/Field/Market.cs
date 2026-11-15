@@ -114,6 +114,23 @@ public sealed class Market
   public bool Contains(Cell cell) => Zone.Contains(cell);
 
   /// <summary>
+  /// Клиент: восстановить рынок по присланному сервером виду. Колоду и резерв клиент знает только числом —
+  /// там лежат заглушки. Событий не вызывает.
+  /// </summary>
+  internal void Restore(IEnumerable<KeyValuePair<Cell, PersonCard>> open, IEnumerable<PersonCard> deck, IEnumerable<PersonCard> reserve, int slotsPerRow)
+  {
+    _openCards.Clear();
+    foreach (var (cell, card) in open)
+      _openCards.Add(cell, card);
+    _deck.Clear();
+    foreach (var card in deck)
+      _deck.Push(card);
+    _reserve.Clear();
+    _reserve.AddRange(reserve);
+    _slotsPerRow = slotsPerRow;
+  }
+
+  /// <summary>
   /// Открыть стартовые карточки: в первую и в третью строки зоны, начиная с пятого столбца, по <paramref name="perRow"/> карточек.
   /// </summary>
   /// <param name="perRow">Сколько карточек открыть в каждую строку.</param>

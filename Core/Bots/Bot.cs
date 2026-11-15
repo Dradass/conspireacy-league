@@ -66,7 +66,7 @@ public sealed class Bot
 
     var best = moves
       .Where(move => excluded is null || !excluded.Contains(move.Key))
-      .Where(move => move.Value >= (move is UseCardMove ? Profile.MinUseValue : Profile.MinValue))
+      .Where(move => move.Value >= (move is UseCardMove ? evaluator.Profile.MinUseValue : evaluator.Profile.MinValue))
       .MaxBy(move => move.Value);
     return best ?? new PassMove();
   }
@@ -132,8 +132,7 @@ public sealed class Bot
         session.PlaceHiddenFromHand(hidden.Card, hidden.Column);
         break;
       case UseCardMove use:
-        session.CheckSuccess(use.Cell);
-        session.UseCard(use.Option, use.Context);
+        session.PlayCard(use.Cell, use.Option, use.Context);
         break;
       case UseTheoryCardMove theory:
         session.UseTheoryCard(theory.Card, theory.Context);
@@ -239,7 +238,7 @@ public sealed class Bot
         var value = chance * plan.Value + evaluator.FailurePenalty(cell);
         // Быстрое действие не тратит действие хода — его не жалко сыграть.
         if (option.IsQuick)
-          value += Profile.QuickBonus;
+          value += evaluator.Profile.QuickBonus;
         yield return new UseCardMove(cell, option, plan.Context, value);
       }
     }
@@ -296,8 +295,8 @@ public sealed class Bot
         continue;
 
       // Купленную карточку ещё нужно выложить — это второе действие, поэтому выгода меньше.
-      var value = placement.Value * Profile.BuyFactor - card.Cost * evaluator.MoneyWeight - evaluator.HandCrowding
-        + ThemedBuyBonus(card, placement.Column);
+      var value = placement.Value * evaluator.Profile.BuyFactor - card.Cost * evaluator.MoneyWeight - evaluator.HandCrowding
+        + ThemedBuyBonus(evaluator.Profile, card, placement.Column);
       yield return new BuyMove(cell, card, value);
     }
   }
@@ -306,9 +305,9 @@ public sealed class Bot
   /// Прибавка к покупке карточки с теорией, которую бот подложит в штаб этой же теории: чем больше там адептов,
   /// тем выгоднее (<see cref="BotProfile.ThemedBuyBonus"/> за адепта, не больше <see cref="BotProfile.ThemedBuyAdeptsCap"/> адептов).
   /// </summary>
-  private double ThemedBuyBonus(Card card, TheoryColumn? target) =>
+  private static double ThemedBuyBonus(BotProfile profile, Card card, TheoryColumn? target) =>
     card.Theory is { } theory && target is { IsClosed: false } column && column.Theory == theory
-      ? Profile.ThemedBuyBonus * Math.Min(column.Adepts, Profile.ThemedBuyAdeptsCap)
+      ? profile.ThemedBuyBonus * Math.Min(column.Adepts, profile.ThemedBuyAdeptsCap)
       : 0;
 
   /// <summary>

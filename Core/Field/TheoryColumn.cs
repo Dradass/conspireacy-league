@@ -67,7 +67,8 @@ public sealed class TheoryColumn
   /// <summary>
   /// Миплы-лидеры под карточкой теории — чьего цвета, в порядке появления. Мипл считается лидером теории:
   /// даёт своему игроку влияние (<see cref="LeaderMeepleInfluence"/>) и долю дохода от адептов,
-  /// но не учитывается при проверке состоятельности штаба. Миплов снимают после дохода от адептов.
+  /// но не учитывается при проверке состоятельности штаба. Миплов снимают при обновлении рынка перед следующим раундом;
+  /// в итоговом подсчёте они остаются в теориях.
   /// </summary>
   public IReadOnlyList<Player> LeaderMeeples => _leaderMeeples;
 
@@ -117,6 +118,12 @@ public sealed class TheoryColumn
   /// по-прежнему можно — так штаб можно снова сделать состоятельным (см. <see cref="PlayingField.ReopenSolventTheories"/>).
   /// </summary>
   public bool IsClosed { get; private set; }
+
+  /// <summary>
+  /// Действующая ли теория сейчас: штаб не закрыт, у теории хотя бы <see cref="TheoryCardLeadersThreshold"/> лидеров
+  /// и влияние не меньше <see cref="ActiveInfluence"/>.
+  /// </summary>
+  public bool IsActive => !IsClosed && Leaders >= TheoryCardLeadersThreshold && Influence >= ActiveInfluence;
 
   /// <summary>
   /// Несостоятелен ли штаб: в нём больше <see cref="SolvencyCheckLeadersThreshold"/> лидеров,
@@ -275,6 +282,18 @@ public sealed class TheoryColumn
   internal void ClearLeaderMeeples() => _leaderMeeples.Clear();
 
   internal void Close() => IsClosed = true;
+
+  /// <summary>
+  /// Клиент: восстановить адептов, закрытие и миплов-лидеров по присланному сервером виду.
+  /// </summary>
+  internal void Restore(int adepts, bool closed, IEnumerable<Player> leaderMeeples)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegative(adepts);
+    Adepts = adepts;
+    IsClosed = closed;
+    _leaderMeeples.Clear();
+    _leaderMeeples.AddRange(leaderMeeples);
+  }
 
   /// <summary>
   /// Штаб снова состоятелен: его открывают обратно (см. <see cref="PlayingField.ReopenSolventTheories"/>).

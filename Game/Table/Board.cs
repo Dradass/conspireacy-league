@@ -201,6 +201,10 @@ public partial class Board : Node2D
     Market.CardMoved += OnMarketCardMoved;
     Session.Turns.TurnChanged += OnTurnChanged;
     Session.Turns.FirstPlayerChanged += OnFirstPlayerChanged;
+    Session.Restored += OnRestored;
+    // Сетевая игра: партия уже идёт — стол сразу показывает её целиком.
+    if (LocalPlayer is not null)
+      OnRestored();
   }
 
   public override void _ExitTree()
@@ -240,6 +244,7 @@ public partial class Board : Node2D
     Market.CardMoved -= OnMarketCardMoved;
     Session.Turns.TurnChanged -= OnTurnChanged;
     Session.Turns.FirstPlayerChanged -= OnFirstPlayerChanged;
+    Session.Restored -= OnRestored;
   }
 
   public override void _Process(double delta)
@@ -251,7 +256,7 @@ public partial class Board : Node2D
     // Игрок, который сейчас ходит, видит закрытую карточку, пока держит над ней мышь, если это его карточка
     // или он в неё уже смотрел. Только что подсмотренная карточка какое-то время видна и без мыши.
     var hovered = CellAt(GetGlobalMousePosition()) is { } cell ? ViewAt(cell) : null;
-    var player = Session.CurrentPlayer;
+    var player = Viewer;
     var known = hovered is { Card: HiddenCard hidden } && (hovered.CardOwner == player || hidden.IsKnownBy(player));
     // Закрытые карточки, в которые игрок смотрел (подсмотрел или раскрыл), он видит всю игру — приглушённо.
     var peeked = new HashSet<CardView>(_views.Values.Where(view => view.Card is HiddenCard { IsRevealed: false } seen && seen.IsKnownBy(player)));
@@ -923,30 +928,64 @@ public partial class Board : Node2D
   /// <summary>
   /// В теорию поставлен мипл-лидер: он падает под карточку теории, остальные миплы раздвигаются.
   /// </summary>
+  private static readonly Color CommunistRed = new("ff1a1a");
+  private static readonly Color GoldColor = new("e6b422");
+  private static readonly Color ScientistWhite = new("f2f2f2");
+  private static readonly Color CiaSuitColor = new("2c3038");
+  private static readonly Color BloodRed = new("8a0a0a");
+  private static readonly Color PresidentSuitBlue = new("1f4fb0");
+  private static readonly Color RobeColor = new("d9a55b");
+
   /// <summary>
-  /// Облик фигурок теории: инопланетяне — в теории «Инопланетяне среди нас» и её подтеориях,
-  /// люди в мантиях — в «Тайном правительстве» и её подтеориях.
+  /// Облик и цвет фигурок теории; у подтеорий — как у родительской. Остальные теории — обычные серые миплы.
   /// </summary>
-  private static MeepleView.MeepleLook LookOf(TheoryColumn column)
+  private static (MeepleView.MeepleLook Look, Color Color) StyleOf(TheoryColumn column)
   {
     var root = column.Theory.Parent ?? column.Theory;
     if (root == TheoryCatalog.AliensAmongUs)
-      return MeepleView.MeepleLook.Alien;
-    return root == TheoryCatalog.SecretGovernment ? MeepleView.MeepleLook.Robed : MeepleView.MeepleLook.Wooden;
+      return (MeepleView.MeepleLook.Alien, MeepleView.Gray);
+    if (root == TheoryCatalog.SecretGovernment)
+      return (MeepleView.MeepleLook.Robed, RobeColor);
+    if (root == TheoryCatalog.LeninMushroom)
+      return (MeepleView.MeepleLook.Mushroom, MeepleView.Gray);
+    if (root == TheoryCatalog.CommunistConspiracy)
+      return (MeepleView.MeepleLook.Wooden, CommunistRed);
+    if (root == TheoryCatalog.GoldenBillion)
+      return (MeepleView.MeepleLook.Wooden, GoldColor);
+    if (root == TheoryCatalog.ScienceConspiracy)
+      return (MeepleView.MeepleLook.LabCoat, ScientistWhite);
+    if (root == TheoryCatalog.CiaKillsPeople)
+      return (MeepleView.MeepleLook.Suit, CiaSuitColor);
+    if (root == TheoryCatalog.SatanistsKidnapChildren)
+      return (MeepleView.MeepleLook.Horned, BloodRed);
+    if (root == TheoryCatalog.TinFoilHat)
+      return (MeepleView.MeepleLook.FoilHat, MeepleView.Gray);
+    if (root == TheoryCatalog.PresidentDoubles)
+      return (MeepleView.MeepleLook.HalfSuit, PresidentSuitBlue);
+    return (MeepleView.MeepleLook.Wooden, MeepleView.Gray);
   }
+
+  /// <summary>
+  /// Облик мипла-лидера в теории: он всегда цвета владельца, поэтому от облика теории остаются только шапки,
+  /// рожки и костюм (половинный костюм — целым), а инопланетянин становится обычным миплом.
+  /// </summary>
+  private static MeepleView.MeepleLook LeaderLookOf(TheoryColumn column) => StyleOf(column).Look switch
+  {
+    MeepleView.MeepleLook.Alien => MeepleView.MeepleLook.Wooden,
+    MeepleView.MeepleLook.HalfSuit => MeepleView.MeepleLook.Suit,
+    var look => look,
+  };
 
   private void OnLeaderMeepleAdded(TheoryColumn column, Player player)
   {
     if (!_leaderMeeples.TryGetValue(column, out var meeples))
       _leaderMeeples[column] = meeples = [];
 
-    // Миплы-лидеры всегда цвета владельца: инопланетянин зелёный, поэтому для них остаётся деревянный облик.
-    var look = LookOf(column);
     var meeple = new MeepleView
     {
       Name = "LeaderMeeple",
       Color = PlayerPalette.MainOf(player.Color),
-      Look = look == MeepleView.MeepleLook.Alien ? MeepleView.MeepleLook.Wooden : look,
+      Look = LeaderLookOf(column),
       Scale = Vector2.One * LeaderMeepleScale,
       Height = LeaderMeepleDropHeight,
     };
@@ -1304,7 +1343,8 @@ public partial class Board : Node2D
         Name = $"Adepts{column.Theory.Name}",
         Position = CellCenter(theoryCell),
         Rotation = CellAngle(theoryCell),
-        Look = LookOf(column),
+        Look = StyleOf(column).Look,
+        Color = StyleOf(column).Color,
       };
       _adeptsLayer.AddChild(view);
       _adepts[column] = view;

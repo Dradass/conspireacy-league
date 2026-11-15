@@ -59,6 +59,11 @@ public sealed class GameSession
   public Market Market { get; }
 
   /// <summary>
+  /// Постоянные идентификаторы карточек: по ним на карточки ссылаются команды по сети.
+  /// </summary>
+  public CardRegistry CardIds { get; } = new();
+
+  /// <summary>
   /// Игроки в порядке хода.
   /// </summary>
   public IReadOnlyList<Player> Players => Turns.Players;
@@ -192,9 +197,58 @@ public sealed class GameSession
   public PersonCard BuyFromMarket(Cell cell)
   {
     RequireAction();
-    var card = Market.Buy(cell, CurrentPlayer);
+    var player = CurrentPlayer;
+    var money = player.Money;
+    var card = Market.Buy(cell, player);
     CompleteAction();
+    Report(new PlayerAction(player, PlayerActionKind.Buy, money, card, cell));
     return card;
+  }
+
+  /// <summary>
+  /// Игрок сделал действие — для журнала партии. Вызывается после того, как действие выполнено.
+  /// </summary>
+  public event Action<PlayerAction>? ActionTaken;
+
+  private void Report(PlayerAction action) => ActionTaken?.Invoke(action);
+
+  /// <summary>
+  /// Карточка в ячейке, как она лежит сейчас: чья и где. Для журнала — запоминается до действия.
+  /// </summary>
+  private CardRef? RefAt(Cell? cell)
+  {
+    if (cell is not { } at)
+      return null;
+    var column = Field.ColumnAt(at);
+    var owner = column?.OwnerAt(at) ?? Field.PlayerZones.FirstOrDefault(pair => pair.Value.Contains(at)).Key;
+    return new CardRef(at, Field.CardAt(at), owner, column?.Theory.Name);
+  }
+
+  private static TheoryRef RefOf(TheoryColumn column) => new(column.Theory.Name, column.Owner);
+
+  /// <summary>
+  /// Цели действия, как они выглядят сейчас (до выполнения).
+  /// </summary>
+  /// <param name="context">Контекст с выбранными целями.</param>
+  /// <param name="except">Теория, которую не нужно упоминать среди целей (например, штаб выложенной карточки).</param>
+  private ActionTargets TargetsOf(GameContext context, TheoryColumn? except = null)
+  {
+    var theories = context.TargetTheories
+      .Concat(context.TargetTheory is { } single ? [single] : [])
+      .Where(column => column != except && column != context.SourceTheory)
+      .Distinct()
+      .Select(RefOf)
+      .ToList();
+    return new ActionTargets(
+      RefAt(context.TargetCell),
+      RefAt(context.SecondTargetCell),
+      RefAt(context.BorrowedCell),
+      RefAt(context.CopiedCell),
+      RefAt(context.TargetAdeptCard),
+      context.TargetPlayer,
+      context.HandCard,
+      context.SourceTheory is { } source && source != except ? RefOf(source) : null,
+      theories);
   }
 
   /// <summary>
@@ -210,7 +264,7 @@ public sealed class GameSession
   public void AddToHandForDeveloper(Player player, Card card) => player.Hand.Add(card);
 
   public PlacementCheck PlaceFromHand(Card card, Cell cell) =>
-    PlaceCardFromHand(card, () => Field.Place(card, cell, CurrentPlayer));
+    PlaceCardFromHand(card, PlayerActionKind.Place, () => Field.Place(card, cell, CurrentPlayer));
 
   /// <summary>
   /// Игрок, который сейчас ходит, вставляет дочернюю теорию с руки в перегородку между столбцами
@@ -219,7 +273,7 @@ public sealed class GameSession
   /// <returns>Условия, на которых карточка положена.</returns>
   /// <exception cref="InvalidOperationException">Карточки нет в руке или её сюда класть нельзя.</exception>
   public PlacementCheck PlaceInWallFromHand(Card card, int boundary) =>
-    PlaceCardFromHand(card, () => Field.PlaceInWall(card, boundary, CurrentPlayer));
+    PlaceCardFromHand(card, PlayerActionKind.PlaceInWall, () => Field.PlaceInWall(card, boundary, CurrentPlayer));
 
   /// <summary>
   /// Игрок, который сейчас ходит, выкладывает карточку с руки взакрытую сверху стопки теории — по праву своего
@@ -238,16 +292,26 @@ public sealed class GameSession
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
+    var player = CurrentPlayer;
+    var money = player.Money;
+    var theory = RefOf(column);
     using var scope = CurrentPlayer.EarningFrom($"Выкладывание взакрытую: {card.Name}");
     var placed = Field.PlaceHidden(card, column, CurrentPlayer);
     hand.Remove(card);
     CompleteAction();
+    Report(new PlayerAction(player, PlayerActionKind.PlaceHidden, money, card, Field.CellOf(card) ?? column.Top, theory));
     return placed;
   }
 
-  private PlacementCheck PlaceCardFromHand(Card card, Func<PlacementCheck> place)
+  private PlacementCheck PlaceCardFromHand(Card card, PlayerActionKind kind, Func<PlacementCheck> place)
   {
     RequireAction();
+    var player = CurrentPlayer;
+    var money = player.Money;
+    // Владельцы теорий до выкладывания: в чужой ли штаб кладут карточку.
+    var owners = Field.TheoryColumns.ToDictionary(column => column.Theory.Name, column => column.Owner);
+    TheoryRef? TheoryOf(TheoryColumn? column) =>
+      column is null ? null : new TheoryRef(column.Theory.Name, owners.GetValueOrDefault(column.Theory.Name) ?? column.Owner);
     var hand = CurrentPlayer.Hand;
     if (!hand.Contains(card))
       throw new InvalidOperationException($"Карточки «{card}» нет в руке игрока {CurrentPlayer}.");
@@ -272,13 +336,15 @@ public sealed class GameSession
     // Выложенная теория могла сдвинуться в соседний столбец вместе с карточкой — берём её актуальную ячейку.
     var placedCell = Field.CellOf(card) ?? throw new InvalidOperationException("Карточка не легла на поле.");
     hand.Remove(card);
-    if (Field.ColumnAt(placedCell) is { } theory && card is PersonCard { OnPlacedInHeadquarters: { RequiresTargetCell: true } effect })
+    var placedIn = Field.ColumnAt(placedCell);
+    if (placedIn is { } theory && card is PersonCard { OnPlacedInHeadquarters: { RequiresTargetCell: true } effect })
     {
       var choice = new PlacementChoice(placedCell, effect, theory);
       if (effect.TargetCells(PlacementContext(choice)).Any(target => target.Check.IsAllowed))
       {
         PendingPlacement = choice;
         PendingPlacementChanged?.Invoke(choice);
+        Report(new PlayerAction(player, kind, money, card, placedCell, TheoryOf(theory)));
         return check;
       }
 
@@ -287,6 +353,7 @@ public sealed class GameSession
     }
 
     CompleteAction();
+    Report(new PlayerAction(player, kind, money, card, placedCell, TheoryOf(placedIn)));
     return check;
   }
 
@@ -306,6 +373,8 @@ public sealed class GameSession
   public void ResolvePlacement(Cell? target = null, Cell? second = null)
   {
     var choice = PendingPlacement ?? throw new InvalidOperationException("Сейчас не выбирают цель для действия выложенной карточки.");
+    var player = CurrentPlayer;
+    var money = player.Money;
     var effect = choice.Effect;
     var context = PlacementContext(choice);
     if (target is { } first)
@@ -321,6 +390,9 @@ public sealed class GameSession
     else if (!effect.TargetIsOptional)
       throw new ArgumentException($"Для действия «{effect}» нужно выбрать карточку.", nameof(target));
 
+    var targets = TargetsOf(context, except: choice.Theory);
+    var placedCard = Field.CardAt(choice.Cell);
+    var placedTheory = RefOf(choice.Theory);
     PendingPlacement = null;
     PendingPlacementChanged?.Invoke(null);
     // Цель принята: даже если действие откажет на полпути, выкладывание карточки — потраченное действие хода.
@@ -333,6 +405,9 @@ public sealed class GameSession
     {
       CompleteAction();
     }
+
+    Report(new PlayerAction(player, PlayerActionKind.ResolvePlacement, money, placedCard, choice.Cell, placedTheory,
+      effect.Description, targets));
   }
 
   private static Cell RequireTarget(Effect effect, Cell cell, GameContext context)
@@ -360,6 +435,30 @@ public sealed class GameSession
   }
 
   /// <summary>
+  /// Сыграть карточку из личного штаба одним шагом: сначала проверить весь розыгрыш — карточку, вариант действия и
+  /// цели (<see cref="PlayingField.CheckUse"/>), — и только потом бросить кубик (<see cref="CheckSuccess"/>) и
+  /// завершить розыгрыш (<see cref="UseCard"/>). Так неверный розыгрыш отклоняется, ничего не меняя.
+  /// Для сетевой игры и ботов; интерфейс с анимацией кубика вызывает <see cref="CheckSuccess"/> и <see cref="UseCard"/> сам.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="option">Вариант действия карточки.</param>
+  /// <param name="context">Контекст с выбранными целями.</param>
+  /// <returns>Проверка успеха.</returns>
+  /// <exception cref="InvalidOperationException">Карточку так сыграть нельзя; состояние партии не изменилось.</exception>
+  public SuccessCheck PlayCard(Cell cell, Effect option, GameContext context)
+  {
+    RequireAction();
+    if (context.CurrentPlayer != CurrentPlayer)
+      throw new InvalidOperationException("Карточку играет не тот игрок, который ходит.");
+    var check = Field.CheckUse(cell, option, context);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    CheckSuccess(cell);
+    return UseCard(option, context);
+  }
+
+  /// <summary>
   /// Завершить розыгрыш карточки после проверки успеха (<see cref="CheckSuccess"/>). Это действие.
   /// Если проверка успешна, выполняется выбранный вариант действия карточки (<see cref="PlayingField.Use"/>),
   /// иначе действие не выполняется (<see cref="PlayingField.Waste"/>). В обоих случаях карточка переворачивается
@@ -374,7 +473,11 @@ public sealed class GameSession
     var check = PendingCheck ?? throw new InvalidOperationException("Сначала нужно провести проверку успеха.");
     SetPendingCheck(null);
     RequireAction();
-    var source = Field.CardAt(check.Cell)?.Name ?? "Действие";
+    var player = CurrentPlayer;
+    var money = player.Money;
+    var played = Field.CardAt(check.Cell);
+    var targets = TargetsOf(context);
+    var source = played?.Name ?? "Действие";
     // Бросок уже сделан: даже если действие откажет, карточка сыграна (см. PlayingField.Use), и ход тратится как обычно.
     try
     {
@@ -395,6 +498,8 @@ public sealed class GameSession
         CompleteAction();
     }
 
+    var effect = context.BorrowedOption is { } borrowed ? $"{option.Description}: {borrowed.Description}" : option.Description;
+    Report(new PlayerAction(player, PlayerActionKind.PlayCard, money, played, check.Cell, null, effect, targets, check));
     return check;
   }
 
@@ -407,6 +512,16 @@ public sealed class GameSession
   public void UseTheoryCard(OwnedTheoryCard card, GameContext context)
   {
     RequireAction();
+    if (context.CurrentPlayer != CurrentPlayer)
+      throw new InvalidOperationException("Карточку теории применяет не тот игрок, который ходит.");
+    // Сначала проверяем все цели: неверное применение отклоняется, ничего не меняя.
+    var precheck = Field.CheckTheoryCardUse(card, context);
+    if (!precheck.IsAllowed)
+      throw new InvalidOperationException(precheck.Reason);
+    var player = CurrentPlayer;
+    var money = player.Money;
+    var targets = TargetsOf(context, except: Field.ColumnOf(card.Card.Theory));
+    var home = Field.ColumnOf(card.Card.Theory) is { } column ? RefOf(column) : null;
 
     TheoryTrigger? trigger;
     try
@@ -425,6 +540,8 @@ public sealed class GameSession
       SetPendingTheoryTrigger(trigger);
     else
       CompleteAction();
+    Report(new PlayerAction(player, PlayerActionKind.UseTheoryCard, money, card.Card, card.Cell, home,
+      card.Card.OnPlayFromHand.Description, targets));
   }
 
   /// <summary>
@@ -451,7 +568,10 @@ public sealed class GameSession
     if (!effect.RequiresHandCard && effect.CheckHandCard(card, trigger.Context) is { IsAllowed: false } denied)
       throw new InvalidOperationException(denied.Reason);
     trigger.HandCard = card;
+    var money = trigger.Owner.Money;
     ContinueTheoryTrigger(trigger);
+    Report(new PlayerAction(trigger.Owner, PlayerActionKind.TriggerHandCard, money, card, Effect: effect.Description,
+      Targets: new ActionTargets(HandCard: card)));
   }
 
   /// <summary>
@@ -464,7 +584,10 @@ public sealed class GameSession
     if (!trigger.Effect.RequiresTheory || !trigger.Effect.CanTargetTheory(theory, trigger.Owner))
       throw new InvalidOperationException($"Теорию «{theory}» выбрать нельзя.");
     trigger.Theory = theory;
+    var money = trigger.Owner.Money;
+    var chosen = RefOf(theory);
     ContinueTheoryTrigger(trigger);
+    Report(new PlayerAction(trigger.Owner, PlayerActionKind.TriggerTheory, money, Theory: chosen, Effect: trigger.Effect.Description));
   }
 
   /// <summary>
@@ -480,7 +603,11 @@ public sealed class GameSession
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
     trigger.Cell = cell;
+    var money = trigger.Owner.Money;
+    var target = RefAt(cell);
     ContinueTheoryTrigger(trigger);
+    Report(new PlayerAction(trigger.Owner, PlayerActionKind.TriggerCell, money, target?.Card, cell, Effect: trigger.Effect.Description,
+      Targets: new ActionTargets(Target: target)));
   }
 
   /// <summary>
@@ -488,9 +615,10 @@ public sealed class GameSession
   /// </summary>
   public void SkipTheoryTrigger()
   {
-    RequirePendingTheoryTrigger();
+    var trigger = RequirePendingTheoryTrigger();
     SetPendingTheoryTrigger(null);
     CompleteAction();
+    Report(new PlayerAction(trigger.Owner, PlayerActionKind.SkipTrigger, trigger.Owner.Money, Effect: trigger.Effect.Description));
   }
 
   private TheoryTrigger RequirePendingTheoryTrigger() =>
@@ -546,18 +674,22 @@ public sealed class GameSession
   {
     RequireNoPendingCheck();
     RequirePhase(GamePhase.PlayerTurns);
+    var player = CurrentPlayer;
+    var money = player.Money;
     // Мастера теорий приводят адептов после паса, пока игрок ещё текущий.
     Field.AddMasterAdepts(CurrentPlayer);
     PassCurrent();
+    Report(new PlayerAction(player, PlayerActionKind.Pass, money));
     AutoPass();
   }
 
   /// <summary>
-  /// Может ли игрок ещё что-то сделать: у него есть карточки в руке, несыгранные карточки в личном штабе
-  /// или на рынке есть карточки.
+  /// Может ли игрок ещё что-то сделать: у него есть карточки в руке, несыгранные карточки в личном штабе,
+  /// карточки теорий, которые ещё можно применить, или на рынке есть карточки.
   /// </summary>
   public bool HasMoves(Player player) =>
-    player.Hand.Cards.Count > 0 || Field.HasUnusedCards(player) || Market.OpenCards.Count > 0;
+    player.Hand.Cards.Count > 0 || Field.HasUnusedCards(player) || Market.OpenCards.Count > 0
+    || Field.TheoryCards.Any(card => Field.CanUseTheoryCard(card, player));
 
   /// <summary>
   /// Проверка штабов теорий: закрыть несостоятельные (<see cref="TheoryColumn.IsInsolvent"/>) — те, где больше
@@ -610,8 +742,9 @@ public sealed class GameSession
 
   /// <summary>
   /// Адепты следующей действующей теории приносят деньги её лидерам (<see cref="TheoryIncome"/>).
-  /// Когда все теории получили доход, в обычном раунде миплов-лидеров (<see cref="TheoryColumn.LeaderMeeples"/>) снимают
-  /// и начинается обновление карточек; в итоговом подсчёте миплы остаются, и партия завершается.
+  /// Когда все теории получили доход, в обычном раунде начинается обновление карточек, в итоговом подсчёте партия завершается.
+  /// Миплов-лидеров (<see cref="TheoryColumn.LeaderMeeples"/>) снимают при обновлении рынка (<see cref="RefreshMarket"/>),
+  /// только если будет следующий раунд: в итоговом подсчёте они остаются в теориях.
   /// </summary>
   /// <returns>Доход теории или <c>null</c>, если все теории уже получили доход.</returns>
   public TheoryIncome? PayNextTheoryIncome()
@@ -620,9 +753,6 @@ public sealed class GameSession
       throw new InvalidOperationException($"Доход от адептов нельзя получить в фазе {Phase}.");
     if (!_unpaidTheories.TryDequeue(out var column))
     {
-      // Миплы-лидеры снимаются после дохода от адептов в обычном раунде; в итоговом подсчёте остаются.
-      if (Phase == GamePhase.AdeptIncome)
-        Field.RemoveLeaderMeeples();
       SetPhase(Phase == GamePhase.AdeptIncome ? GamePhase.CardsRefresh : GamePhase.GameOver);
       return null;
     }
@@ -678,6 +808,8 @@ public sealed class GameSession
       return false;
     }
 
+    // Будет следующий раунд: миплы-лидеры, поставленные в этом раунде, снимаются.
+    Field.RemoveLeaderMeeples();
     Market.Refresh();
     return true;
   }
@@ -765,12 +897,42 @@ public sealed class GameSession
   /// </summary>
   public GameContext CreateContext() => new(CurrentPlayer, Field, _random, Market);
 
+  /// <summary>
+  /// Может ли игрок, который ходит, сейчас сделать действие хода: идут ходы игроков, ничего не ждёт выбора
+  /// и действия ещё остались. Ничего не меняет.
+  /// </summary>
+  public PlacementCheck CheckAction()
+  {
+    var pending = CheckNoPending();
+    if (!pending.IsAllowed)
+      return pending;
+    if (Phase != GamePhase.PlayerTurns)
+      return PlacementCheck.Deny($"Это можно сделать только в фазе {GamePhase.PlayerTurns}, а сейчас {Phase}.");
+    return ActionsLeft == 0
+      ? PlacementCheck.Deny($"У игрока {CurrentPlayer} не осталось действий в этом ходу.")
+      : PlacementCheck.Allowed;
+  }
+
+  /// <summary>
+  /// Ничего не ждёт завершения: ни проверка успеха, ни выбор цели выложенной карточки, ни выбор для действия
+  /// основной теории. Ничего не меняет.
+  /// </summary>
+  public PlacementCheck CheckNoPending()
+  {
+    if (PendingCheck is not null)
+      return PlacementCheck.Deny("Идёт проверка успеха карточки — дождитесь её окончания.");
+    if (PendingPlacement is not null)
+      return PlacementCheck.Deny("Сначала выберите цель для действия выложенной карточки.");
+    if (PendingTheoryTrigger is not null)
+      return PlacementCheck.Deny("Владелец основной теории ещё выбирает цель её действия.");
+    return PlacementCheck.Allowed;
+  }
+
   private void RequireAction()
   {
-    RequireNoPendingCheck();
-    RequirePhase(GamePhase.PlayerTurns);
-    if (ActionsLeft == 0)
-      throw new InvalidOperationException($"У игрока {CurrentPlayer} не осталось действий в этом ходу.");
+    var check = CheckAction();
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
   }
 
   /// <summary>
@@ -813,12 +975,9 @@ public sealed class GameSession
 
   private void RequireNoPendingCheck()
   {
-    if (PendingCheck is not null)
-      throw new InvalidOperationException("Идёт проверка успеха карточки — дождитесь её окончания.");
-    if (PendingPlacement is not null)
-      throw new InvalidOperationException("Сначала выберите цель для действия выложенной карточки.");
-    if (PendingTheoryTrigger is not null)
-      throw new InvalidOperationException("Владелец основной теории ещё выбирает цель её действия.");
+    var check = CheckNoPending();
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
   }
 
   private void SetPendingCheck(SuccessCheck? check)
@@ -879,6 +1038,29 @@ public sealed class GameSession
     IsLastRound = true;
     LastRoundDeclared?.Invoke(finished);
   }
+
+  /// <summary>
+  /// Клиент: партия восстановлена по присланному сервером виду (<see cref="Client.ClientMirror"/>) — всё на столе
+  /// могло измениться, интерфейс перерисовывает его целиком.
+  /// </summary>
+  public event Action? Restored;
+
+  /// <summary>
+  /// Клиент: восстановить фазу, раунд и незавершённые выборы по присланному сервером виду. Событий не вызывает.
+  /// </summary>
+  internal void Restore(GamePhase phase, int round, bool isLastRound, int actionsLeft, SuccessCheck? check, PlacementChoice? placement, TheoryTrigger? trigger)
+  {
+    Phase = phase;
+    Round = round;
+    IsLastRound = isLastRound;
+    ActionsLeft = actionsLeft;
+    PendingCheck = check;
+    PendingPlacement = placement;
+    PendingTheoryTrigger = trigger;
+    _unpaidTheories.Clear();
+  }
+
+  internal void RaiseRestored() => Restored?.Invoke();
 
   private void SetPhase(GamePhase phase)
   {

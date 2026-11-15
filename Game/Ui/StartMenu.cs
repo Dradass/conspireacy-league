@@ -59,7 +59,7 @@ public partial class StartMenu : Control
     _mode.Selected = _mode.GetItemIndex((int)GameMode.TheoryDevelopment);
     column.AddChild(_mode);
 
-    column.AddChild(CreateButton("Network", "Сетевая игра", ShowNetworkNotice));
+    column.AddChild(CreateButton("Network", "Сетевая игра", StartNetworkGame));
     var localRow = new HBoxContainer();
     localRow.AddThemeConstantOverride("separation", 12);
     column.AddChild(localRow);
@@ -72,16 +72,6 @@ public partial class StartMenu : Control
     var light = new CanvasLayer { Name = "FlashlightLayer", Layer = FlashlightLayer };
     light.AddChild(new Flashlight { Name = "Flashlight" });
     AddChild(light);
-  }
-
-  /// <summary>
-  /// Сетевая игра пока не реализована: сообщаем об этом.
-  /// </summary>
-  private void ShowNetworkNotice()
-  {
-    var notice = new AcceptDialog { DialogText = "Сетевая игра пока не реализована." };
-    AddChild(notice);
-    notice.PopupCentered();
   }
 
   private static Button CreateButton(string name, string text, Action pressed)
@@ -112,6 +102,22 @@ public partial class StartMenu : Control
       return;
 
     StartGame(players, devMode, mode);
+  }
+
+  /// <summary>
+  /// Сетевая игра: создать стол или подключиться (<see cref="NetworkDialog"/>), затем лобби (<see cref="NetworkLobby"/>).
+  /// Режим партии выбирает создатель стола в лобби.
+  /// </summary>
+  private async void StartNetworkGame()
+  {
+    if (await NetworkDialog.Ask(this) is not { } connection)
+      return;
+
+    var tree = GetTree();
+    var lobby = new NetworkLobby { Name = "NetworkLobby", Connection = connection };
+    tree.Root.AddChild(lobby);
+    tree.CurrentScene = lobby;
+    QueueFree();
   }
 
   /// <summary>

@@ -1,9 +1,11 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Commands;
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Core.Theories;
 using ConspiracyLeague.Game.Cards;
+using ConspiracyLeague.Game.Net;
 using ConspiracyLeague.Game.Ui;
 using Godot;
 
@@ -154,6 +156,12 @@ public partial class CardUseController : Node
   }
 
   /// <summary>
+  /// Игра через сервер: действия не выполняются здесь, а уходят на сервер командами; партия меняется, когда сервер
+  /// пришлёт обновление. <c>null</c> — игра за одним компьютером, действия выполняются сразу.
+  /// </summary>
+  public NetworkGame? Net { get; set; }
+
+  /// <summary>
   /// Настроить контроллер.
   /// </summary>
   /// <param name="board">Стол.</param>
@@ -169,7 +177,19 @@ public partial class CardUseController : Node
     _session.PhaseChanged += OnPhaseChanged;
     _session.PendingPlacementChanged += OnPendingPlacementChanged;
     _session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
+    _session.Restored += OnRestored;
     _hand.CardPicked += OnHandCardPicked;
+  }
+
+  /// <summary>
+  /// Игра через сервер: событий о выборе нет — после каждого обновления начатый выбор сбрасывается, и, если партия ждёт
+  /// выбора от этого игрока (цель выложенной карточки, действие основной теории), он начинается заново.
+  /// </summary>
+  private void OnRestored()
+  {
+    DropChoice();
+    OnPendingPlacementChanged(_session.PendingPlacement);
+    OnPendingTheoryTriggerChanged(_session.PendingTheoryTrigger);
   }
 
   public override void _Ready()
@@ -211,6 +231,7 @@ public partial class CardUseController : Node
     _session.PhaseChanged -= OnPhaseChanged;
     _session.PendingPlacementChanged -= OnPendingPlacementChanged;
     _session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    _session.Restored -= OnRestored;
     _hand.CardPicked -= OnHandCardPicked;
   }
 
@@ -356,6 +377,12 @@ public partial class CardUseController : Node
   /// </summary>
   private void RunTheoryCard(OwnedTheoryCard owned, GameContext context)
   {
+    if (Net is { } net)
+    {
+      net.Send(new UseTheoryCardCommand(_session.CardIds.IdOf(owned.Card), CommandEncoder.Targets(_session, context)));
+      return;
+    }
+
     try
     {
       _session.UseTheoryCard(owned, context);
@@ -469,6 +496,16 @@ public partial class CardUseController : Node
   /// <param name="retry">Начать выбор заново, если цель не принята.</param>
   private void ResolvePlacement(Cell? target = null, Cell? second = null, bool retry = true)
   {
+    if (Net is { } net)
+    {
+      net.Send(new ResolvePlacementCommand(target, second), accepted =>
+      {
+        if (!accepted && retry && _session.PendingPlacement is { } pending)
+          Callable.From(() => StartPlacement(pending)).CallDeferred();
+      });
+      return;
+    }
+
     try
     {
       _session.ResolvePlacement(target, second);
@@ -639,6 +676,12 @@ public partial class CardUseController : Node
   {
     if (_session.PendingTheoryTrigger is not null)
     {
+      if (Net is { } net)
+      {
+        net.Send(new SelectTriggerHandCardCommand(_session.CardIds.IdOf(card)));
+        return;
+      }
+
       try
       {
         _session.SelectTriggerHandCard(card);
@@ -763,7 +806,10 @@ public partial class CardUseController : Node
     if (@event.IsActionPressed("ui_cancel"))
     {
       GetViewport().SetInputAsHandled();
-      _session.SkipTheoryTrigger();
+      if (Net is { } net)
+        net.Send(new SkipTheoryTriggerCommand());
+      else
+        _session.SkipTheoryTrigger();
       return;
     }
     if (@event is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
@@ -774,9 +820,19 @@ public partial class CardUseController : Node
     try
     {
       if (trigger.Effect.RequiresTheory && trigger.Theory is null && cell is { } picked && TheoryAt(picked) is { } theory)
-        _session.SelectTriggerTheory(theory);
+      {
+        if (Net is { } net)
+          net.Send(new SelectTriggerTheoryCommand(theory.Theory.Name));
+        else
+          _session.SelectTriggerTheory(theory);
+      }
       else if (trigger.Effect.RequiresTargetCell && trigger.Cell is null && cell is { } target)
-        _session.SelectTriggerCell(target);
+      {
+        if (Net is { } net)
+          net.Send(new SelectTriggerCellCommand(target));
+        else
+          _session.SelectTriggerCell(target);
+      }
       else
         UseDenied?.Invoke("Выберите подсвеченную цель или нажмите Esc.");
     }
@@ -1160,6 +1216,13 @@ public partial class CardUseController : Node
   /// </summary>
   private async void Use(CardView view, Vector2I cell, Effect option, GameContext context)
   {
+    // Игра через сервер: кубик бросает сервер, бросок покажет обновление (см. Main).
+    if (Net is { } net)
+    {
+      net.Send(CommandEncoder.UseCard(_session, cell.ToCell(), option, context));
+      return;
+    }
+
     SuccessCheck check;
     try
     {

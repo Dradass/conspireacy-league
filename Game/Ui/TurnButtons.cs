@@ -1,5 +1,7 @@
+using ConspiracyLeague.Core.Commands;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Game.Net;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
@@ -21,6 +23,11 @@ public partial class TurnButtons : VBoxContainer
   /// </summary>
   public GameSession Session { get; init; } = null!;
 
+  /// <summary>
+  /// Игра через сервер: кнопки отправляют команды. <c>null</c> — игра за одним компьютером.
+  /// </summary>
+  public NetworkGame? Net { get; init; }
+
   public override void _Ready()
   {
     MouseFilter = MouseFilterEnum.Ignore;
@@ -28,12 +35,24 @@ public partial class TurnButtons : VBoxContainer
 
     _pass = new Button { Name = "Pass", Text = "Пас", FocusMode = FocusModeEnum.None };
     _pass.AddThemeFontSizeOverride("font_size", FontSize);
-    _pass.Pressed += Session.Pass;
+    _pass.Pressed += () =>
+    {
+      if (Net is { } net)
+        net.Send(new PassCommand());
+      else
+        Session.Pass();
+    };
     AddChild(_pass);
 
     _skipTheory = new Button { Name = "SkipTheory", Text = "Не играть действие теории", FocusMode = FocusModeEnum.None, Visible = false };
     _skipTheory.AddThemeFontSizeOverride("font_size", FontSize);
-    _skipTheory.Pressed += Session.SkipTheoryTrigger;
+    _skipTheory.Pressed += () =>
+    {
+      if (Net is { } net)
+        net.Send(new SkipTheoryTriggerCommand());
+      else
+        Session.SkipTheoryTrigger();
+    };
     AddChild(_skipTheory);
 
     Session.PhaseChanged += OnPhaseChanged;
@@ -41,6 +60,7 @@ public partial class TurnButtons : VBoxContainer
     Session.PendingPlacementChanged += OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
     Session.Turns.TurnChanged += OnTurnChanged;
+    Session.Restored += UpdateButtons;
     UpdateButtons();
   }
 
@@ -51,6 +71,7 @@ public partial class TurnButtons : VBoxContainer
     Session.PendingCheckChanged -= OnPendingCheckChanged;
     Session.PendingPlacementChanged -= OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    Session.Restored -= UpdateButtons;
   }
 
   private void OnPhaseChanged(GamePhase _) => UpdateButtons();

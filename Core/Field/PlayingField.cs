@@ -262,6 +262,52 @@ public sealed class PlayingField
   public void AddPlayer(Player player, Zone zone) => _playerZones.Add(player, zone);
 
   /// <summary>
+  /// Клиент: восстановить поле по присланному сервером виду (<see cref="Client.ClientMirror"/>). Событий не вызывает.
+  /// </summary>
+  /// <param name="commonZone">Общая зона.</param>
+  /// <param name="cells">Карточки на поле — в личных штабах и в стопках теорий.</param>
+  /// <param name="columns">Стопки теорий слева направо в порядке появления.</param>
+  /// <param name="theoryCards">Карточки теорий у владельцев.</param>
+  internal void Restore(Zone commonZone, IEnumerable<RestoredCell> cells, IEnumerable<TheoryColumn> columns, IEnumerable<OwnedTheoryCard> theoryCards)
+  {
+    CommonZone = commonZone;
+    _cards.Clear();
+    _usedCells.Clear();
+    _rotatedCells.Clear();
+    _trainedBonuses.Clear();
+    _cardAdepts.Clear();
+    _chips.Clear();
+    _wheels.Clear();
+    foreach (var cell in cells)
+    {
+      _cards.Add(cell.Cell, cell.Card);
+      if (cell.Used)
+        _usedCells.Add(cell.Cell);
+      if (cell.Rotated)
+        _rotatedCells.Add(cell.Cell);
+      if (cell.Trained != 0)
+        _trainedBonuses[cell.Cell] = cell.Trained;
+      if (cell.Adepts > 0)
+        _cardAdepts[cell.Cell] = cell.Adepts;
+      if (cell.Chip is { } chip)
+        _chips[cell.Cell] = chip;
+      if (cell.Wheel is { } wheel)
+        _wheels[cell.Cell] = wheel;
+    }
+
+    _theoryColumns.Clear();
+    _theoryColumns.AddRange(columns);
+    _theoryCards.Clear();
+    _theoryCards.AddRange(theoryCards);
+    SyncTheoryRules();
+  }
+
+  /// <summary>
+  /// На сколько процентов изменена вероятность успеха персонажа обучением и ослаблением.
+  /// </summary>
+  public int TrainedBonusAt(Cell cell) => _trainedBonuses.GetValueOrDefault(cell);
+
+  /// <summary>
   /// Карточка в ячейке.
   /// </summary>
   public Card? CardAt(Cell cell) => _cards.GetValueOrDefault(cell);
@@ -1179,6 +1225,100 @@ public sealed class PlayingField
       if (source == context.TargetTheory)
         throw new ArgumentException($"Для действия «{option}» теории-источник и цель должны быть разными.", nameof(context));
     }
+  }
+
+  /// <summary>
+  /// Проверить розыгрыш карточки личного штаба целиком, ничего не меняя: карточку можно сыграть, у неё есть такой
+  /// вариант действия, все цели выбраны и подходят (с учётом платы полицейскому), а у карточки, действие которой
+  /// выполняют или копируют, выбран её вариант действия. Так сервер отклоняет неверную команду до броска кубика
+  /// (<see cref="GameSession.PlayCard"/>), а не тратит на неё карточку.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="option">Вариант действия карточки.</param>
+  /// <param name="context">Контекст с выбранными целями.</param>
+  public PlacementCheck CheckUse(Cell cell, Effect option, GameContext context)
+  {
+    if (!CanUse(cell, context.CurrentPlayer))
+      return PlacementCheck.Deny("Эту карточку нельзя использовать.");
+    if (!_cards[cell].OnPlayFromHand.Options.Contains(option))
+      return PlacementCheck.Deny($"У карточки «{_cards[cell]}» нет действия «{option}».");
+
+    return CheckTargets(option, context.WithSourceCell(cell), depth: 0);
+  }
+
+  /// <summary>
+  /// Проверить применение карточки теории целиком, ничего не меняя (см. <see cref="UseTheoryCard"/>).
+  /// </summary>
+  /// <param name="card">Карточка теории.</param>
+  /// <param name="context">Контекст с выбранными целями.</param>
+  public PlacementCheck CheckTheoryCardUse(OwnedTheoryCard card, GameContext context)
+  {
+    if (!_theoryCards.Contains(card) || !CanUseTheoryCard(card, context.CurrentPlayer))
+      return PlacementCheck.Deny("Эту карточку теории нельзя применить.");
+
+    var effect = card.Card.OnPlayFromHand;
+    if (!effect.RequiresTheory && ColumnOf(card.Card.Theory) is { } home)
+      context = context.WithTargetTheory(home);
+    var check = CheckTargets(effect, context, depth: 0);
+    if (check.IsAllowed && card.Card.Passive is TinFoilPassive && context.TargetCell is { } foilCell)
+      return CheckFoil(foilCell);
+    return check;
+  }
+
+  /// <summary>
+  /// Насколько глубоко одна карточка выполняет действие другой: использовать чужую карточку (или сыграть свою),
+  /// которая копирует третью. Глубже не бывает — копирование не копирует копирование.
+  /// </summary>
+  private const int MaxBorrowDepth = 2;
+
+  /// <summary>
+  /// Проверить цели варианта действия (см. <see cref="CheckUse"/>) так же, как их потом использует выполнение:
+  /// <see cref="RequireTargets"/>, карточки на поле — <see cref="Effect.CheckTargetCell"/>, а действие чужой
+  /// карточки — как <see cref="ExecuteBorrowed"/> и <see cref="CopyRival"/>.
+  /// </summary>
+  private PlacementCheck CheckTargets(Effect option, GameContext context, int depth)
+  {
+    try
+    {
+      RequireTargets(option, context);
+    }
+    catch (ArgumentException error)
+    {
+      return PlacementCheck.Deny(error.Message);
+    }
+
+    if (!option.RequiresTargetCell || option.AcceptsHandCardTarget && context.HandCard is not null)
+      return PlacementCheck.Allowed;
+
+    if (!option.BorrowsTargetCard)
+    {
+      if (context.TargetCell is not { } target)
+        return option.TargetIsOptional ? PlacementCheck.Allowed : PlacementCheck.Deny($"Для действия «{option}» нужно выбрать карточку на поле.");
+      var targetCheck = option.CheckTargetCell(target, context);
+      if (!targetCheck.IsAllowed || !option.RequiresSecondTargetCell)
+        return targetCheck;
+      if (context.SecondTargetCell is not { } second)
+        return PlacementCheck.Deny($"Для действия «{option}» нужно выбрать две карточки.");
+      return option.CheckTargetCell(second, context);
+    }
+
+    // Копирование берёт карточку и её вариант отдельно (CopiedCell, CopiedOption), если они выбраны, —
+    // так же, как CopyRivalCardEffect.Execute и CopyRival.
+    var copying = option is CopyRivalCardEffect;
+    var borrowed = (copying ? context.CopiedCell ?? context.BorrowedCell : context.BorrowedCell)!.Value;
+    var borrowCheck = option.CheckTargetCell(borrowed, context);
+    if (!borrowCheck.IsAllowed)
+      return borrowCheck;
+    if (depth >= MaxBorrowDepth || CardAt(borrowed) is not { } card)
+      return PlacementCheck.Deny($"Действие «{option}» так выполнить нельзя.");
+
+    var chosen = copying ? context.CopiedOption ?? context.BorrowedOption : context.BorrowedOption;
+    if (chosen is null)
+      return PlacementCheck.Deny($"Для действия «{option}» нужно выбрать вариант действия карточки «{card}».");
+    if (!card.OnPlayFromHand.Options.Contains(chosen) || !chosen.CanBeBorrowed || copying && chosen is CopyRivalCardEffect)
+      return PlacementCheck.Deny($"Действие «{chosen}» карточки «{card}» так выполнить нельзя.");
+
+    return CheckTargets(chosen, context, depth + 1);
   }
 
   /// <summary>

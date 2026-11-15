@@ -1,7 +1,9 @@
 using ConspiracyLeague.Core.Cards;
+using ConspiracyLeague.Core.Commands;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Game.Cards;
+using ConspiracyLeague.Game.Net;
 using ConspiracyLeague.Game.Ui;
 using Godot;
 
@@ -78,6 +80,27 @@ public partial class CardDragController : Node
   /// <param name="hand">Окна руки игрока, который сейчас ходит.</param>
   /// <param name="personalHq">Окна личного штаба: в свой штаб тоже можно положить карточку из руки.</param>
   /// <param name="market">Окна рынка: из них, как и со стола, карточку рынка можно перетащить в руку.</param>
+  /// <summary>
+  /// Игра через сервер: карточки не кладутся здесь, а уходят на сервер командами; когда сервер примет команду, партия
+  /// уже обновлена, и летящая карточка ложится на своё место. <c>null</c> — игра за одним компьютером.
+  /// </summary>
+  public NetworkGame? Net { get; set; }
+
+  /// <summary>
+  /// Игра через сервер: отправить команду выкладывания; принята — летящая карточка ложится туда, где карточка теперь
+  /// лежит в партии, нет — возвращается в руку.
+  /// </summary>
+  private void SendPlacement(NetworkGame net, HandDrag drag, GameCommand command) =>
+    net.Send(command, accepted =>
+    {
+      if (accepted && _board.Field.CellOf(drag.View.Card) is not null)
+        SettleDrag(drag);
+      else if (drag.View.GetParent() == _dragLayer)
+        ReturnToHand(drag);
+      if (accepted && _hand.DraggedCard == drag.View.Card)
+        _hand.DraggedCard = null;
+    });
+
   public void Initialize(Board board, GameSession session, CanvasLayer dragLayer, HandHub hand, PersonalHqHub personalHq, MarketHub market)
   {
     _personalHq = personalHq;
@@ -305,6 +328,12 @@ public partial class CardDragController : Node
       return;
     }
 
+    if (Net is { } net)
+    {
+      SendPlacement(net, drag, new PlaceCommand(_session.CardIds.IdOf(drag.View.Card), cell.ToCell()));
+      return;
+    }
+
     var player = _session.CurrentPlayer;
     var placed = _session.PlaceFromHand(drag.View.Card, cell.ToCell());
     // Действие при выкладывании могло убрать карточки под выложенной — тогда она опустилась ниже.
@@ -363,6 +392,23 @@ public partial class CardDragController : Node
   /// </summary>
   private void PlaceHidden(HandDrag drag, TheoryColumn column)
   {
+    if (Net is { } net)
+    {
+      // Закрытую карточку на столе нарисует стол по новой партии: летящая карточка не нужна.
+      net.Send(new PlaceHiddenCommand(_session.CardIds.IdOf(drag.View.Card), column.Theory.Name), accepted =>
+      {
+        if (!accepted)
+        {
+          ReturnToHand(drag);
+          return;
+        }
+        drag.View.QueueFree();
+        if (_hand.DraggedCard == drag.View.Card)
+          _hand.DraggedCard = null;
+      });
+      return;
+    }
+
     _session.PlaceHiddenFromHand(drag.View.Card, column);
     drag.View.QueueFree();
     if (_hand.DraggedCard == drag.View.Card)
@@ -374,6 +420,12 @@ public partial class CardDragController : Node
   /// </summary>
   private void DropInWall(HandDrag drag, int boundary)
   {
+    if (Net is { } net)
+    {
+      SendPlacement(net, drag, new PlaceInWallCommand(_session.CardIds.IdOf(drag.View.Card), boundary));
+      return;
+    }
+
     var player = _session.CurrentPlayer;
     var placed = _session.PlaceInWallFromHand(drag.View.Card, boundary);
     var cell = _board.Field.CellOf(drag.View.Card)!.Value.ToVector2I();
@@ -425,6 +477,19 @@ public partial class CardDragController : Node
     {
       PlacementDenied?.Invoke(check.Reason!);
       ReturnToMarket(drag);
+      return;
+    }
+
+    if (Net is { } net)
+    {
+      // Купленную карточку покажет рука по новой партии; не купили — карточка возвращается на рынок.
+      net.Send(new BuyCommand(drag.Cell.ToCell()), accepted =>
+      {
+        if (accepted)
+          drag.View.QueueFree();
+        else
+          ReturnToMarket(drag);
+      });
       return;
     }
 

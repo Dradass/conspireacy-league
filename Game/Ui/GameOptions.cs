@@ -19,6 +19,13 @@ public static class GameOptions
   private const string BotSpeedKey = "bot_speed";
   private const string FollowBotsKey = "follow_bots";
   private const string IncomeAnimationKey = "income_animation";
+  private const string NetworkSection = "network";
+  private const string PlayerNameKey = "player_name";
+  private const string AddressKey = "address";
+  private const string InternetAddressKey = "internet_address";
+  private const string FingerprintKey = "fingerprint";
+  private const string PortKey = "port";
+  private const string TurnSecondsKey = "turn_seconds";
 
   /// <summary>
   /// Во сколько раз медленнее исходной скорости ходят боты на каждом делении ползунка «Скорость ботов»:
@@ -65,6 +72,28 @@ public static class GameOptions
   public static bool IncomeAnimation { get; set; }
 
   /// <summary>
+  /// Сетевая игра: имя игрока, последний адрес сервера, отпечаток его сертификата и порт своего стола.
+  /// </summary>
+  public static string PlayerName { get; set; } = "Игрок";
+
+  /// <inheritdoc cref="PlayerName"/>
+  public static string Address { get; set; } = "127.0.0.1:7777";
+
+  /// <inheritdoc cref="PlayerName"/>
+  public static string InternetAddress { get; set; } = string.Empty;
+
+  /// <inheritdoc cref="PlayerName"/>
+  public static string Fingerprint { get; set; } = string.Empty;
+
+  /// <inheritdoc cref="PlayerName"/>
+  public static int Port { get; set; } = 7777;
+
+  /// <summary>
+  /// Сетевая игра: время хода каждого игрока, с (таймер в лобби у создателя стола); 0 — без ограничения.
+  /// </summary>
+  public static int TurnSeconds { get; set; } = 90;
+
+  /// <summary>
   /// Сохранить опции на диск.
   /// </summary>
   public static void Save()
@@ -75,6 +104,12 @@ public static class GameOptions
     config.SetValue(Section, BotSpeedKey, BotSpeed);
     config.SetValue(Section, FollowBotsKey, FollowBots);
     config.SetValue(Section, IncomeAnimationKey, IncomeAnimation);
+    config.SetValue(NetworkSection, PlayerNameKey, PlayerName);
+    config.SetValue(NetworkSection, AddressKey, Address);
+    config.SetValue(NetworkSection, InternetAddressKey, InternetAddress);
+    config.SetValue(NetworkSection, FingerprintKey, Fingerprint);
+    config.SetValue(NetworkSection, PortKey, Port);
+    config.SetValue(NetworkSection, TurnSecondsKey, TurnSeconds);
     var error = config.Save(FilePath);
     if (error != Error.Ok)
       GD.PrintErr($"Не удалось сохранить опции в {FilePath}: {error}");
@@ -91,5 +126,11 @@ public static class GameOptions
     BotSpeed = Math.Clamp(config.GetValue(Section, BotSpeedKey, BotSpeed).AsInt32(), 0, BotSlowdowns.Length - 1);
     FollowBots = config.GetValue(Section, FollowBotsKey, FollowBots).AsBool();
     IncomeAnimation = config.GetValue(Section, IncomeAnimationKey, IncomeAnimation).AsBool();
+    PlayerName = config.GetValue(NetworkSection, PlayerNameKey, PlayerName).AsString();
+    Address = config.GetValue(NetworkSection, AddressKey, Address).AsString();
+    InternetAddress = config.GetValue(NetworkSection, InternetAddressKey, InternetAddress).AsString();
+    Fingerprint = config.GetValue(NetworkSection, FingerprintKey, Fingerprint).AsString();
+    Port = Math.Clamp(config.GetValue(NetworkSection, PortKey, Port).AsInt32(), 1, 65535);
+    TurnSeconds = Math.Clamp(config.GetValue(NetworkSection, TurnSecondsKey, TurnSeconds).AsInt32(), 0, Core.Protocol.LobbyStart.MaxTurnSeconds);
   }
 }

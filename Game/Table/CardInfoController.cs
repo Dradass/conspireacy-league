@@ -182,7 +182,7 @@ public partial class CardInfoController : Node
   /// </summary>
   private bool CanSee(HiddenCard hidden, Cell? cell)
   {
-    var viewer = _session.CurrentPlayer;
+    var viewer = _board.Viewer;
     var inOwnZone = cell is { } c && _session.Field.PlayerZones.TryGetValue(viewer, out var zone) && zone.Contains(c);
     return hidden.IsRevealed || hidden.IsKnownBy(viewer) || inOwnZone || _session.Field.CanSeeAllHidden(viewer);
   }

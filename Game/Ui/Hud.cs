@@ -1,5 +1,6 @@
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Game.Net;
 using ConspiracyLeague.Game.Table;
 using Godot;
 
@@ -60,6 +61,17 @@ public partial class Hud : CanvasLayer
   public TheoriesHub Theories { get; init; } = null!;
 
   /// <summary>
+  /// История партии для окон «История».
+  /// </summary>
+  public GameHistory History { get; init; } = null!;
+
+  /// <summary>
+  /// Игра через сервер: за этим компьютером играет один игрок, и видна всегда его раскладка окон. <c>null</c> — игра
+  /// за одним компьютером.
+  /// </summary>
+  public NetworkGame? Net { get; init; }
+
+  /// <summary>
   /// Стол: окна «Теории» показывают его общую зону.
   /// </summary>
   public Board Board { get; init; } = null!;
@@ -91,6 +103,7 @@ public partial class Hud : CanvasLayer
     Session.AutoPassed += OnAutoPassed;
     Session.LastRoundDeclared += OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
+    Session.Restored += OnRestored;
     GetViewport().SizeChanged += OnViewportSizeChanged;
     ShowLayoutOfActor();
   }
@@ -103,6 +116,7 @@ public partial class Hud : CanvasLayer
     Session.AutoPassed -= OnAutoPassed;
     Session.LastRoundDeclared -= OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    Session.Restored -= OnRestored;
     GetViewport().SizeChanged -= OnViewportSizeChanged;
   }
 
@@ -175,6 +189,7 @@ public partial class Hud : CanvasLayer
     HudWindowKind.PersonalHq => new PersonalHqView { Name = "PersonalHq", Session = Session, Hub = PersonalHq },
     HudWindowKind.OtherHq => new PersonalHqView { Name = "OtherHq", Session = Session, Hub = PersonalHq, FixedPlayer = window.ShownPlayer },
     HudWindowKind.Players => new PlayersInfoView { Name = "Players", Session = Session },
+    HudWindowKind.History => new HistoryView { Name = "History", History = History },
     _ => throw new ArgumentOutOfRangeException(nameof(window), window.Kind, null),
   };
 
@@ -202,6 +217,9 @@ public partial class Hud : CanvasLayer
   private void ShowLayoutOfActor()
   {
     var actor = Session.PendingTheoryTrigger?.Owner ?? Turns.CurrentPlayer;
+    // Игра через сервер: видна раскладка игрока этого компьютера, кто бы ни действовал.
+    if (Net is { } net)
+      actor = net.LocalPlayer;
     if (actor == _layoutPlayer)
       return;
     _layoutPlayer = actor;
@@ -211,7 +229,7 @@ public partial class Hud : CanvasLayer
 
   private Control CreateTurnButtons()
   {
-    var buttons = new TurnButtons { Name = "TurnButtons", Session = Session };
+    var buttons = new TurnButtons { Name = "TurnButtons", Session = Session, Net = Net };
     buttons.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
     buttons.OffsetLeft = GameMenu.Margin;
     buttons.OffsetTop = GameMenu.Margin + GameMenu.IconSize + TurnButtonsGap;
@@ -267,9 +285,14 @@ public partial class Hud : CanvasLayer
   private void OnPhaseChanged(GamePhase phase)
   {
     ShowLayoutOfActor();
-    if (phase == GamePhase.GameOver)
+    if (phase == GamePhase.GameOver && _root.GetNodeOrNull("Results") is null)
       _root.AddChild(new ResultsPanel { Name = "Results", Session = Session });
   }
+
+  /// <summary>
+  /// Игра через сервер: партию целиком заменило обновление.
+  /// </summary>
+  private void OnRestored() => OnPhaseChanged(Session.Phase);
 
   /// <summary>
   /// Режим гонки: теория дошла до финиша — раунд объявлен последним.

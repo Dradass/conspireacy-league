@@ -74,4 +74,9 @@ public sealed class HiddenCard : PersonCard
   public bool IsKnownBy(Player player) => _knownBy.Contains(player);
 
   internal void ShowTo(Player player) => _knownBy.Add(player);
+
+  /// <summary>
+  /// Клиент: закрытая карта с лицевой стороной-заглушкой — настоящую сторону этот игрок не знает.
+  /// </summary>
+  internal static HiddenCard Unknown() => new(new CitizenCard());
 }

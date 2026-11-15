@@ -110,8 +110,7 @@ public partial class PlayersDialog : MenuDialog
       level.AddThemeFontSizeOverride("font_size", FieldFontSize);
       level.AddItem("Лёгкий", (int)BotLevel.Easy);
       level.AddItem("Средний", (int)BotLevel.Medium);
-      level.AddItem("Сложный", (int)BotLevel.Hard);
-      level.AddItem("Очень сложный", (int)BotLevel.VeryHard);
+      level.AddItem("Тяжёлый", (int)BotLevel.Hard);
 
       var bot = new CheckBox { Name = $"Bot{number}", Text = "Бот", FocusMode = FocusModeEnum.None };
       bot.AddThemeFontSizeOverride("font_size", FieldFontSize);
