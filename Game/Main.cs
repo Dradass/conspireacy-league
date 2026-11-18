@@ -59,6 +59,11 @@ public partial class Main : Node2D
   public bool FailureConsequences { get; init; } = true;
 
   /// <summary>
+  /// Раскрывать ли закрытых персонажей перед итоговым подсчётом (<see cref="PlayingField.RevealHiddenAtEnd"/>).
+  /// </summary>
+  public bool RevealHiddenAtEnd { get; init; } = true;
+
+  /// <summary>
   /// Радиальное поле: стол в форме кругов — в центре пусто, дальше кольца теорий, рынка и личных штабов;
   /// кольца крутятся мышью. Выбирается в стартовом меню, по умолчанию выключено.
   /// </summary>
@@ -107,6 +112,7 @@ public partial class Main : Node2D
 		BotLevel = LevelOf(index),
 	  }), mode: Mode);
 	session.Field.FailureConsequences = FailureConsequences;
+	session.Field.RevealHiddenAtEnd = RevealHiddenAtEnd;
 
 	var table = BuildTable(session, net: null);
 	table.Hud.History.AttachLocal();
@@ -123,6 +129,12 @@ public partial class Main : Node2D
 	roundController.Initialize(table.Board, session, table.Camera);
 	roundController.Hint += table.Hud.ShowMessage;
 	roundController.IncomeSummaryRequested += table.IncomeSummary.Open;
+
+	// В конце игры владельцы сами раскрывают закрытых персонажей, если раскрываются не все.
+	var finalReveal = new FinalRevealController { Name = "FinalRevealController" };
+	AddChild(finalReveal);
+	finalReveal.Initialize(table.Board, session);
+	finalReveal.Hint += table.Hud.ShowMessage;
 
 	var debugDumper = new DebugStateDumper { Name = "DebugStateDumper", Session = session, Board = table.Board };
 	AddChild(debugDumper);

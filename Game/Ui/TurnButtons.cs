@@ -17,6 +17,7 @@ public partial class TurnButtons : VBoxContainer
 
   private Button _pass = null!;
   private Button _skipTheory = null!;
+  private Button _finishReveal = null!;
 
   /// <summary>
   /// Сессия игры.
@@ -54,6 +55,16 @@ public partial class TurnButtons : VBoxContainer
         Session.SkipTheoryTrigger();
     };
     AddChild(_skipTheory);
+
+    // Конец игры: владелец закрытых персонажей раскрыл, кого хотел (только игра за одним компьютером).
+    _finishReveal = new Button { Name = "FinishReveal", Text = "Больше не раскрывать закрытых персонажей", FocusMode = FocusModeEnum.None, Visible = false };
+    _finishReveal.AddThemeFontSizeOverride("font_size", FontSize);
+    _finishReveal.Pressed += () =>
+    {
+      if (Session.Phase == GamePhase.FinalReveal && Session.FinalRevealPlayer is { IsBot: false })
+        Session.FinishFinalReveal();
+    };
+    AddChild(_finishReveal);
 
     Session.PhaseChanged += OnPhaseChanged;
     Session.PendingCheckChanged += OnPendingCheckChanged;
@@ -95,7 +106,8 @@ public partial class TurnButtons : VBoxContainer
       && Session.PendingPlacement is null && Session.PendingTheoryTrigger is null
       && !Session.CurrentPlayer.IsBot;
     _pass.Disabled = !canAct;
-    _pass.Visible = Session.Phase != GamePhase.GameOver;
+    _pass.Visible = Session.Phase is not (GamePhase.GameOver or GamePhase.FinalReveal);
+    _finishReveal.Visible = Session.Phase == GamePhase.FinalReveal && Session.FinalRevealPlayer is { IsBot: false };
     _skipTheory.Visible = Session.PendingTheoryTrigger is { Owner.IsBot: false };
   }
 }

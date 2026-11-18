@@ -793,18 +793,29 @@ public sealed class GameSession
     if (Market.DeckCount == 0 || Mode == GameMode.Race && IsLastRound)
     {
       // Перед итоговым подсчётом все закрытые карточки раскрываются: их владельцы получают бонусы или карточки уходят.
-      Field.RevealAllHiddenCards();
-      // Раскрытие могло сделать штаб несостоятельным (или наоборот): проверяем штабы, как в конце раунда.
-      Field.CloseInsolventTheories();
-      Field.ReopenSolventTheories();
-      // В режиме развития теорий денег за лидеров и повторного дохода от адептов нет: очки считаются по состоянию поля.
-      if (Mode is GameMode.TheoryDevelopment or GameMode.Race)
+      // Либо владельцы по очереди сами решают, кого раскрыть.
+      if (Field.RevealHiddenAtEnd)
+        Field.RevealAllHiddenCards();
+      else
       {
-        SetPhase(GamePhase.GameOver);
-        return false;
+        _finalRevealQueue.Clear();
+        var first = Turns.FirstPlayer;
+        for (var player = first; ; )
+        {
+          if (Field.OwnHiddenCells(player).Any())
+            _finalRevealQueue.Enqueue(player);
+          player = Turns.NextAfter(player);
+          if (player == first)
+            break;
+        }
+        if (_finalRevealQueue.Count > 0)
+        {
+          NextFinalRevealPlayer();
+          SetPhase(GamePhase.FinalReveal);
+          return false;
+        }
       }
-      EnqueueActiveTheories(column => true);
-      SetPhase(GamePhase.FinalLeadersBonus);
+      StartFinalScoring();
       return false;
     }
 
@@ -812,6 +823,78 @@ public sealed class GameSession
     Field.RemoveLeaderMeeples();
     Market.Refresh();
     return true;
+  }
+
+  private readonly Queue<Player> _finalRevealQueue = new();
+
+  /// <summary>
+  /// Кто сейчас выбирает, каких своих закрытых персонажей раскрыть (<see cref="GamePhase.FinalReveal"/>), или <c>null</c>.
+  /// Он же — текущий игрок (<see cref="CurrentPlayer"/>).
+  /// </summary>
+  public Player? FinalRevealPlayer { get; private set; }
+
+  /// <summary>
+  /// Закрытые персонажи, которых <see cref="FinalRevealPlayer"/> ещё может раскрыть.
+  /// </summary>
+  public IEnumerable<Cell> FinalRevealTargets() =>
+    Phase == GamePhase.FinalReveal && FinalRevealPlayer is { } player ? Field.OwnHiddenCells(player) : [];
+
+  /// <summary>
+  /// <see cref="FinalRevealPlayer"/> раскрывает своего закрытого персонажа.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Сейчас не конец игры или это не его закрытый персонаж.</exception>
+  public void RevealAtEnd(Cell cell)
+  {
+    RequirePhase(GamePhase.FinalReveal);
+    Field.RevealOwn(cell, FinalRevealPlayer!);
+  }
+
+  /// <summary>
+  /// <see cref="FinalRevealPlayer"/> больше не раскрывает закрытых персонажей: выбирает следующий владелец закрытых
+  /// персонажей, а когда выбрали все — начинается итоговый подсчёт.
+  /// </summary>
+  public void FinishFinalReveal()
+  {
+    RequirePhase(GamePhase.FinalReveal);
+    if (!NextFinalRevealPlayer())
+      StartFinalScoring();
+  }
+
+  /// <summary>
+  /// Следующий владелец закрытых персонажей становится текущим игроком. <c>false</c> — выбрали все.
+  /// </summary>
+  private bool NextFinalRevealPlayer()
+  {
+    // Пока шла очередь, чужие раскрытия могли убрать его закрытых персонажей — такого пропускаем.
+    while (_finalRevealQueue.TryDequeue(out var player))
+    {
+      if (!Field.OwnHiddenCells(player).Any())
+        continue;
+      FinalRevealPlayer = player;
+      Turns.SetCurrent(player);
+      return true;
+    }
+    FinalRevealPlayer = null;
+    return false;
+  }
+
+  /// <summary>
+  /// Закрытые карточки раскрыты (или их владельцы решили, кого раскрыть): штабы проверяются, и начинается итоговый
+  /// подсчёт — или партия сразу завершается, если в этом режиме выплат в конце нет.
+  /// </summary>
+  private void StartFinalScoring()
+  {
+    // Раскрытие могло сделать штаб несостоятельным (или наоборот): проверяем штабы, как в конце раунда.
+    Field.CloseInsolventTheories();
+    Field.ReopenSolventTheories();
+    // В режиме развития теорий денег за лидеров и повторного дохода от адептов нет: очки считаются по состоянию поля.
+    if (Mode is GameMode.TheoryDevelopment or GameMode.Race)
+    {
+      SetPhase(GamePhase.GameOver);
+      return;
+    }
+    EnqueueActiveTheories(column => true);
+    SetPhase(GamePhase.FinalLeadersBonus);
   }
 
   /// <summary>

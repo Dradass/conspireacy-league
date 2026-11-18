@@ -1,4 +1,4 @@
-using ConspiracyLeague.Core.Field;
+﻿using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
 using ConspiracyLeague.Core.Views;
 
@@ -44,7 +44,8 @@ public sealed class RoundSummaryCollector(GameSession session)
         case TheoryReopened reopened when _collecting:
           _reopened.Add(reopened.Theory);
           break;
-        case TheoryIncomePaid income when _collecting:
+        // Как и за одним компьютером (GameSession.IncomeOfRound), в сводке только теории, которые принесли деньги.
+        case TheoryIncomePaid income when _collecting && income.Total > 0:
           _incomes.Add(income);
           break;
         case PhaseChanged { Phase: GamePhase.PlayerTurns } when _collecting:

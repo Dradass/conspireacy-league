@@ -1,4 +1,4 @@
-using ConspiracyLeague.Core.Game;
+﻿using ConspiracyLeague.Core.Game;
 
 namespace ConspiracyLeague.Core.Bots;
 
@@ -21,6 +21,11 @@ public enum BotLevel
   /// Тяжёлый: веса подобраны партиями против среднего бота, отдельно для каждого режима игры.
   /// </summary>
   Hard,
+
+  /// <summary>
+  /// Ультра: веса подобраны партиями против тяжёлого бота.
+  /// </summary>
+  Ultra,
 }
 
 /// <summary>
@@ -146,6 +151,85 @@ public sealed record BotProfile
   public double AdeptGrowth { get; init; }
 
   /// <summary>
+  /// К скольким своим теориям бот стремится в развитии теорий: очки за теории растут всё быстрее, поэтому каждую
+  /// теорию до этой цели он ценит не меньше средней цены теории при таком их числе. 0 — только ближайший шаг.
+  /// </summary>
+  public int TheoryCountTarget { get; init; }
+
+  /// <summary>
+  /// Прибавка к цене адепта в теории, где все лидеры — бота: адептов выгодно сосредоточить в одной своей теории,
+  /// там их не делят с соперниками. 0 — без прибавки.
+  /// </summary>
+  public double FocusBonus { get; init; }
+
+  /// <summary>
+  /// Срочность покупки: карточку на рынке могут забрать соперники, а карточка в руке никуда не денется. Когда
+  /// соперников, которые ещё ходят и могут её купить, не меньше, чем карточек на рынке, покупка получает эту долю
+  /// выгоды выкладывания сверху. В развитии теорий — любая карточка, в гонке — карточка теории, которую бот положит лидером
+  /// в её штаб; 0 — бот не торопится.
+  /// </summary>
+  public double MarketUrgency { get; init; }
+
+  /// <summary>
+  /// Какую долю выгоды соперника бот засчитывает себе, если купит с рынка карточку теории, которая уже лежит на поле, и
+  /// соперник не сможет положить её лидером в эту теорию. 0 — бот не отбирает карточки.
+  /// </summary>
+  public double MarketDenial { get; init; }
+
+  /// <summary>
+  /// Сколько стоит держать на руке одну карточку без теории про запас, в долях выгоды от входа ею в теорию — лучшего
+  /// сейчас, но не меньше <see cref="ReserveFloor"/>: такой карточкой потом можно войти в любую теорию. Последнюю такую
+  /// карточку бот не выкладывает в личный штаб или в теорию, если выгода меньше этой, и покупает её про запас, если
+  /// на руке нет ни одной. Больше 1 — бот не потратит запас даже на лучшую теорию. 0 — резерв не держит.
+  /// </summary>
+  public double HandReserve { get; init; }
+
+  /// <summary>
+  /// Нижняя граница выгоды от входа в теорию, от которой считается <see cref="HandReserve"/>: даже если сейчас входить
+  /// некуда, удобная теория может появиться позже. Запас бот тратит на вход в теорию не дешевле этой выгоды.
+  /// </summary>
+  public double ReserveFloor { get; init; }
+
+  /// <summary>
+  /// Какую долю выгоды владельца чужой теории бот засчитывает себе в минус, когда входит в неё лидером (владелец
+  /// получает очки за влияние каждого лидера). 1 — полностью; меньше — бот охотнее входит в чужие теории ради адептов.
+  /// </summary>
+  public double JoinGiftFactor { get; init; } = 1;
+
+  /// <summary>
+  /// План перехвата на два хода: если после этой карты боту не хватает влияния, чтобы стать владельцем чужой теории,
+  /// но недостающее он может добрать ещё одной картой (с руки или с рынка на оставшиеся деньги), выгода от будущего
+  /// перехвата засчитывается с этой долей. Только в развитии теорий; 0 — бот смотрит на один ход.
+  /// </summary>
+  public double TakeoverPlan { get; init; }
+
+  /// <summary>
+  /// Гонка: насколько бот ценит лидеров в своей главной теории — той, что он доводит до финиша. Каждый лидер там стоит
+  /// эту долю от очков на финише, делённых на число лидеров для финиша. 0 — только прогноз гонки на нынешнем поле.
+  /// </summary>
+  public double RaceFocus { get; init; }
+
+  /// <summary>
+  /// Насколько бот боится закрыть свою теорию бездомным: точная проверка состоятельности штаба и потеря влияния
+  /// и доли адептов этой теории. 0 — грубая проверка и потеря только нынешних адептов.
+  /// </summary>
+  public double InsolvencyCare { get; init; }
+
+  /// <summary>
+  /// Игра на состоятельности штабов: бот открывает свой закрытый (или вот-вот закрытый) бездомными штаб, добавляя туда
+  /// не бездомных, и закрывает бездомными чужие сильные штабы, чтобы их владельцы и лидеры не получили за них очки.
+  /// Множитель этой выгоды; 0 — бот видит только, не закроет ли он бездомным свой штаб (<see cref="InsolvencyCare"/>).
+  /// </summary>
+  public double SolvencyPlay { get; init; }
+
+  /// <summary>
+  /// Какую долю выгоды от закрытия бездомными чужого штаба бот засчитывает (<see cref="SolvencyPlay"/>): бездомные
+  /// и доплата за вход тратят действия и деньги, а соперник может успеть открыть штаб. Спасение своего штаба и
+  /// осторожность со своим — полностью.
+  /// </summary>
+  public double SabotageFactor { get; init; } = 1;
+
+  /// <summary>
   /// Свои настройки для отдельных режимов игры; для режима, которого здесь нет, — эти.
   /// </summary>
   public IReadOnlyDictionary<GameMode, BotProfile>? ByMode { get; init; }
@@ -164,9 +248,14 @@ public sealed record BotProfile
   /// Лёгкий бот: веса подобраны партиями ботов между собой. Вкладывается в карточки и личный штаб, копит
   /// на сильных персонажей, больше учитывает соперников и прежде всего мешает тому, кто впереди. Укрепляет свои теории,
   /// которые соперник может перехватить, и охотнее отбирает теории у того, у кого их много. В личном штабе
-  /// кладёт денежных персонажей к учёным, ценных — к полицейскому и подальше от бездомных.
+  /// кладёт денежных персонажей к учёным, ценных — к полицейскому и подальше от бездомных. Спешит купить карточки,
+  /// которые вот-вот разберут соперники, и охотнее входит в чужие теории с адептами. Планирует перехват чужой теории
+  /// на два хода, если одной карты не хватает. В гонке доводит до финиша свою главную теорию, входит в чужие теории,
+  /// которые вот-вот финишируют, не копит деньги впустую и не вкладывается в личный штаб в ущерб лидерам. Покупает
+  /// карточки теорий, лежащих на поле, если иначе их положит лидером соперник. Держит на руке карточку без теории
+  /// про запас, чтобы войти ею в чужую теорию, когда будет выгодно (кроме игры на деньги).
   /// </summary>
-  public static BotProfile Easy { get; } = new()
+  public static BotProfile Easy { get; } = ByModes(new()
   {
     BuyFactor = 0.85,
     UsesFactor = 1.3,
@@ -179,20 +268,26 @@ public sealed record BotProfile
     ScientistExact = 0.6,
     HomelessHarm = 0.6,
     ProtectionValue = 1,
-  };
+    MarketUrgency = 0.6,
+    JoinGiftFactor = 0.75,
+    TakeoverPlan = 0.3,
+    RaceFocus = 2,
+    MarketDenial = 0.5,
+    HandReserve = 1,
+    ReserveFloor = 8,
+  });
 
   /// <summary>
   /// Средний бот: веса подобраны партиями против лёгкого бота. Ещё охотнее покупает карточки, выше ценит
-  /// персонажей в личном штабе и дольше копит на сильных. Охотнее входит в теории, куда владелец каждый раунд приводит
-  /// много адептов.
+  /// персонажей в личном штабе и дольше копит на сильных.
   /// </summary>
-  public static BotProfile Medium { get; } = Easy with
+  public static BotProfile Medium { get; } = ByModes(Easy with
   {
     BuyFactor = 1.2,
     UsesFactor = 1.8,
     SavingsShare = 1.6,
-    AdeptGrowth = 1.5,
-  };
+    ByMode = null,
+  });
 
   /// <summary>
   /// Тяжёлый бот: веса подобраны партиями против среднего бота, отдельно для каждого режима игры.
@@ -205,10 +300,75 @@ public sealed record BotProfile
     ByMode = new Dictionary<GameMode, BotProfile>
     {
       [GameMode.TheoryDevelopment] = Medium with { MoneyFactor = 1.6, NewTheoryFactor = 1.3 },
-      [GameMode.Money] = Medium with { UsesFactor = 1.4, ScientistExact = 1, HomelessHarm = 1 },
-      [GameMode.Race] = Medium with { MoneyFactor = 4, InfluenceFactor = 0.6, NewTheoryFactor = 0.5 },
+      [GameMode.Money] = Medium.ForMode(GameMode.Money) with { UsesFactor = 1.4, ScientistExact = 1, HomelessHarm = 1 },
+      [GameMode.Race] = Medium.ForMode(GameMode.Race) with { MoneyFactor = 4, InfluenceFactor = 0.6, NewTheoryFactor = 0.5 },
     },
   };
+
+  /// <summary>
+  /// Ультра бот: веса подобраны партиями против тяжёлого бота. Сильнее учитывает выгоду соперников, делает и мелкие
+  /// выгодные ходы, охотнее покупает карточки своих теорий и меньше копит. В развитии теорий не гонится за основанием
+  /// новых теорий, не переоценивает личный штаб (охотнее входит в теории и перехватывает их), не закрывает свои штабы
+  /// бездомными и не дарит очки владельцам чужих теорий; в гонке упорнее доводит до финиша свою главную теорию.
+  /// </summary>
+  public static BotProfile Ultra { get; } = WithMode(WithMode(WithAll(Hard, profile => profile with
+  {
+    RivalShare = 1.6,
+    MinValue = 0.05,
+    UsesCap = 5,
+    ThemedBuyBonus = 0.25,
+  }), GameMode.TheoryDevelopment, profile => profile with
+  {
+    NewTheoryFactor = 1,
+    // Разбор партий против людей: боты выкладывали все стартовые карточки в личный штаб и весь матч играли «получить $»,
+    // не основывая и не перехватывая теорий. Персонаж в личном штабе играет не больше раза за раунд — без завышения
+    // его розыгрышей карточки идут в штабы теорий, а адепты — в свои теории.
+    UsesFactor = 1,
+    // Боты закрывали свои штабы бездомными: проверяем состоятельность точно и считаем потерю всего штаба.
+    InsolvencyCare = 1,
+    // Каждый лидер в чужой теории — очки её владельцу; в партиях с людьми боты так дарили очки победителю.
+    JoinGiftFactor = 1,
+    // Открывает свои закрытые штабы и закрывает бездомными сильные штабы соперников — прежде всего того, кто впереди.
+    SolvencyPlay = 1,
+    // В партиях ботов полная выгода от закрытия чужих штабов стоила ~2 очков: бот тратил на это слишком много ходов.
+    SabotageFactor = 0.5,
+  }), GameMode.Race, profile => profile with { RaceFocus = 4 });
+
+  /// <summary>
+  /// В гонке очки дают только лидеры теорий на финише, а личный штаб лишь помогает до него дойти: розыгрыши персонажей
+  /// бот ценит меньше (<see cref="RaceUsesFactor"/>).
+  /// </summary>
+  /// <remarks>
+  /// В игре на деньги каждый персонаж в личном штабе приносит деньги, а войти в чужую теорию почти никогда не выгоднее:
+  /// карточку про запас бот там не держит (<see cref="HandReserve"/>).
+  /// </remarks>
+  private static BotProfile ByModes(BotProfile profile) =>
+    WithMode(WithMode(profile, GameMode.Race, race => race with { UsesFactor = RaceUsesFactor }),
+      GameMode.Money, money => money with { HandReserve = 0 });
+
+  /// <summary>
+  /// Сколько розыгрышей персонажа из личного штаба бот ожидает в гонке на каждый оставшийся раунд.
+  /// </summary>
+  private const double RaceUsesFactor = 1.0;
+
+  /// <summary>
+  /// Изменить веса одного режима (<see cref="ByMode"/>).
+  /// </summary>
+  private static BotProfile WithMode(BotProfile profile, GameMode mode, Func<BotProfile, BotProfile> change)
+  {
+    var byMode = profile.ByMode?.ToDictionary(entry => entry.Key, entry => entry.Value) ?? new Dictionary<GameMode, BotProfile>();
+    byMode[mode] = change(profile.ForMode(mode));
+    return profile with { ByMode = byMode };
+  }
+
+  /// <summary>
+  /// Изменить общие веса и веса каждого режима (<see cref="ByMode"/>) одинаково.
+  /// </summary>
+  private static BotProfile WithAll(BotProfile profile, Func<BotProfile, BotProfile> change) =>
+    change(profile) with
+    {
+      ByMode = profile.ByMode?.ToDictionary(entry => entry.Key, entry => change(entry.Value)),
+    };
 
   /// <summary>
   /// Настройки для уровня.
@@ -217,6 +377,7 @@ public sealed record BotProfile
   {
     BotLevel.Medium => Medium,
     BotLevel.Hard => Hard,
+    BotLevel.Ultra => Ultra,
     _ => Easy,
   };
 }

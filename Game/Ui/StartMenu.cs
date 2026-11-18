@@ -60,11 +60,7 @@ public partial class StartMenu : Control
     column.AddChild(_mode);
 
     column.AddChild(CreateButton("Network", "Сетевая игра", StartNetworkGame));
-    var localRow = new HBoxContainer();
-    localRow.AddThemeConstantOverride("separation", 12);
-    column.AddChild(localRow);
-    localRow.AddChild(CreateButton("Local", "Локальная игра", () => StartLocalGame()));
-    localRow.AddChild(CreateButton("Dev", "Режим разработчика", () => StartLocalGame(devMode: true)));
+    column.AddChild(CreateButton("Local", "Локальная игра", StartLocalGame));
     column.AddChild(CreateButton("Options", "Опции", () => OptionsDialog.Open(this)));
     column.AddChild(CreateButton("Quit", "Выйти", () => GetTree().Quit()));
 
@@ -93,15 +89,14 @@ public partial class StartMenu : Control
   /// Локальная игра: в окне выбирают количество игроков и вводят их имена, затем начинается партия.
   /// «Назад» возвращает в меню.
   /// </summary>
-  /// <param name="devMode">Запустить с режимом разработчика.</param>
-  private async void StartLocalGame(bool devMode = false)
+  private async void StartLocalGame()
   {
     var mode = SelectedMode;
-    var players = await PlayersDialog.Ask(this, devMode ? "Режим разработчика" : "Локальная игра");
-    if (players is null)
+    var setup = await PlayersDialog.Ask(this, "Локальная игра");
+    if (setup is null)
       return;
 
-    StartGame(players, devMode, mode);
+    StartGame(setup, mode);
   }
 
   /// <summary>
@@ -123,8 +118,9 @@ public partial class StartMenu : Control
   /// <summary>
   /// Заменить меню партией с выбранными игроками, режимом и опциями (<see cref="GameOptions"/>).
   /// </summary>
-  private void StartGame(IReadOnlyList<PlayerSetup> players, bool devMode, GameMode mode)
+  private void StartGame(LocalGameSetup setup, GameMode mode)
   {
+    var players = setup.Players;
     var tree = GetTree();
     var game = new Main
     {
@@ -133,9 +129,9 @@ public partial class StartMenu : Control
       PlayerNames = players.Select(player => player.Name).ToList(),
       BotSeats = players.Select(player => player.IsBot).ToList(),
       BotLevels = players.Select(player => player.Level).ToList(),
-      DevMode = devMode,
       Mode = mode,
       FailureConsequences = GameOptions.CriticalFailure,
+      RevealHiddenAtEnd = setup.RevealHiddenAtEnd,
       RadialField = GameOptions.RadialField,
       BotSlowdown = GameOptions.BotSlowdown,
       FollowBots = GameOptions.FollowBots,

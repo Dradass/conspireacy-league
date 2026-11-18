@@ -13,6 +13,7 @@ public sealed class TableServerTests
   {
     BotDelay = TimeSpan.FromMilliseconds(10),
     TurnTimeout = TimeSpan.FromSeconds(90),
+    RatePerSecond = 1000,
   };
 
   /// <summary>

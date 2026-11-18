@@ -1,4 +1,4 @@
-using ConspiracyLeague.Core.Cards;
+﻿using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Cards.Professionals;
 using ConspiracyLeague.Core.Cards.Theories;
 using ConspiracyLeague.Core.Effects;
@@ -17,7 +17,7 @@ namespace ConspiracyLeague.Core.Bots;
 /// Выгода соперников считается со знаком минус, но с меньшим весом (<see cref="RivalWeight"/>): боту важно обогнать
 /// их всех, а не навредить одному.
 /// </remarks>
-internal sealed class BotEvaluator
+internal sealed partial class BotEvaluator
 {
   private readonly GameSession _session;
   private readonly Player _player;
@@ -64,11 +64,18 @@ internal sealed class BotEvaluator
     // Колода рынка пуста — после этого раунда начнётся итоговый подсчёт.
     if (session.Mode == GameMode.TheoryDevelopment && session.Market.DeckCount == 0)
       MoneyWeight = 1.0 / VictoryPoints.MoneyPerPoint;
+    // В последнем раунде гонки деньги решают только ничью.
+    if (session.Mode == GameMode.Race && RoundsLeft <= 1)
+      MoneyWeight = 0.01;
 
     // Копим на сильного персонажа: пока он не по карману, каждый $ стоит дороже — дешёвые покупки
     // становятся невыгодными, а «получить $» — выгоднее.
     (SavingsGoal, var savingsWeight) = FindSavingsGoal();
     MoneyWeight = Math.Max(MoneyWeight, savingsWeight);
+    // В гонке деньги нужны только на карточки, которые станут лидерами теорий: дороже они не стоят, сколько бы
+    // ни приносил персонаж, на которого бот копит.
+    if (session.Mode == GameMode.Race)
+      MoneyWeight = Math.Min(MoneyWeight, RaceMoneyCap);
   }
 
   /// <summary>
@@ -97,7 +104,7 @@ internal sealed class BotEvaluator
   private double Standing(Player player) => _session.Mode switch
   {
     GameMode.Money => player.Money + VictoryPoints.AdeptPoints(Field).GetValueOrDefault(player) * (RoundsLeft + 1),
-    GameMode.Race => _session.RaceScoreOf(player).Total + player.Money * 0.05,
+    GameMode.Race => CurrentRaceOutlook[player] + player.Money * 0.01,
     _ => _session.ScoreOf(player).Total,
   };
 
@@ -213,6 +220,77 @@ internal sealed class BotEvaluator
     return 1 + (int)Math.Ceiling(_session.Market.DeckCount / perRound);
   }
 
+  // ---------- Покупка ----------
+
+  /// <summary>
+  /// Выгода от того, что соперник не получит карточку с рынка (<see cref="BotProfile.MarketDenial"/>): карточку теории,
+  /// которая уже лежит на поле, соперник может положить туда лидером без доплаты. Засчитывается самая большая выгода
+  /// среди соперников, которые ещё ходят и могут её купить, с весом соперника.
+  /// </summary>
+  public double DenialValue(PersonCard card)
+  {
+    if (_profile.MarketDenial <= 0 || card.Theory is not { } theory || Field.TheoryColumns.All(column => column.Theory != theory))
+      return 0;
+    var worst = 0.0;
+    foreach (var rival in Rivals)
+    {
+      if (_session.Turns.HasPassed(rival) || !rival.CanAfford(card.Cost))
+        continue;
+      BotEvaluator? evaluator = null;
+      foreach (var (cell, check) in Field.AvailableCells(card, rival))
+      {
+        if (check.Column is not { } column || column.Theory != theory || !rival.CanAfford(card.Cost + check.Cost))
+          continue;
+        evaluator ??= new BotEvaluator(_session, rival, _profile);
+        var gain = evaluator.TheoryPlacementValue(card, cell, check) - (check.Cost + card.Cost) * evaluator.MoneyWeight;
+        worst = Math.Max(worst, RivalWeightOf(rival) * gain);
+      }
+    }
+    return _profile.MarketDenial * worst;
+  }
+
+  // ---------- Резерв на руке ----------
+
+  /// <summary>
+  /// Карточка, которую можно держать про запас: персонаж без теории входит в любую теорию.
+  /// </summary>
+  public static bool IsReserveCard(Card card) => card is PersonCard { Theory: null };
+
+  /// <summary>
+  /// Сколько карточек про запас у бота на руке.
+  /// </summary>
+  public int ReserveCount => _player.Hand.Cards.Count(IsReserveCard);
+
+  /// <summary>
+  /// Сколько стоит держать карточку на руке про запас (<see cref="BotProfile.HandReserve"/>): доля лучшей выгоды от её
+  /// входа в штаб теории, не меньше <see cref="BotProfile.ReserveFloor"/>. В последнем раунде запас не нужен: карточки
+  /// на руке очков не дают.
+  /// </summary>
+  public double ReserveValue(Card card)
+  {
+    if (_profile.HandReserve <= 0 || RoundsLeft <= 1 || !IsReserveCard(card) || card is not PersonCard person)
+      return 0;
+    var best = _profile.ReserveFloor;
+    foreach (var (cell, check) in Field.AvailableCells(person, _player))
+    {
+      if (check.Column is { IsClosed: false })
+        best = Math.Max(best, TheoryPlacementValue(person, cell, check) - check.Cost * MoneyWeight);
+    }
+    return _profile.HandReserve * best;
+  }
+
+  /// <summary>
+  /// Потеря от того, что бот выложит последнюю карточку про запас с выгодой <paramref name="value"/>: вход в штаб
+  /// теории — это то, ради чего её держали, поэтому теряется только недобранная часть.
+  /// </summary>
+  public double ReserveLoss(Card card, double value, bool intoTheory)
+  {
+    if (!IsReserveCard(card) || ReserveCount > 1 || !_player.Hand.Cards.Contains(card))
+      return 0;
+    var reserve = ReserveValue(card);
+    return intoTheory ? Math.Max(0, reserve - value) : reserve;
+  }
+
   // ---------- Выкладывание ----------
 
   /// <summary>
@@ -221,20 +299,29 @@ internal sealed class BotEvaluator
   public double TheoryPlacementValue(PersonCard card, Cell cell, PlacementCheck check)
   {
     if (check.Column is { } column)
-      return JoinValue(column, card.Influence, card is HomelessCard) + PlacedEffectValue(card, column);
+      return JoinValue(column, card.Influence, card is HomelessCard, card) + PlacedEffectValue(card, column);
     if (card.Theory is null)
       return 0;
+    if (_session.Mode == GameMode.Race)
+      return RaceNewTheoryValue(card.Influence) + NewTheoryWeight * 0.25 + PlacedEffectValue(card, null);
 
-    // Новая теория: игрок — основатель и владелец.
-    var value = card.Influence * InfluenceWeight + NewTheoryWeight + LeaderWeight;
+    // Новая теория: игрок — основатель и владелец. Теорию, которую соперник отберёт одной картой, бот засчитывает
+    // лишь частично, а при перехвате соперник получит и её карточку.
+    var keep = KeepChance(null, card.Influence);
+    var value = keep * (card.Influence * InfluenceWeight * ActiveChance(1, card.Influence) + NewTheoryWeight) + LeaderWeight
+      - (1 - keep) * RivalWeight * TheoryCardWorth;
     return value + PlacedEffectValue(card, null);
   }
 
   /// <summary>
   /// Выгода от того, что в стопку теории придёт ещё один лидер бота с таким влиянием.
   /// </summary>
-  public double JoinValue(TheoryColumn column, int influence, bool homeless)
+  /// <param name="placed">Карточка, которую бот кладёт (для плана перехвата: её не считать второй картой).</param>
+  public double JoinValue(TheoryColumn column, int influence, bool homeless, PersonCard? placed = null)
   {
+    if (_session.Mode == GameMode.Race)
+      return RaceJoinValue(column, influence, homeless);
+
     var myInfluence = column.InfluenceOf(_player) + influence;
     var bestRival = Rivals.Select(column.InfluenceOf).DefaultIfEmpty(0).Max();
     var ownedBefore = column.Owner == _player;
@@ -254,66 +341,237 @@ internal sealed class BotEvaluator
     var keepBefore = ownedBefore ? KeepChance(column, column.InfluenceOf(_player)) : 0;
     var keepAfter = ownedAfter ? KeepChance(column, myInfluence) : 0;
     var cardWorth = cardBefore ? -TheoryCardsDelta(true, false) : TheoryCardsDelta(false, true);
-    var value = keepAfter * (totalAfter * InfluenceWeight + (cardAfter ? cardWorth : 0))
-      - keepBefore * (column.Influence * InfluenceWeight + (cardBefore ? cardWorth : 0));
+    // Влияние даёт очки, только если теория будет действующей; новый лидер приближает её к этому.
+    var influenceBefore = column.Influence * InfluenceWeight * ActiveChance(column);
+    var influenceAfter = totalAfter * InfluenceWeight * ActiveChance(leadersAfter, totalAfter, column.IsClosed);
+    var value = keepAfter * (influenceAfter + (cardAfter ? cardWorth : 0))
+      - keepBefore * (influenceBefore + (cardBefore ? cardWorth : 0));
     if (!ownedBefore && ownedAfter && column.Owner is { } loser)
       value += keepAfter * RivalWeightOf(loser)
-        * (column.Influence * InfluenceWeight + (cardExists ? RivalCardWorth(loser, losing: true) : 0));
+        * (influenceBefore + (cardExists ? RivalCardWorth(loser, losing: true) : 0));
+    if (!ownedAfter)
+      value += TakeoverPlanValue(column, influence, myInfluence, bestRival, placed);
     if (!ownedAfter)
     {
       var gainer = column.Owner ?? BestRivalIn(column);
-      value -= RivalWeightOf(gainer) * (influence * InfluenceWeight
-        + (cardGranted ? RivalCardWorth(gainer, losing: false) : 0) + RaceProgressValue(column, leadersAfter));
+      value -= _profile.JoinGiftFactor * RivalWeightOf(gainer) * (influenceAfter - influenceBefore
+        + (cardGranted ? RivalCardWorth(gainer, losing: false) : 0));
     }
     else
-      value += LeaderWeight + RaceProgressValue(column, leadersAfter);
+      value += LeaderWeight;
 
     // Доля адептов: у бота больше лидеров в теории — больше доход и очки от адептов.
     var shareBefore = ShareOf(column, _player);
     var shareAfter = (LeadersOf(column, _player) + 1.0) / leadersAfter;
-    value += (shareAfter - shareBefore) * ExpectedAdepts(column) * AdeptUnit(column) * (1 + RivalWeight);
+    value += (shareAfter - shareBefore) * AdeptsWorth(column) * (1 + RivalWeight);
 
     // Ещё не владеет — но приблизился: потом можно будет перехватить.
     if (!ownedAfter && myInfluence + 2 >= bestRival)
       value += 0.3;
 
-    if (homeless && WouldBeInsolvent(column))
+    if (_profile.SolvencyPlay > 0)
+      return value + SolvencyValue(column, influence, SlackChange(column, homeless, placed), ownedAfter);
+
+    var insolvent = homeless && WouldBeInsolvent(column);
+    if (insolvent)
     {
-      value += ownedAfter
-        ? -(column.Adepts * AdeptUnit(column) + 2)
-        : RivalWeight * (column.Adepts * AdeptUnit(column) * 0.5 + 1);
+      // Закрытый штаб не даёт ни очков за влияние, ни очков за адептов: своему — потеря всего, что в нём есть.
+      if (_profile.InsolvencyCare > 0 && (ownedAfter || shareBefore > 0))
+        value -= _profile.InsolvencyCare * ((ownedBefore ? influenceBefore : 0) + shareBefore * AdeptsWorth(column)) + 2;
+      else
+        value += ownedAfter
+          ? -(column.Adepts * AdeptUnit(column) + 2)
+          : RivalWeight * (column.Adepts * AdeptUnit(column) * 0.5 + 1);
     }
 
     return value;
   }
 
   /// <summary>
-  /// Гонка: чем ближе своя теория к финишу, тем ценнее каждый новый лидер; дойти до финиша — бонус и очки адептов.
+  /// Выгода от плана перехвата на два хода (<see cref="BotProfile.TakeoverPlan"/>): после этой карты бот ещё не владелец,
+  /// но самой дешёвой подходящей второй картой (с руки или с рынка на оставшиеся деньги) он обгонит соперника.
+  /// Тогда засчитывается доля выгоды перехвата: своё влияние и карточка теории, потеря владельца и возврат подарка
+  /// за первую карту, за вычетом цены второй карты.
   /// </summary>
-  private double RaceProgressValue(TheoryColumn column, int leadersAfter)
+  private double TakeoverPlanValue(TheoryColumn column, int influence, int myInfluence, int bestRival, PersonCard? placed)
   {
-    if (_session.Mode != GameMode.Race)
+    if (_profile.TakeoverPlan <= 0 || column.IsClosed || _session.Mode != GameMode.TheoryDevelopment)
       return 0;
-    var progress = Math.Min(1.0, (double)leadersAfter / RaceScoring.FinishLeaders(column, _session.Players.Count));
-    var value = 3 * progress * progress;
-    if (WillFinish(column, leadersAfter))
-      value += RaceScoring.FinishBonus + column.Adepts * ShareOf(column, _player);
-    return value;
+
+    var need = bestRival - myInfluence + 1;
+    var inHand = placed is not null && _player.Hand.Cards.Contains(placed);
+    var firstCost = (placed is null || inHand ? 0 : placed.Cost)
+      + (placed?.Theory == column.Theory ? 0 : Math.Max(0, PlayingField.JoiningPricePerInfluence * column.Influence - (placed?.JoiningDiscount ?? 0)));
+    var moneyLeft = _player.Money - firstCost;
+    var totalAfter = column.Influence + influence;
+
+    // Самая дешёвая вторая карта, которая даёт нужное влияние.
+    var candidates = _player.Hand.Cards.OfType<PersonCard>().Where(card => card != placed).Select(card => (Card: card, Price: 0))
+      .Concat(_session.Market.OpenCards.Values.Where(card => card != placed).Select(card => (Card: card, Price: card.Cost)));
+    (PersonCard Card, int Cost)? second = null;
+    foreach (var (card, price) in candidates)
+    {
+      if (card.Influence < need || card.Theory is { } theory && theory != column.Theory)
+        continue;
+      var join = card.Theory == column.Theory ? 0
+        : Math.Max(0, PlayingField.JoiningPricePerInfluence * totalAfter - card.JoiningDiscount);
+      var cost = price + join;
+      if (cost <= moneyLeft && (second is null || cost < second.Value.Cost))
+        second = (card, cost);
+    }
+    if (second is not { } plan)
+      return 0;
+
+    var total = totalAfter + plan.Card.Influence;
+    var cardExists = Field.TheoryCardOf(column.Theory) is not null;
+    var cardComes = cardExists || column.Leaders + 2 >= TheoryColumn.TheoryCardLeadersThreshold && total >= TheoryColumn.ActiveInfluence;
+    var owner = column.Owner ?? BestRivalIn(column);
+    var chanceBefore = ActiveChance(column);
+    var chanceAfter = ActiveChance(column.Leaders + 2, total, column.IsClosed);
+    var payoff = KeepChance(column, myInfluence + plan.Card.Influence) * (total * InfluenceWeight * chanceAfter + (cardComes ? TheoryCardsDelta(false, true) : 0))
+      + RivalWeightOf(owner) * (column.Influence * InfluenceWeight * chanceBefore + (cardExists ? RivalCardWorth(owner, losing: true) : 0))
+      + _profile.JoinGiftFactor * RivalWeightOf(owner) * influence * InfluenceWeight * chanceAfter
+      - plan.Cost * MoneyWeight;
+    return _profile.TakeoverPlan * Math.Max(0, payoff);
+  }
+
+  // ---------- Состоятельность штабов ----------
+
+  /// <summary>
+  /// Насколько новый лидер меняет запас состоятельности штаба (<see cref="TheoryColumn.SolvencySlack"/>): бездомный
+  /// уменьшает его (у владельца «Коммунистов в Антарктиде» — на 2), остальные увеличивают, учёный — ещё на
+  /// <see cref="ScientistPassive.SolvencyBonus"/>.
+  /// </summary>
+  private int SlackChange(TheoryColumn column, bool homeless, PersonCard? placed)
+  {
+    if (homeless)
+      return -(column.DoubleHomelessOwners.Contains(_player) ? 2 : 1);
+    return 1 + (placed?.Passive is ScientistPassive ? ScientistPassive.SolvencyBonus : 0);
+  }
+
+  /// <summary>
+  /// Будет ли штаб закрыт после проверки штабов в конце раунда, если его запас состоятельности изменится на
+  /// <paramref name="slackChange"/>, а лидеров-карточек станет <paramref name="members"/>.
+  /// </summary>
+  private bool ClosedAtRoundEnd(TheoryColumn column, int slackChange, int members)
+  {
+    var insolvent = members > TheoryColumn.SolvencyCheckLeadersThreshold && column.SolvencySlack + slackChange < 0;
+    // Закрытый штаб открывается, только когда перестаёт быть несостоятельным; открытый закрывается, если несостоятелен,
+    // — кроме «Плоской Земли», которую не закрыть.
+    return column.IsClosed ? insolvent : insolvent && Field.TheoryCardOf(column.Theory)?.Card.Passive is not FlatEarthPassive;
+  }
+
+  /// <summary>
+  /// Выгода от того, что новый лидер откроет закрытый штаб или закроет открытый (<see cref="BotProfile.SolvencyPlay"/>).
+  /// Открыть свой закрытый штаб — вернуть себе очки за влияние всех его лидеров, карточку теории и долю адептов.
+  /// Закрыть бездомными чужой сильный штаб — отнять всё это у его владельца и лидеров (с весом соперников, больше всего —
+  /// у того, кто впереди), потеряв свою долю. Если одной карты мало, засчитывается доля выгоды — тем меньшая, чем больше
+  /// карт ещё нужно.
+  /// </summary>
+  /// <remarks>
+  /// Остальная оценка входа в теорию (<see cref="JoinValue"/>) считает закрытый штаб мёртвым, а открытый — живым до и после
+  /// хода, поэтому здесь считается только разница от смены состояния.
+  /// </remarks>
+  private double SolvencyValue(TheoryColumn column, int influence, int slackChange, bool ownedAfter)
+  {
+    var members = column.Members.Count + 1;
+    var deadBefore = ClosedAtRoundEnd(column, 0, column.Members.Count);
+    var deadAfter = ClosedAtRoundEnd(column, slackChange, members);
+    // Ход до конца раунда ещё могут исправить соперники, которые не спасовали.
+    var rivalsActive = Rivals.Any(rival => !_session.Turns.HasPassed(rival) && column.IsLeader(rival));
+    var certainty = rivalsActive ? 1 - SolvencyCounterRisk : 1;
+
+    if (deadBefore && !deadAfter)
+      return _profile.SolvencyPlay * certainty * StakesValue(column, influence, ownedAfter);
+    if (!deadBefore && deadAfter)
+      return Sabotage(-_profile.SolvencyPlay * certainty * StakesValue(column, influence, ownedAfter));
+
+    // Одной карты мало: сколько ещё таких же карт нужно, чтобы открыть или закрыть штаб.
+    var slackAfter = column.SolvencySlack + slackChange;
+    if (deadBefore && slackChange > 0)
+    {
+      var gap = (int)Math.Ceiling(-slackAfter / (double)slackChange);
+      return SolvencyPlanShare(gap, needHomeless: false) * StakesValue(column, influence, ownedAfter);
+    }
+    if (!column.IsClosed && !deadBefore && slackChange < 0)
+    {
+      var gap = Math.Max((int)Math.Ceiling((slackAfter + 1) / (double)-slackChange),
+        TheoryColumn.SolvencyCheckLeadersThreshold + 1 - members);
+      return Sabotage(-SolvencyPlanShare(gap, needHomeless: true) * StakesValue(column, influence, ownedAfter));
+    }
+    return 0;
+  }
+
+  /// <summary>
+  /// Выгода от закрытия штаба засчитывается с долей <see cref="BotProfile.SabotageFactor"/>; потеря (закрыть штаб,
+  /// где у бота больше всех ставок) — полностью.
+  /// </summary>
+  private double Sabotage(double value) => value > 0 ? value * _profile.SabotageFactor : value;
+
+  /// <summary>
+  /// Доля выгоды плана, для которого нужно ещё <paramref name="gap"/> таких же карт: если их нет на руке и на рынке
+  /// или до конца партии их не успеть выложить — ничего.
+  /// </summary>
+  private double SolvencyPlanShare(int gap, bool needHomeless)
+  {
+    if (gap <= 0 || gap > RoundsLeft * GameSession.ActionsPerTurn)
+      return 0;
+    var available = _player.Hand.Cards.Concat(_session.Market.OpenCards.Values)
+      .Count(card => card is PersonCard && card is HomelessCard == needHomeless);
+    return available < gap ? 0 : _profile.SolvencyPlay * SolvencyPlanFactor / (gap + 1);
+  }
+
+  /// <summary>
+  /// Какую долю выгоды открытия или закрытия штаба бот засчитывает себе, пока для этого не хватает карт.
+  /// </summary>
+  private const double SolvencyPlanFactor = 0.5;
+
+  /// <summary>
+  /// С какой вероятностью соперник, который ещё ходит, успеет исправить состояние штаба до конца раунда.
+  /// </summary>
+  private const double SolvencyCounterRisk = 0.3;
+
+  /// <summary>
+  /// Сколько стоит для бота живой штаб (после того как в него придёт лидер бота с влиянием <paramref name="influence"/>):
+  /// владельцу — очки за влияние всех лидеров и карточка теории, каждому лидеру — доля адептов (очки и доход).
+  /// Своё — с плюсом, соперников — с минусом и их весом.
+  /// </summary>
+  private double StakesValue(TheoryColumn column, int influence, bool ownedAfter)
+  {
+    var leaders = column.Leaders + 1;
+    var total = column.Influence + influence;
+    var chance = ActiveChance(leaders, total);
+    var owner = ownedAfter ? _player : column.Owner;
+    var cardComes = Field.TheoryCardOf(column.Theory) is not null
+      || leaders >= TheoryColumn.TheoryCardLeadersThreshold && total >= TheoryColumn.ActiveInfluence
+      && TheoryCardCatalog.Create(column.Theory) is not null;
+    var ownerPoints = total * InfluenceWeight * chance;
+    var adeptUnit = chance + RoundsLeft * MoneyWeight;
+
+    double StakeOf(Player player)
+    {
+      var stake = (LeadersOf(column, player) + (player == _player ? 1 : 0)) / (double)leaders * column.Adepts * adeptUnit;
+      if (player == owner)
+        stake += ownerPoints + (cardComes ? player == _player ? TheoryCardsDelta(false, true) : RivalCardWorth(player, losing: true) : 0);
+      return stake;
+    }
+
+    return StakeOf(_player) - Rivals.Sum(rival => RivalWeightOf(rival) * StakeOf(rival));
   }
 
   private Player? BestRivalIn(TheoryColumn column) =>
     Rivals.Where(rival => column.InfluenceOf(rival) > 0).MaxBy(column.InfluenceOf);
 
-  private bool WillFinish(TheoryColumn column, int leaders) =>
-    !RaceScoring.IsFinished(column, _session.Players.Count) && leaders >= RaceScoring.FinishLeaders(column, _session.Players.Count);
-
   /// <summary>
   /// Станет ли штаб несостоятельным, если в него придёт ещё один бездомный (приблизительно).
   /// </summary>
-  private static bool WouldBeInsolvent(TheoryColumn column)
+  private bool WouldBeInsolvent(TheoryColumn column)
   {
     if (column.Members.Count + 1 <= TheoryColumn.SolvencyCheckLeadersThreshold)
       return false;
+    if (_profile.InsolvencyCare > 0)
+      // Точный запас состоятельности штаба (с учёными, «Антипрививочниками» и «Коммунистами в Антарктиде»).
+      return column.SolvencySlack - (column.DoubleHomelessOwners.Contains(_player) ? 2 : 1) < 0;
     var homeless = column.Members.Count(member => member.Card is HomelessCard) + 1;
     var others = column.Members.Count(member => member.Card is not HomelessCard);
     var scientists = column.Members.Count(member => member.Card.Passive is ScientistPassive);
@@ -333,7 +591,15 @@ internal sealed class BotEvaluator
     var count = OwnedTheoryCount();
     // Карточка недействующей теории в счёт не входит: её потеря не уменьшит число теорий ниже нуля.
     var changed = Math.Max(0, count + (after ? 1 : 0) - (before ? 1 : 0));
-    return VictoryPoints.TheoryPointsFor(changed) - VictoryPoints.TheoryPointsFor(count);
+    var delta = VictoryPoints.TheoryPointsFor(changed) - VictoryPoints.TheoryPointsFor(count);
+    // Стремимся к цели по числу теорий: до неё каждая теория стоит не меньше средней цены теории при цели.
+    var target = _profile.TheoryCountTarget;
+    if (target > 0 && Math.Max(count, changed) <= target)
+    {
+      var average = (double)VictoryPoints.TheoryPointsFor(target) / target;
+      return Math.Sign(delta) * Math.Max(Math.Abs(delta), average);
+    }
+    return delta;
   }
 
   /// <summary>
@@ -368,14 +634,15 @@ internal sealed class BotEvaluator
   /// соперник может обогнать его одной картой, засчитывается только часть (<see cref="BotProfile.TakeoverRisk"/>) —
   /// тем меньшая, чем сильнее он обгонит.
   /// </summary>
-  private double KeepChance(TheoryColumn column, int myInfluence)
+  /// <param name="column">Теория; <c>null</c> — новая теория, которую бот основывает.</param>
+  private double KeepChance(TheoryColumn? column, int myInfluence)
   {
     // Только в развитии теорий: там владение теорией даёт очки; в остальных режимах учёт перехвата не помог.
-    if (_profile.TakeoverRisk <= 0 || column.IsClosed || _session.Mode != GameMode.TheoryDevelopment)
+    if (_profile.TakeoverRisk <= 0 || column is { IsClosed: true } || _session.Mode != GameMode.TheoryDevelopment)
       return 1;
     // На сколько соперник обгонит бота, положив свою лучшую карту: чем больше, тем легче ему перехватить теорию.
     var overtake = Rivals.Where(rival => !_session.Turns.HasPassed(rival))
-      .Select(rival => column.InfluenceOf(rival) + TakeoverReach(rival) - myInfluence)
+      .Select(rival => (column?.InfluenceOf(rival) ?? 0) + TakeoverReach(rival) - myInfluence)
       .DefaultIfEmpty(0).Max();
     return 1 - _profile.TakeoverRisk * Math.Clamp(overtake / (double)TakeoverFullRiskMargin, 0, 1);
   }
@@ -493,6 +760,63 @@ internal sealed class BotEvaluator
   }
 
   /// <summary>
+  /// Выгода от тренировки персонажа: деньги тренеру и +<see cref="TrainEffect.Bonus"/>% успеха к каждому оставшемуся
+  /// розыгрышу персонажа, в том числе в этом раунде, если он ещё не сыгран. Чужого — плюс деньги, но польза сопернику.
+  /// Себя тренер тоже может прокачать: тогда выгода — более успешные будущие тренировки (их цена — цена действия тренера).
+  /// </summary>
+  private double TrainValue(Cell? cell, Cell? coach)
+  {
+    if (cell is not { } target || Field.CardAt(target) is not PersonCard card)
+      return 0;
+    var gain = Math.Min(TrainEffect.Bonus, SuccessCheck.MaxChance - Field.SuccessChanceAt(target)) / 100.0;
+    // Тренер, прокачивающий себя, в этом раунде уже сыгран — бонус действует со следующего раунда.
+    var playsThisRound = !Field.IsUsed(target) && target != coach;
+    var uses = (playsThisRound ? 1 : 0) + Math.Max(0, Math.Min(RoundsLeft - 1, _profile.UsesCap));
+    var boost = gain * UseValue(card) * uses;
+    return IsMine(target)
+      ? TrainEffect.OwnReward * MoneyWeight + boost
+      : TrainEffect.RivalReward * MoneyWeight - RivalWeightOf(OwnerOf(target)) * boost;
+  }
+
+  /// <summary>
+  /// Сколько выгоды бот теряет, если сыграет своего персонажа до тренировки: его свой несыгранный тренер мог бы
+  /// сначала добавить ему <see cref="TrainEffect.Bonus"/>% успеха на этот розыгрыш.
+  /// </summary>
+  public double UntrainedLoss(Cell cell, double useValue)
+  {
+    if (useValue <= 0 || Field.SuccessChanceAt(cell) >= SuccessCheck.MaxChance || !Field.CheckTrain(cell, _player).IsAllowed)
+      return 0;
+    var coachReady = Field.PlayerZones[_player].Cells.Any(coach => coach != cell
+      && Field.CardAt(coach) is { } card && card.OnPlayFromHand.Options.Any(IsTrain) && Field.CanUse(coach, _player));
+    if (!coachReady)
+      return 0;
+    var gain = Math.Min(TrainEffect.Bonus, SuccessCheck.MaxChance - Field.SuccessChanceAt(cell)) / 100.0;
+    return gain * useValue;
+  }
+
+  private static bool IsTrain(Effect effect) => effect switch
+  {
+    TrainEffect => true,
+    QuickEffect quick => IsTrain(quick.Inner),
+    ChooseOneEffect choose => choose.Options.Any(IsTrain),
+    _ => false,
+  };
+
+  /// <summary>
+  /// Сколько за раунд теряют соседи бездомного в личном штабе бота из-за снижения успеха (с долей
+  /// <see cref="BotProfile.HomelessHarm"/>).
+  /// </summary>
+  private double HomelessHarmAt(Cell cell)
+  {
+    if (_profile.HomelessHarm <= 0)
+      return 0;
+    var zone = Field.PlayerZones[_player];
+    return _profile.HomelessHarm * cell.Surrounding
+      .Where(neighbour => zone.Contains(neighbour) && Field.CardAt(neighbour) is PersonCard && Field.SuccessChanceAt(neighbour) > 0)
+      .Sum(neighbour => HomelessCard.NeighborSuccessPenalty / 100.0 * UseValue(Field.CardAt(neighbour)!));
+  }
+
+  /// <summary>
   /// Выгода за раунд от учёного рядом с персонажем: +5% успеха и +1$, если его действие приносит деньги.
   /// </summary>
   private double ScientistGainFor(Card card, double chance) =>
@@ -522,7 +846,7 @@ internal sealed class BotEvaluator
 
   private static bool IsHostileToPerson(Effect effect) => effect switch
   {
-    DemoteToHomelessEffect or WeakenCharacterEffect or FlipRivalCardEffect or RemoveCharacterEffect
+    DemoteToHomelessEffect or WeakenCharacterEffect or FlipRivalCardEffect
       or TakeRivalCharacterEffect or ChipPersonEffect => true,
     QuickEffect quick => IsHostileToPerson(quick.Inner),
     AllOfEffect all => all.Effects.Any(IsHostileToPerson),
@@ -552,7 +876,7 @@ internal sealed class BotEvaluator
     InspectionEffect => 2 * MoneyWeight + 0.3,
     RemoveAdeptEffect => BestAdeptValue() * RivalWeight * 2,
     FlipRivalCardEffect => 0.5,
-    TrainEffect => 0.5,
+    TrainEffect => TrainEffect.OwnReward * MoneyWeight + 0.5,
     _ => 2 * MoneyWeight + 0.3,
   };
 
@@ -593,8 +917,8 @@ internal sealed class BotEvaluator
 
       // Адепты.
       case AddAdeptsEffect adepts:
-        if (context.TargetAdeptCard is not null)
-          return adepts.Count * 0.6 * AdeptUnit(null);
+        if (context.TargetAdeptCard is { } targetCard)
+          return adepts.Count * CardAdeptValue(targetCard);
         return AdeptValue(theory, adepts.Count);
       case AddAdeptsToThreeTheoriesEffect:
         return context.TargetTheories.Sum(target => AdeptValue(target, 1));
@@ -633,7 +957,8 @@ internal sealed class BotEvaluator
       case FlipRivalCardEffect:
         return Hostile(cell, worthFactor: 0) + RivalWeight * (2 * MoneyWeight + 0.3);
       case RemoveCharacterEffect:
-        return Hostile(cell, worthFactor: 1) + (CostAt(cell) + InfluenceAt(cell)) * MoneyWeight;
+        // Только свой персонаж: выгодно, если выручка больше того, что он ещё принесёт.
+        return (CostAt(cell) + InfluenceAt(cell)) * MoneyWeight - WorthAt(cell);
       case TakeRivalCharacterEffect:
         return Hostile(cell, worthFactor: 1) + WorthAt(cell);
       case CloseLeaderEffect:
@@ -647,9 +972,12 @@ internal sealed class BotEvaluator
           ? card.OnPlayFromHand.Options.Select(StaticValue).DefaultIfEmpty(0).Max() * Math.Min(RoundsLeft, 3) * 0.6
           : 0);
       case ReplaceProfessionalWithPoliticianEffect:
+        // Из руки: политик выгоден так же, как в штабе, но начнёт приносить деньги, только когда его выложат.
+        if (context.HandCard is { } handProfessional)
+          return handProfessional is ProfessionalCard { Name: "Политик" } ? -1 : 0.8;
         return IsMine(cell) ? (Field.CardAt(cell!.Value) is ProfessionalCard { Name: "Политик" } ? -1 : 1.0) : -0.5;
       case TrainEffect:
-        return Friendly(cell, 0.4);
+        return TrainValue(cell, context.SourceCell);
       case AttachTinFoilEffect:
         return Friendly(cell, 0.6);
       case TrainHomelessEffect:
@@ -719,7 +1047,9 @@ internal sealed class BotEvaluator
     if (!Field.FailureConsequences || Field.CardAt(cell) is not PersonCard card)
       return 0;
 
-    var futureUses = Math.Min(RoundsLeft - 1, _profile.UsesCap) * _profile.UsesFactor;
+    // Карточку можно сыграть не больше раза за раунд: множитель UsesFactor, который делает личный штаб привлекательнее
+    // при выкладывании, здесь не завышает потерю.
+    var futureUses = Math.Min(RoundsLeft - 1, _profile.UsesCap) * Math.Min(1, _profile.UsesFactor);
     if (futureUses <= 0)
       return 0;
 
@@ -730,7 +1060,9 @@ internal sealed class BotEvaluator
       case HomelessCard:
       {
         var destroy = Math.Min(PlayingField.HomelessDestroyDie, failFaces) / (double)SuccessCheck.DieSides;
-        return -destroy * chance * UseValue(card) * futureUses;
+        // Без бездомного соседи перестают терять успех, а инспекции нечего с него взять: теряется только остаток.
+        var worth = chance * UseValue(card) - HomelessHarmAt(cell) - InspectionRisk();
+        return -destroy * Math.Max(0, worth) * futureUses;
       }
       case CitizenCard:
       {
@@ -765,7 +1097,20 @@ internal sealed class BotEvaluator
     var share = ShareOf(column, _player);
     // Доля соперников — с весом каждого; без слежения за лидером все весят одинаково.
     var rivals = _profile.ThreatFocus > 0 ? Rivals.Sum(rival => ShareOf(column, rival) * RivalWeightOf(rival)) : (1 - share) * RivalWeight;
-    return count * AdeptUnit(column) * _profile.AdeptFactor * (share - rivals);
+    var focus = share >= 1 ? 1 + _profile.FocusBonus : 1;
+    return count * AdeptUnit(column) * _profile.AdeptFactor * focus * (share - rivals);
+  }
+
+  /// <summary>
+  /// Сколько стоит адепт на карточке в личном штабе (Мастер теорий). Очков он не даёт ни в одном режиме: каждые
+  /// <see cref="GainMoneyPerAdeptEffect.AdeptsPerDollar"/> адепта приносят 1$ при каждом успешном розыгрыше карточки —
+  /// в этом раунде, если она ещё не сыграна, и в каждом следующем.
+  /// </summary>
+  private double CardAdeptValue(Cell card)
+  {
+    var uses = (Field.IsUsed(card) ? 0 : 1) + Math.Max(0, RoundsLeft - 1);
+    var chance = Field.SuccessChanceAt(card) / 100.0;
+    return uses * chance * MoneyWeight / GainMoneyPerAdeptEffect.AdeptsPerDollar;
   }
 
   /// <summary>
@@ -776,23 +1121,29 @@ internal sealed class BotEvaluator
     // Каждый раунд адепт приносит $ лидерам, в конце партии — ещё раз.
     GameMode.Money => (RoundsLeft + 1) * MoneyWeight,
     // Очки получают только теории на финише.
-    GameMode.Race => (column is null ? 0.2 : Math.Min(1.0, (double)column.Leaders / RaceScoring.FinishLeaders(column, _session.Players.Count))) + RoundsLeft * MoneyWeight,
-    // Адепты — очки в конце партии и деньги каждый раунд.
-    _ => 1 + RoundsLeft * MoneyWeight,
+    GameMode.Race => (column is null ? 0.2 : RaceFinishChance(column)) + RoundsLeft * MoneyWeight,
+    // Адепты — деньги каждый раунд и очки в конце партии, если теория будет действующей.
+    _ => ActiveChance(column) + RoundsLeft * MoneyWeight,
   };
 
   /// <summary>
-  /// Сколько адептов будет в теории к концу партии, по мнению бота: нынешние плюс доля
-  /// (<see cref="BotProfile.AdeptGrowth"/>) тех, что игроки приведут в неё своими персонажами.
+  /// Сколько стоят все адепты теории до конца партии (до деления между лидерами): нынешние и доля
+  /// (<see cref="BotProfile.AdeptGrowth"/>) тех, что игроки приведут в неё своими персонажами. Новые адепты придут
+  /// не сразу: доход они принесут в среднем за половину оставшихся раундов.
   /// </summary>
-  private double ExpectedAdepts(TheoryColumn column)
+  private double AdeptsWorth(TheoryColumn column)
   {
+    var now = column.Adepts * AdeptUnit(column);
     // В гонке адепты дают очки только теориям на финише — учёт роста там не помог.
     if (_profile.AdeptGrowth <= 0 || column.IsClosed || _session.Mode == GameMode.Race)
-      return column.Adepts;
+      return now;
     // Текущий раунд ещё идёт — засчитываем его половину.
     var rounds = Math.Max(0, RoundsLeft - 0.5);
-    return column.Adepts + _profile.AdeptGrowth * rounds * AdeptGrowthOf(column);
+    var future = _profile.AdeptGrowth * rounds * AdeptGrowthOf(column);
+    var futureUnit = _session.Mode == GameMode.Money
+      ? (rounds / 2 + 1) * MoneyWeight
+      : ActiveChance(column) + rounds / 2 * MoneyWeight;
+    return now + future * futureUnit;
   }
 
   /// <summary>
@@ -834,6 +1185,29 @@ internal sealed class BotEvaluator
     _ => 0,
   };
 
+  /// <summary>
+  /// Шанс, что теория будет действующей к итоговому подсчёту: только действующие теории дают очки за влияние и адептов.
+  /// Чем больше не хватает лидеров и влияния и чем меньше осталось раундов, тем он ниже. Вне режима развития теорий — 1.
+  /// </summary>
+  /// <param name="leaders">Лидеров в теории.</param>
+  /// <param name="influence">Суммарное влияние теории.</param>
+  /// <param name="closed">Штаб закрыт — действующей теория уже не станет.</param>
+  private double ActiveChance(int leaders, int influence, bool closed = false)
+  {
+    if (_session.Mode != GameMode.TheoryDevelopment)
+      return 1;
+    if (closed)
+      return 0;
+    // Сколько ещё карточек нужно: не хватающих лидеров или влияния (по ~2 за карточку).
+    var missingLeaders = Math.Max(0, TheoryColumn.TheoryCardLeadersThreshold - leaders);
+    var missingInfluence = (int)Math.Ceiling(Math.Max(0, TheoryColumn.ActiveInfluence - influence) / 2.0);
+    var gap = Math.Max(missingLeaders, missingInfluence);
+    return gap == 0 ? 1 : Math.Clamp(1 - gap / (RoundsLeft + 1.0), 0, 1);
+  }
+
+  private double ActiveChance(TheoryColumn? column) =>
+    column is null ? ActiveChance(1, 0) : ActiveChance(column.Leaders, column.Influence, column.IsClosed);
+
   private static int LeadersOf(TheoryColumn column, Player player) =>
     column.MembersOf(player).Count() + column.LeaderMeeples.Count(meeple => meeple == player);
 
@@ -844,6 +1218,8 @@ internal sealed class BotEvaluator
   {
     if (column is null)
       return 0;
+    if (_session.Mode == GameMode.Race && RaceMeepleValue(column) is { } raceValue)
+      return raceValue;
     var before = ShareOf(column, _player);
     var after = (LeadersOf(column, _player) + 1.0) / (column.Leaders + 1);
     var value = column.Adepts * (after - before) * MoneyWeight * (1 + RivalWeight) + 0.2;
@@ -904,7 +1280,7 @@ internal sealed class BotEvaluator
   /// Сколько за раунд теряет бот от ещё одного открытого бездомного в личном штабе: каждый полицейский соперника
   /// инспекцией берёт по <see cref="InspectionEffect.MoneyPerHomeless"/>$ за каждого бездомного.
   /// </summary>
-  private double InspectionRisk() =>
+  public double InspectionRisk() =>
     Rivals.Sum(rival => RivalWeightOf(rival) * Field.PlayerZones[rival].Cells.Count(cell =>
       Field.CardAt(cell) is { } card && card.OnPlayFromHand.Options.Any(option => option is InspectionEffect)))
     * InspectionEffect.MoneyPerHomeless * MoneyWeight;

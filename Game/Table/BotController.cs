@@ -178,6 +178,22 @@ public partial class BotController : Node
       return;
     }
 
+    // Конец игры: бот по одному раскрывает выгодных закрытых персонажей, затем заканчивает выбор.
+    if (_session.Phase == GamePhase.FinalReveal)
+    {
+      if (_session.FinalRevealPlayer is not { } revealer || !_bots.ContainsKey(revealer))
+        return;
+      if (Bot.ChooseFinalReveal(_session) is { } hidden)
+        Plan(hidden, () => _session.RevealAtEnd(hidden));
+      else
+      {
+        Hint?.Invoke($"{revealer.Name} больше не раскрывает закрытых персонажей.");
+        _session.FinishFinalReveal();
+        _cooldown = StepDelay;
+      }
+      return;
+    }
+
     if (_session.Phase != GamePhase.PlayerTurns || !_bots.TryGetValue(_session.CurrentPlayer, out var bot))
       return;
 

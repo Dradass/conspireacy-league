@@ -129,6 +129,7 @@ public partial class PlayersInfoView : VBoxContainer
     GamePhase.AdeptIncome => "адепты приносят деньги",
     GamePhase.CardsRefresh => "обновление карточек",
     GamePhase.MarketRefresh => "обновление рынка",
+    GamePhase.FinalReveal => "конец игры: раскрытие закрытых персонажей",
     GamePhase.FinalLeadersBonus => "итоговый подсчёт: деньги владельцам за лидеров",
     GamePhase.FinalAdeptIncome => "итоговый подсчёт: адепты приносят деньги",
     GamePhase.GameOver => "партия завершена",
@@ -147,6 +148,7 @@ public partial class PlayersInfoView : VBoxContainer
     _turn.Text = Session.Phase switch
     {
       GamePhase.PlayerTurns => $"Ходит: {actor.Name}",
+      GamePhase.FinalReveal => $"Раскрывает: {actor.Name}",
       GamePhase.FinalLeadersBonus or GamePhase.FinalAdeptIncome or GamePhase.GameOver => "Итоговый подсчёт",
       _ => "Конец раунда",
     };

@@ -116,6 +116,15 @@ public sealed class TurnOrder
   }
 
   /// <summary>
+  /// Сделать игрока текущим вне обычной очереди ходов (выбор в конце игры).
+  /// </summary>
+  internal void SetCurrent(Player player)
+  {
+    _currentIndex = IndexOf(player);
+    TurnChanged?.Invoke(CurrentPlayer);
+  }
+
+  /// <summary>
   /// Клиент: восстановить очередь по присланному сервером виду (<see cref="Client.ClientMirror"/>). Событий не вызывает.
   /// </summary>
   internal void Restore(int current, int first, IEnumerable<Player> passed)

@@ -158,6 +158,13 @@ public sealed class PlayingField
   public bool FailureConsequences { get; set; } = true;
 
   /// <summary>
+  /// Раскрываются ли все закрытые персонажи перед итоговым подсчётом (<see cref="RevealAllHiddenCards"/>). Если нет,
+  /// владелец сам выбирает, кого из своих закрытых персонажей раскрыть (<see cref="RevealOwn"/>); остальные так и
+  /// остаются гражданами без теории.
+  /// </summary>
+  public bool RevealHiddenAtEnd { get; set; } = true;
+
+  /// <summary>
   /// Наибольшая грань, на которой проваленный бездомный уходит из игры.
   /// </summary>
   public const int HomelessDestroyDie = 2;
@@ -758,20 +765,19 @@ public sealed class PlayingField
   /// Персонажи в личных штабах всех игроков, которых можно убрать из игры.
   /// </summary>
   public IEnumerable<(Cell Cell, PlacementCheck Check)> RemovableCharacterTargets(Player player) =>
-    _playerZones
-      .SelectMany(zone => zone.Value.Cells)
+    _playerZones[player].Cells
       .Where(cell => CardAt(cell) is PersonCard)
       .Select(cell => (cell, CheckRemoveCharacter(cell, player)));
 
   /// <summary>
-  /// Проверить, может ли игрок убрать персонажа из личного штаба: своего — всегда, чужого — если его не защищает полицейский.
+  /// Проверить, может ли игрок убрать персонажа из личного штаба: только своего.
   /// </summary>
   public PlacementCheck CheckRemoveCharacter(Cell cell, Player player)
   {
-    if (CardAt(cell) is not PersonCard || OwnerOfCell(cell) is null)
+    if (CardAt(cell) is not PersonCard || OwnerOfCell(cell) is not { } owner)
       return PlacementCheck.Deny("Здесь нет персонажа из личного штаба.");
-    if (IsProtected(cell, player))
-      return PlacementCheck.Deny("Этого персонажа защищает полицейский.");
+    if (owner != player)
+      return PlacementCheck.Deny("Убрать можно только персонажа из своего личного штаба.");
 
     return PlacementCheck.Allowed;
   }
@@ -962,6 +968,28 @@ public sealed class PlayingField
     CardReplaced?.Invoke(cell);
   }
 
+  /// <summary>
+  /// Проверить, можно ли заменить профессионала из руки игрока политиком.
+  /// </summary>
+  public PlacementCheck CheckReplaceHandWithPolitician(Card card, Player player) =>
+    card is ProfessionalCard && player.Hand.Contains(card)
+      ? PlacementCheck.Allowed
+      : PlacementCheck.Deny("В руке нет профессионала.");
+
+  /// <summary>
+  /// Заменить профессионала из руки игрока первым попавшимся политиком (не из колоды); политик остаётся на месте
+  /// профессионала в руке, а профессионал уходит из игры.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Заменить нельзя.</exception>
+  public void ReplaceHandWithPolitician(Card card, Player player)
+  {
+    var check = CheckReplaceHandWithPolitician(card, player);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    player.Hand.Replace(card, new GenericProfessionalCard(Profession.Politician));
+  }
+
   private static bool IsPolitician(PersonCard card) => card is GenericProfessionalCard { Profession: Profession.Politician };
 
   /// <summary>
@@ -1126,10 +1154,11 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Сколько $ добавляет карточка теории «Сатанисты похищают детей» бездомному, который приносит деньги.
+  /// Сколько $ добавляет карточка теории «Сатанисты похищают детей» бездомному, который приносит деньги: только
+  /// бездомному владельца карточки.
   /// </summary>
   private int HomelessMoneyBonusAt(Cell cell) =>
-    CardAt(cell) is HomelessCard && _theoryCards.Any(owned => owned.Card.Passive is SatanistsPassive)
+    CardAt(cell) is HomelessCard && OwnerOfCell(cell) is { } owner && HoldsPassive<SatanistsPassive>(owner)
       ? SatanistsPassive.HomelessBonus
       : 0;
 
@@ -2198,7 +2227,7 @@ public sealed class PlayingField
 
   /// <summary>
   /// Проверить, можно ли положить фишку на персонажа: он в личном штабе, без фишки, и его не защищает полицейский.
-  /// В Check.Cost — сколько заплатить владельцу персонажа.
+  /// В Check.Cost — сколько заплатить владельцу персонажа: его влияние в $.
   /// </summary>
   public PlacementCheck CheckChip(Cell cell, Player player)
   {
@@ -2209,13 +2238,13 @@ public sealed class PlayingField
     if (IsProtected(cell, player))
       return PlacementCheck.Deny("Этого персонажа защищает полицейский или шапочка из фольги.");
 
-    return player.CanAfford(person.Cost)
-      ? PlacementCheck.Allow(person.Cost)
-      : PlacementCheck.Deny($"Недостаточно денег: нужно {person.Cost}$, а у вас {player.Money}$.");
+    return player.CanAfford(person.Influence)
+      ? PlacementCheck.Allow(person.Influence)
+      : PlacementCheck.Deny($"Недостаточно денег: нужно {person.Influence}$, а у вас {player.Money}$.");
   }
 
   /// <summary>
-  /// Положить фишку на персонажа в личном штабе и заплатить его владельцу стоимость персонажа.
+  /// Положить фишку на персонажа в личном штабе и заплатить его владельцу влияние персонажа в $.
   /// </summary>
   /// <exception cref="InvalidOperationException">Фишку положить нельзя.</exception>
   public void Chip(Cell cell, Player player)
@@ -2701,6 +2730,30 @@ public sealed class PlayingField
       HiddenCardRevealed?.Invoke(target);
       ResolveRevealed(target);
     }
+  }
+
+  /// <summary>
+  /// Нераскрытые закрытые карточки игрока в штабах теорий.
+  /// </summary>
+  public IEnumerable<Cell> OwnHiddenCells(Player player) =>
+    _theoryColumns
+      .SelectMany(column => column.Members)
+      .Where(member => member.Card is HiddenCard { IsRevealed: false } && member.Owner == player)
+      .Select(member => member.Cell)
+      .ToList();
+
+  /// <summary>
+  /// Владелец сам раскрывает свою закрытую карточку (в конце игры): бесплатно, с теми же последствиями, что и
+  /// раскрытие перед итоговым подсчётом.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Здесь нет нераскрытой закрытой карточки игрока.</exception>
+  public void RevealOwn(Cell cell, Player player)
+  {
+    if (CardAt(cell) is not HiddenCard { IsRevealed: false } hidden || ColumnAt(cell)?.OwnerAt(cell) != player)
+      throw new InvalidOperationException("Здесь нет вашей нераскрытой закрытой карточки.");
+    hidden.Reveal();
+    HiddenCardRevealed?.Invoke(cell);
+    ResolveRevealed(cell);
   }
 
   /// <summary>
@@ -3201,12 +3254,13 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Ближайший свободный столбец общей зоны от столбца <paramref name="column"/> в сторону <paramref name="direction"/>.
+  /// Ближайший свободный столбец от столбца <paramref name="column"/> в сторону <paramref name="direction"/> — до края поля:
+  /// если он за общей зоной, зона расширится при сдвиге (см. <see cref="ResolveColumnConflict"/>).
   /// </summary>
   /// <returns>Номер столбца или <c>null</c>, если свободного нет.</returns>
   private int? FreeColumn(int column, int direction)
   {
-    for (var target = column + direction; target >= CommonZone.Left && target < CommonZone.Left + CommonZone.Width; target += direction)
+    for (var target = column + direction; target >= 0 && target < Columns; target += direction)
     {
       if (TheoryAtColumn(target) is null)
         return target;
@@ -3234,6 +3288,19 @@ public sealed class PlayingField
     for (var column = free - direction; column != index; column -= direction)
       MoveColumn(TheoryAtColumn(column)!, direction);
     MoveColumn(moved, direction);
+
+    // Сдвинутые теории не должны выпасть за общую зону: зона тянется до свободного столбца.
+    var zoneRight = CommonZone.Left + CommonZone.Width - 1;
+    if (free < CommonZone.Left)
+    {
+      CommonZone = CommonZone with { Left = free, Width = zoneRight - free + 1 };
+      CommonZoneChanged?.Invoke(CommonZone);
+    }
+    else if (free > zoneRight)
+    {
+      CommonZone = CommonZone with { Width = free - CommonZone.Left + 1 };
+      CommonZoneChanged?.Invoke(CommonZone);
+    }
   }
 
   /// <summary>

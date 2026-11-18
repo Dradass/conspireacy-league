@@ -234,6 +234,7 @@ public partial class NetworkLobby : Control
     BotLevel.Easy => "Лёгкий",
     BotLevel.Medium => "Средний",
     BotLevel.Hard => "Тяжёлый",
+    BotLevel.Ultra => "Ультра",
     _ => level.ToString(),
   };
 

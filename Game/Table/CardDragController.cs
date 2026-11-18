@@ -187,6 +187,8 @@ public partial class CardDragController : Node
         var cell = TargetCell(_drag.View);
         var check = cell is { } target ? DropCheck(_drag.View, target) : null;
         _board.Highlight(cell, check);
+        // Места присоединения к теориям с ценой видны, пока курсор над зоной штабов теорий.
+        _board.SetJoinSlotsVisible(_board.IsInCommonZone(MouseOnTable()));
         var hqCell = _personalHq.CellAtScreenPoint(MouseOnScreen());
         _personalHq.Highlight(hqCell, check?.IsAllowed ?? false);
         break;
@@ -205,6 +207,12 @@ public partial class CardDragController : Node
     _hand.DraggedCard = source.Card;
     StartDrag(new HandDrag(CardView.Create(source.Card), source));
     var available = _board.Field.AvailableCells(source.Card, _session.CurrentPlayer).ToList();
+    // Карточку без теории можно присоединить сверху к любой теории за плату: эти места подсвечиваются отдельно —
+    // зелёным с суммой, только пока курсор над зоной штабов теорий.
+    var joinSlots = source.Card is PersonCard { Theory: null }
+      ? available.Where(pair => pair.Check is { IsAllowed: true, Column: { } column } && column.Top.Above == pair.Cell).ToList()
+      : [];
+    _board.SetJoinSlots(joinSlots.Select(pair => (pair.Cell, pair.Check.Cost)));
     // Теории, куда карточку можно положить взакрытую по праву Спецагента, тоже подсвечиваются.
     available.AddRange(_board.Field.HiddenPlacementTargets(source.Card, _session.CurrentPlayer)
       .Where(target => target.Check.IsAllowed && available.All(pair => pair.Cell != target.Column.Top.Above))

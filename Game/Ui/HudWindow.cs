@@ -117,6 +117,7 @@ public partial class HudWindow : PanelContainer
   private Control? _content;
   private bool _pinned;
   private Func<Vector2, Vector2, Vector2>? _placement;
+  private Func<Vector2, Rect2>? _initialBounds;
 
   private Edge _resizing;
   private bool _moving;
@@ -163,6 +164,15 @@ public partial class HudWindow : PanelContainer
   public Func<Vector2, Vector2, Vector2>? Placement
   {
     init => _placement = value;
+  }
+
+  /// <summary>
+  /// Где и какого размера открыть окно: размер экрана → прямоугольник окна. Задаёт и размер, а не только место
+  /// (<see cref="Placement"/>); окно не меньше своего минимального размера.
+  /// </summary>
+  public Func<Vector2, Rect2>? InitialBounds
+  {
+    init => _initialBounds = value;
   }
 
   /// <summary>
@@ -380,7 +390,15 @@ public partial class HudWindow : PanelContainer
     var margins = GetThemeStylebox("panel").GetMinimumSize();
     Size = new Vector2(Mathf.Max(header.X, content.X), header.Y + HeaderSeparation + content.Y) + margins;
 
-    if (_placement is not null || Position == Vector2.Zero)
+    if (_initialBounds is not null)
+    {
+      var bounds = _initialBounds(GetViewportRect().Size);
+      _initialBounds = null;
+      _placement = null;
+      Size = bounds.Size.Max(GetCombinedMinimumSize());
+      Position = bounds.Position;
+    }
+    else if (_placement is not null || Position == Vector2.Zero)
     {
       var screen = GetViewportRect().Size;
       Position = _placement?.Invoke(Size, screen) ?? (screen - Size) / 2;

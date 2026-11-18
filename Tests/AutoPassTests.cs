@@ -46,8 +46,8 @@ public sealed class AutoPassTests
   /// <summary>
   /// Рука пуста, личный штаб сыгран, рынок пуст, но есть карточка теории, которую можно применить, — ходить есть чем.
   /// </summary>
-  [TestCase(3, GameMode.TheoryDevelopment, 611)]
-  [TestCase(4, GameMode.Money, 612)]
+  [TestCase(3, GameMode.TheoryDevelopment, 613)]
+  [TestCase(4, GameMode.Money, 614)]
   public void UsableTheoryCard_IsAMove(int players, GameMode mode, int seed)
   {
     var checkedOnce = false;

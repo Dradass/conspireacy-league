@@ -130,20 +130,23 @@ public sealed class TheoryColumn
   /// и бездомных среди них больше, чем остальных персонажей. Штабы с меньшим числом лидеров не проверяются.
   /// Миплы-лидеры (<see cref="LeaderMeeples"/>) здесь не учитываются.
   /// </summary>
-  public bool IsInsolvent
+  public bool IsInsolvent => _members.Count > SolvencyCheckLeadersThreshold && SolvencySlack < 0;
+
+  /// <summary>
+  /// Запас состоятельности: на сколько ещё может вырасти перевес бездомных, прежде чем штаб станет несостоятельным
+  /// (без учёта порога <see cref="SolvencyCheckLeadersThreshold"/>). Меньше нуля — бездомных уже слишком много.
+  /// </summary>
+  internal int SolvencySlack
   {
     get
     {
-      if (_members.Count <= SolvencyCheckLeadersThreshold)
-        return false;
-
       // Бездомный владельца «Коммунистов в Антарктиде» считается за два.
       var homeless = _members.Where(CountsAsHomeless)
         .Sum(member => DoubleHomelessOwners.Contains(member.Owner) ? 2 : 1);
       var others = _members.Count(member => !CountsAsHomeless(member));
       // Каждый учёный в штабе делает закрытие сложнее (пассивная способность учёного в штабе теории).
       var scientists = _members.Count(member => member.Card.Passive is ScientistPassive);
-      return homeless > others + SolvencyMargin + scientists * ScientistPassive.SolvencyBonus;
+      return others + SolvencyMargin + scientists * ScientistPassive.SolvencyBonus - homeless;
     }
   }
 

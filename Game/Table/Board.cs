@@ -72,9 +72,19 @@ public partial class Board : Node2D
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
 
   /// <summary>
+  /// Места присоединения к теориям (<see cref="SetJoinSlots"/>): их рисует <see cref="PlacementOverlay"/>, а не обычная подсветка.
+  /// </summary>
+  private readonly HashSet<Vector2I> _joinCells = [];
+
+  /// <summary>
   /// Зелёные стрелки над местами, куда можно положить дочернюю теорию семейства (во время перетаскивания).
   /// </summary>
   private readonly NeighbourArrows _arrows = new() { Name = "NeighbourArrows" };
+
+  /// <summary>
+  /// Подсветка мест поверх карточек: занятые доступные места и места присоединения к теориям с ценой.
+  /// </summary>
+  private readonly PlacementOverlay _placementOverlay = new() { Name = "PlacementOverlay" };
 
   private readonly Dictionary<Vector2I, CardView> _views = new();
 
@@ -124,6 +134,7 @@ public partial class Board : Node2D
     if (Radial)
       TurnPlayersTo(Session.CurrentPlayer);
     _arrows.Board = this;
+    _placementOverlay.Board = this;
     _highlight = new ColorRect
     {
       Name = "Highlight",
@@ -144,7 +155,6 @@ public partial class Board : Node2D
     _highlightCost.AddThemeColorOverride("font_outline_color", Colors.Black);
     _highlightCost.AddThemeConstantOverride("outline_size", 6);
     _highlight.AddChild(_highlightCost);
-    AddChild(_highlight);
 
     // Подсветка теорий лежит на поле, под карточками: карточки её перекрывают.
     AddChild(new TheoryHighlights { Name = "TheoryHighlights", Session = Session, Board = this });
@@ -164,7 +174,10 @@ public partial class Board : Node2D
     AddChild(_effectsLayer);
     // Подсказки рынка рисуются поверх карточек: добавлены последними среди слоёв карточек.
     _effectsLayer.AddChild(new MarketTheoryHints { Name = "MarketTheoryHints", Session = Session, Board = this });
+    // Подсветка мест и стрелки — поверх карточек: место для дочерней теории может быть занято другой теорией.
+    _effectsLayer.AddChild(_placementOverlay);
     _effectsLayer.AddChild(_arrows);
+    _effectsLayer.AddChild(_highlight);
 
     Field.AdeptsAdded += OnAdeptsAdded;
     Field.CardAdeptsAdded += OnCardAdeptsAdded;
@@ -319,7 +332,7 @@ public partial class Board : Node2D
     DrawTheoryTotals();
     DrawMarketDeck();
 
-    foreach (var (cell, check) in _available)
+    foreach (var (cell, check) in _available.Where(pair => !_joinCells.Contains(pair.Key)))
     {
       var color = check.Cost > 0 ? PaidColor : AllowedColor;
       DrawInSlot(cell, () =>
@@ -338,8 +351,27 @@ public partial class Board : Node2D
     _available.Clear();
     foreach (var (cell, check) in cells)
       _available[new Vector2I(cell.Column, cell.Row)] = check;
+    _placementOverlay.ShowCovered(_available.Keys.Where(cell => _views.ContainsKey(cell) && !_joinCells.Contains(cell)).ToList());
     QueueRedraw();
   }
+
+  /// <summary>
+  /// Запомнить места сверху стопок теорий, куда можно присоединить карточку без теории, и их цену. Показываются
+  /// зелёным с суммой, пока включены (<see cref="SetJoinSlotsVisible"/>).
+  /// </summary>
+  public void SetJoinSlots(IEnumerable<(Cell Cell, int Cost)> slots)
+  {
+    var list = slots.Select(slot => (new Vector2I(slot.Cell.Column, slot.Cell.Row), slot.Cost)).ToList();
+    _joinCells.Clear();
+    _joinCells.UnionWith(list.Select(slot => slot.Item1));
+    _placementOverlay.SetJoinSlots(list);
+    QueueRedraw();
+  }
+
+  /// <summary>
+  /// Показать или спрятать места присоединения к теориям (<see cref="SetJoinSlots"/>).
+  /// </summary>
+  public void SetJoinSlotsVisible(bool visible) => _placementOverlay.SetJoinSlotsVisible(visible);
 
   /// <summary>
   /// Подсветить ячейки, которые можно выбрать целью действия.
@@ -363,6 +395,10 @@ public partial class Board : Node2D
   public void HideAvailable()
   {
     _available.Clear();
+    _placementOverlay.ShowCovered([]);
+    _joinCells.Clear();
+    _placementOverlay.SetJoinSlots([]);
+    _placementOverlay.SetJoinSlotsVisible(false);
     QueueRedraw();
   }
 
@@ -370,6 +406,12 @@ public partial class Board : Node2D
   /// Подсвечена ли ячейка как доступная.
   /// </summary>
   public bool IsAvailable(Vector2I cell) => _available.ContainsKey(cell);
+
+  /// <summary>
+  /// Лежит ли точка стола внутри общей зоны штабов теорий (в любом её месте, а не только над ячейкой).
+  /// </summary>
+  /// <param name="point">Точка в мировых координатах.</param>
+  public bool IsInCommonZone(Vector2 point) => Geometry2D.IsPointInPolygon(ToLocal(point), ZoneOutline(Field.CommonZone));
 
   /// <summary>
   /// Ячейка под точкой стола.
@@ -567,7 +609,8 @@ public partial class Board : Node2D
     _highlight.Position = CardCenter(target) - CellSize / 2;
     _highlight.Rotation = CellAngle(target);
     _highlight.Color = check is not { IsAllowed: true } ? DeniedColor : cost > 0 ? PaidColor : AllowedColor;
-    _highlightCost.Text = cost > 0 ? $"−{cost}$" : string.Empty;
+    // На местах присоединения к теориям цену уже показывает PlacementOverlay — зелёным, без второй надписи.
+    _highlightCost.Text = cost > 0 && !_joinCells.Contains(target) ? $"−{cost}$" : string.Empty;
   }
 
   /// <summary>

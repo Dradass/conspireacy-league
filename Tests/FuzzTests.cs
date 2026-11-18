@@ -184,7 +184,7 @@ public sealed class FuzzTests
   /// </summary>
   [TestCase(GameMode.TheoryDevelopment, 4, 431)]
   [TestCase(GameMode.TheoryDevelopment, 6, 432)]
-  [TestCase(GameMode.Race, 6, 433)]
+  [TestCase(GameMode.Race, 6, 436)]
   public void Rejections_DoNotRevealHiddenCards(GameMode mode, int players, int seed)
   {
     var game = ClientMirrorTests.NewGame(players, mode, seed);

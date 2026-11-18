@@ -32,6 +32,10 @@ public static class RoundEnd
       return;
     }
 
+    // Владельцы закрытых персонажей решают, кого раскрыть; без интерфейса за всех решает бот.
+    while (session.Phase == GamePhase.FinalReveal)
+      Bots.Bot.PlayFinalReveal(session);
+
     if (session.Phase != GamePhase.FinalLeadersBonus)
       return;
 
