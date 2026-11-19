@@ -5,11 +5,11 @@ namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
 /// Положить фишку на любого персонажа в личных штабах (<see cref="GameContext.TargetCell"/>): игрок платит
-/// владельцу стоимость персонажа.
+/// владельцу влияние персонажа в $.
 /// </summary>
 public sealed class ChipPersonEffect : Effect
 {
-  public override string Description => "Положить фишку на любого персонажа в личных штабах и заплатить владельцу его стоимость";
+  public override string Description => "Положить фишку на любого персонажа в личных штабах и заплатить владельцу его влияние в $";
 
   public override bool RequiresTargetCell => true;
 

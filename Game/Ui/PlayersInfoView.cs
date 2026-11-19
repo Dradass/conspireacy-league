@@ -60,6 +60,7 @@ public partial class PlayersInfoView : VBoxContainer
     Session.ActionsLeftChanged += OnActionsLeftChanged;
     Session.LastRoundDeclared += OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
+    Session.Restored += OnRestored;
     OnPhaseChanged(Session.Phase);
   }
 
@@ -74,7 +75,13 @@ public partial class PlayersInfoView : VBoxContainer
     Session.ActionsLeftChanged -= OnActionsLeftChanged;
     Session.LastRoundDeclared -= OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    Session.Restored -= OnRestored;
   }
+
+  /// <summary>
+  /// Игра через сервер: партию целиком заменило обновление — показываем всё заново.
+  /// </summary>
+  private void OnRestored() => OnPhaseChanged(Session.Phase);
 
   private void OnMoneyChanged(Player player) =>
     _balances[player].Text = (player == Turns.FirstPlayer ? "(1) " : string.Empty)
@@ -122,6 +129,7 @@ public partial class PlayersInfoView : VBoxContainer
     GamePhase.AdeptIncome => "адепты приносят деньги",
     GamePhase.CardsRefresh => "обновление карточек",
     GamePhase.MarketRefresh => "обновление рынка",
+    GamePhase.FinalReveal => "конец игры: раскрытие закрытых персонажей",
     GamePhase.FinalLeadersBonus => "итоговый подсчёт: деньги владельцам за лидеров",
     GamePhase.FinalAdeptIncome => "итоговый подсчёт: адепты приносят деньги",
     GamePhase.GameOver => "партия завершена",
@@ -140,6 +148,7 @@ public partial class PlayersInfoView : VBoxContainer
     _turn.Text = Session.Phase switch
     {
       GamePhase.PlayerTurns => $"Ходит: {actor.Name}",
+      GamePhase.FinalReveal => $"Раскрывает: {actor.Name}",
       GamePhase.FinalLeadersBonus or GamePhase.FinalAdeptIncome or GamePhase.GameOver => "Итоговый подсчёт",
       _ => "Конец раунда",
     };

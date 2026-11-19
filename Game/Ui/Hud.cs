@@ -1,5 +1,6 @@
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Game.Net;
 using ConspiracyLeague.Game.Table;
 using Godot;
 
@@ -11,7 +12,7 @@ namespace ConspiracyLeague.Game.Ui;
 /// </summary>
 /// <remarks>
 /// У каждого игрока своя раскладка окон: показывается раскладка того, чьё действие сейчас ожидается. По умолчанию
-/// в ней три закреплённых окна — информация об игроках справа вверху, рука справа внизу и личный штаб слева внизу;
+/// в ней три закреплённых окна — информация об игроках справа вверху, рука справа внизу и история слева внизу;
 /// игрок может откреплять, двигать, растягивать и закрывать их и добавлять новые через меню («Добавить окно»).
 /// </remarks>
 public partial class Hud : CanvasLayer
@@ -19,7 +20,7 @@ public partial class Hud : CanvasLayer
   private const float Margin = 24f;
   private const double MessageDuration = 3;
   private const double MessageFade = 0.4;
-  private const float ReminderOffset = 64f;
+  private const int MessagesSeparation = 8;
   private const float TurnButtonsGap = 8f;
   private const HudWindowKind NewWindowKind = HudWindowKind.Market;
 
@@ -30,6 +31,7 @@ public partial class Hud : CanvasLayer
   private PanelContainer _reminderPanel = null!;
   private Label _reminder = null!;
   private Control _root = null!;
+  private Control _turnButtons = null!;
   private Player? _layoutPlayer;
 
   /// <summary>
@@ -60,6 +62,17 @@ public partial class Hud : CanvasLayer
   public TheoriesHub Theories { get; init; } = null!;
 
   /// <summary>
+  /// История партии для окон «История».
+  /// </summary>
+  public GameHistory History { get; init; } = null!;
+
+  /// <summary>
+  /// Игра через сервер: за этим компьютером играет один игрок, и видна всегда его раскладка окон. <c>null</c> — игра
+  /// за одним компьютером.
+  /// </summary>
+  public NetworkGame? Net { get; init; }
+
+  /// <summary>
   /// Стол: окна «Теории» показывают его общую зону.
   /// </summary>
   public Board Board { get; init; } = null!;
@@ -72,11 +85,11 @@ public partial class Hud : CanvasLayer
     _root = root;
 
     root.AddChild(CreateLayouts());
-    root.AddChild(CreateMessage());
-    root.AddChild(CreateReminder());
+    root.AddChild(CreateMessages());
     var theoryGraph = new TheoryGraphPanel { Name = "TheoryGraph" };
     // Кнопки хода — под кнопкой меню; раскрытое меню ложится поверх них.
-    root.AddChild(CreateTurnButtons());
+    _turnButtons = CreateTurnButtons();
+    root.AddChild(_turnButtons);
     var gameMenu = new GameMenu { Name = "GameMenu" };
     gameMenu.TheoriesRequested += theoryGraph.Open;
     gameMenu.AddWindowRequested += AddWindow;
@@ -91,6 +104,7 @@ public partial class Hud : CanvasLayer
     Session.AutoPassed += OnAutoPassed;
     Session.LastRoundDeclared += OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
+    Session.Restored += OnRestored;
     GetViewport().SizeChanged += OnViewportSizeChanged;
     ShowLayoutOfActor();
   }
@@ -103,6 +117,7 @@ public partial class Hud : CanvasLayer
     Session.AutoPassed -= OnAutoPassed;
     Session.LastRoundDeclared -= OnLastRoundDeclared;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    Session.Restored -= OnRestored;
     GetViewport().SizeChanged -= OnViewportSizeChanged;
   }
 
@@ -112,6 +127,7 @@ public partial class Hud : CanvasLayer
   public void ShowMessage(string text)
   {
     _message.Text = text;
+    FitToScreen(_message, _messagePanel);
     _messageTween?.Kill();
     _messagePanel.Modulate = Colors.White;
     _messagePanel.Visible = true;
@@ -128,8 +144,25 @@ public partial class Hud : CanvasLayer
   public void ShowReminder(string? text)
   {
     _reminderPanel.Visible = text is not null;
-    if (text is not null)
-      _reminder.Text = text;
+    if (text is null)
+      return;
+    _reminder.Text = text;
+    FitToScreen(_reminder, _reminderPanel);
+  }
+
+  /// <summary>
+  /// Ширина надписи сообщения: по тексту, но не шире экрана — длинный текст переносится по словам. Сообщение стоит
+  /// по центру и не заходит на кнопки меню и хода слева вверху (с другой стороны — такой же отступ).
+  /// </summary>
+  private void FitToScreen(Label label, PanelContainer panel)
+  {
+    var font = label.GetThemeFont("font");
+    var fontSize = label.GetThemeFontSize("font_size");
+    var textWidth = font.GetMultilineStringSize(label.Text, HorizontalAlignment.Center, -1, fontSize).X;
+    var side = Mathf.Max(GameMenu.Margin + GameMenu.IconSize, _turnButtons.Position.X + _turnButtons.Size.X) + TurnButtonsGap;
+    var maxWidth = GetViewport().GetVisibleRect().Size.X - 2 * side - panel.GetThemeStylebox("panel").GetMinimumSize().X;
+    // +1: без запаса строка ровно по ширине текста иногда переносится.
+    label.CustomMinimumSize = new Vector2(Mathf.Max(0, Mathf.Min(Mathf.Ceil(textWidth) + 1, maxWidth)), 0);
   }
 
   /// <summary>
@@ -149,14 +182,24 @@ public partial class Hud : CanvasLayer
       // Бывшие закреплённые панели — теперь закреплённые окна на прежних местах.
       layout.AddChild(CreateWindow(player, HudWindowKind.Players, pinned: true,
         (size, screen) => new Vector2(screen.X - size.X - Margin, Margin)));
-      layout.AddChild(CreateWindow(player, HudWindowKind.Hand, pinned: true,
-        (size, screen) => screen - size - new Vector2(Margin, Margin)));
+      var hand = CreateWindow(player, HudWindowKind.Hand, pinned: true,
+        (size, screen) => screen - size - new Vector2(Margin, Margin));
+      layout.AddChild(hand);
+      // История — слева внизу: высотой с руку, шириной во всё свободное место слева от неё. Окно руки подгоняется
+      // под содержимое раньше (его добавили первым), поэтому его размер и место уже известны.
+      layout.AddChild(CreateWindow(player, HudWindowKind.History, pinned: true, bounds: screen =>
+      {
+        var height = hand.Size.Y;
+        var width = hand.Position.X - 2 * Margin;
+        return new Rect2(Margin, screen.Y - Margin - height, width, height);
+      }));
     }
 
     return windows;
   }
 
-  private HudWindow CreateWindow(Player owner, HudWindowKind kind, bool pinned, Func<Vector2, Vector2, Vector2>? placement = null) => new()
+  private HudWindow CreateWindow(Player owner, HudWindowKind kind, bool pinned, Func<Vector2, Vector2, Vector2>? placement = null,
+    Func<Vector2, Rect2>? bounds = null) => new()
   {
     Name = $"Window{kind}",
     LayoutOwner = owner,
@@ -164,17 +207,19 @@ public partial class Hud : CanvasLayer
     InitialKind = kind,
     Pinned = pinned,
     Placement = placement,
+    InitialBounds = bounds,
     ContentFactory = CreateContent,
   };
 
   private Control CreateContent(HudWindow window) => window.Kind switch
   {
-    HudWindowKind.Market => new MarketView { Name = "Market", Session = Session, Hub = Market },
+    HudWindowKind.Market => new MarketView { Name = "Market", Session = Session, Hub = Market, Viewer = () => Board.HintsViewer },
     HudWindowKind.Theories => new TheoriesView { Name = "Theories", Board = Board, Hub = Theories },
     HudWindowKind.Hand => new HandView { Name = "Hand", Hub = Hand },
-    HudWindowKind.PersonalHq => new PersonalHqView { Name = "PersonalHq", Session = Session, Hub = PersonalHq },
-    HudWindowKind.OtherHq => new PersonalHqView { Name = "OtherHq", Session = Session, Hub = PersonalHq, FixedPlayer = window.ShownPlayer },
+    HudWindowKind.PersonalHq => new PersonalHqView { Name = "PersonalHq", Session = Session, Hub = PersonalHq, Viewer = () => Board.HintsViewer },
+    HudWindowKind.OtherHq => new PersonalHqView { Name = "OtherHq", Session = Session, Hub = PersonalHq, FixedPlayer = window.ShownPlayer, Viewer = () => Board.HintsViewer },
     HudWindowKind.Players => new PlayersInfoView { Name = "Players", Session = Session },
+    HudWindowKind.History => new HistoryView { Name = "History", History = History },
     _ => throw new ArgumentOutOfRangeException(nameof(window), window.Kind, null),
   };
 
@@ -193,6 +238,8 @@ public partial class Hud : CanvasLayer
   {
     foreach (var window in _layouts.Values.SelectMany(layout => layout.GetChildren().OfType<HudWindow>()))
       window.ClampToViewport();
+    FitToScreen(_message, _messagePanel);
+    FitToScreen(_reminder, _reminderPanel);
   }
 
   /// <summary>
@@ -202,6 +249,9 @@ public partial class Hud : CanvasLayer
   private void ShowLayoutOfActor()
   {
     var actor = Session.PendingTheoryTrigger?.Owner ?? Turns.CurrentPlayer;
+    // Игра через сервер: видна раскладка игрока этого компьютера, кто бы ни действовал.
+    if (Net is { } net)
+      actor = net.LocalPlayer;
     if (actor == _layoutPlayer)
       return;
     _layoutPlayer = actor;
@@ -211,42 +261,41 @@ public partial class Hud : CanvasLayer
 
   private Control CreateTurnButtons()
   {
-    var buttons = new TurnButtons { Name = "TurnButtons", Session = Session };
+    var buttons = new TurnButtons { Name = "TurnButtons", Session = Session, Net = Net };
     buttons.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
     buttons.OffsetLeft = GameMenu.Margin;
     buttons.OffsetTop = GameMenu.Margin + GameMenu.IconSize + TurnButtonsGap;
     return buttons;
   }
 
-  private Control CreateReminder()
+  /// <summary>
+  /// Сообщения сверху по центру: столбцом, чтобы напоминание шло под сообщением и они не перекрывали друг друга,
+  /// сколько бы строк ни заняли.
+  /// </summary>
+  private Control CreateMessages()
   {
-    _reminderPanel = CreatePanel("Reminder");
-    _reminderPanel.Visible = false;
-    _reminderPanel.AnchorLeft = 0.5f;
-    _reminderPanel.AnchorRight = 0.5f;
-    // Под сообщениями, чтобы они не перекрывали друг друга.
-    _reminderPanel.OffsetTop = Margin + ReminderOffset;
-    _reminderPanel.GrowHorizontal = Control.GrowDirection.Both;
-
-    _reminder = new Label { HorizontalAlignment = HorizontalAlignment.Center };
-    _reminder.AddThemeFontSizeOverride("font_size", 18);
-    _reminderPanel.AddChild(_reminder);
-    return _reminderPanel;
+    var column = new VBoxContainer { Name = "Messages", MouseFilter = Control.MouseFilterEnum.Ignore };
+    column.AddThemeConstantOverride("separation", MessagesSeparation);
+    column.AnchorLeft = 0.5f;
+    column.AnchorRight = 0.5f;
+    column.OffsetTop = Margin;
+    column.GrowHorizontal = Control.GrowDirection.Both;
+    (_messagePanel, _message) = CreateMessagePanel("Message");
+    column.AddChild(_messagePanel);
+    (_reminderPanel, _reminder) = CreateMessagePanel("Reminder");
+    column.AddChild(_reminderPanel);
+    return column;
   }
 
-  private Control CreateMessage()
+  private static (PanelContainer Panel, Label Label) CreateMessagePanel(string name)
   {
-    _messagePanel = CreatePanel("Message");
-    _messagePanel.Visible = false;
-    _messagePanel.AnchorLeft = 0.5f;
-    _messagePanel.AnchorRight = 0.5f;
-    _messagePanel.OffsetTop = Margin;
-    _messagePanel.GrowHorizontal = Control.GrowDirection.Both;
-
-    _message = new Label { HorizontalAlignment = HorizontalAlignment.Center };
-    _message.AddThemeFontSizeOverride("font_size", 18);
-    _messagePanel.AddChild(_message);
-    return _messagePanel;
+    var panel = CreatePanel(name);
+    panel.Visible = false;
+    panel.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+    var label = new Label { HorizontalAlignment = HorizontalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart };
+    label.AddThemeFontSizeOverride("font_size", 18);
+    panel.AddChild(label);
+    return (panel, label);
   }
 
   private static PanelContainer CreatePanel(string name)
@@ -267,9 +316,14 @@ public partial class Hud : CanvasLayer
   private void OnPhaseChanged(GamePhase phase)
   {
     ShowLayoutOfActor();
-    if (phase == GamePhase.GameOver)
+    if (phase == GamePhase.GameOver && _root.GetNodeOrNull("Results") is null)
       _root.AddChild(new ResultsPanel { Name = "Results", Session = Session });
   }
+
+  /// <summary>
+  /// Игра через сервер: партию целиком заменило обновление.
+  /// </summary>
+  private void OnRestored() => OnPhaseChanged(Session.Phase);
 
   /// <summary>
   /// Режим гонки: теория дошла до финиша — раунд объявлен последним.

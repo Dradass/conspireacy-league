@@ -123,6 +123,18 @@ public sealed class Player
   /// Заплатить.
   /// </summary>
   /// <param name="amount">Сумма в $.</param>
+  /// <summary>
+  /// Клиент: восстановить баланс и источники дохода по присланному сервером виду. Событий не вызывает.
+  /// </summary>
+  internal void Restore(int money, IReadOnlyDictionary<string, int>? earnedFrom)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegative(money);
+    Money = money;
+    _earnedFrom.Clear();
+    foreach (var (source, amount) in earnedFrom ?? new Dictionary<string, int>())
+      _earnedFrom[source] = amount;
+  }
+
   public void Spend(int amount)
   {
     ArgumentOutOfRangeException.ThrowIfNegative(amount);

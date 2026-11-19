@@ -6,9 +6,9 @@ namespace ConspiracyLeague.Core.Game;
 /// Победные очки игрока в режиме развития теорий.
 /// </summary>
 /// <param name="Player">Игрок.</param>
-/// <param name="LeaderPoints">Сумма влияния всех лидеров в штабах теорий, где игрок владелец, × 2.</param>
-/// <param name="AdeptPoints">Очки от адептов: каждый лидер теории получает свою долю, как при делении денег.</param>
-/// <param name="TheoryCount">Сколько разных теорий, где игрок владелец и у него есть карта эффекта этой теории.</param>
+/// <param name="LeaderPoints">Сумма влияния всех лидеров в действующих теориях, где игрок владелец.</param>
+/// <param name="AdeptPoints">Очки от адептов действующих теорий: каждый лидер теории получает свою долю, как при делении денег.</param>
+/// <param name="TheoryCount">Сколько разных действующих теорий, где игрок владелец и у него есть карта эффекта этой теории.</param>
 /// <param name="TheoryPoints">Очки за количество теорий (<see cref="VictoryPoints.TheoryPointsFor"/>).</param>
 /// <param name="MoneyPoints">Очки за деньги на руках: 1 очко за каждые <see cref="VictoryPoints.MoneyPerPoint"/>$.</param>
 public sealed record VictoryScore(
@@ -31,9 +31,9 @@ public sealed record VictoryScore(
 public static class VictoryPoints
 {
   /// <summary>
-  /// Сколько очков даёт каждый единица влияния лидера (× 2).
+  /// Сколько очков даёт каждая единица влияния лидера.
   /// </summary>
-  public const int LeaderPointsPerInfluence = 2;
+  public const int LeaderPointsPerInfluence = 1;
 
   /// <summary>
   /// Сколько $ на руках нужно, чтобы получить одно очко.
@@ -59,11 +59,13 @@ public static class VictoryPoints
   /// Очки от адептов каждому игроку. Считаются так же, как доход от адептов: открытые теории с адептами
   /// и закрытые, где владелец «Иллюминатов» в роли лидера (только ему).
   /// </summary>
-  public static IReadOnlyDictionary<Player, int> AdeptPoints(PlayingField field)
+  /// <param name="activeOnly">Учитывать только действующие теории (итоговый подсчёт).</param>
+  public static IReadOnlyDictionary<Player, int> AdeptPoints(PlayingField field, bool activeOnly = false)
   {
     var points = new Dictionary<Player, int>();
     foreach (var column in field.TheoryColumns.Where(column =>
-      column.Adepts > 0 && (!column.IsClosed || field.IlluminatiBeneficiary(column) is not null)))
+      column.Adepts > 0
+      && (activeOnly ? column.IsActive : !column.IsClosed || field.IlluminatiBeneficiary(column) is not null)))
     {
       var income = TheoryIncome.Of(column);
       income = field.IlluminatiBeneficiary(column) is { } beneficiary ? income.OnlyFor(beneficiary) : income;
@@ -79,18 +81,18 @@ public static class VictoryPoints
   public static VictoryScore Of(Player player, PlayingField field)
   {
     var leaderPoints = field.TheoryColumns
-      .Where(column => column.Owner == player)
+      .Where(column => column.Owner == player && column.IsActive)
       .Sum(column => column.Influence) * LeaderPointsPerInfluence;
 
     var theoryCount = field.TheoryColumns
-      .Where(column => column.Owner == player)
+      .Where(column => column.Owner == player && column.IsActive)
       .Select(column => column.Theory)
       .Count(theory => field.TheoryCards.Any(owned => owned.Owner == player && owned.Card.Theory == theory));
 
     return new VictoryScore(
       player,
       LeaderPoints: leaderPoints,
-      AdeptPoints: AdeptPoints(field).GetValueOrDefault(player),
+      AdeptPoints: AdeptPoints(field, activeOnly: true).GetValueOrDefault(player),
       TheoryCount: theoryCount,
       TheoryPoints: TheoryPointsFor(theoryCount),
       MoneyPoints: player.Money / MoneyPerPoint);

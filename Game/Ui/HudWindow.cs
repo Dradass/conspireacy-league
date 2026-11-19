@@ -37,6 +37,24 @@ public enum HudWindowKind
   /// Раунд, ход, игроки и их суммы, кнопка «Пас».
   /// </summary>
   Players,
+
+  /// <summary>
+  /// История ходов всех игроков.
+  /// </summary>
+  History,
+}
+
+/// <summary>
+/// Содержимое окна, которое не масштабируется под окно, а занимает его в натуральную величину (например, список
+/// с прокруткой: в растянутом окне видно больше строк). Его минимальный размер — предел сжатия окна, а размер
+/// при открытии окна — <see cref="InitialSize"/>.
+/// </summary>
+public interface IFillsHudWindow
+{
+  /// <summary>
+  /// Размер содержимого, когда окно только открыли.
+  /// </summary>
+  Vector2 InitialSize { get; }
 }
 
 /// <summary>
@@ -73,6 +91,7 @@ public partial class HudWindow : PanelContainer
     (HudWindowKind.PersonalHq, "Личный штаб"),
     (HudWindowKind.OtherHq, "Штаб другого игрока"),
     (HudWindowKind.Players, "Информация об игроках"),
+    (HudWindowKind.History, "История"),
   ];
 
   private static readonly Color IconColor = UiStyle.Text with { A = 0.85f };
@@ -98,6 +117,7 @@ public partial class HudWindow : PanelContainer
   private Control? _content;
   private bool _pinned;
   private Func<Vector2, Vector2, Vector2>? _placement;
+  private Func<Vector2, Rect2>? _initialBounds;
 
   private Edge _resizing;
   private bool _moving;
@@ -144,6 +164,15 @@ public partial class HudWindow : PanelContainer
   public Func<Vector2, Vector2, Vector2>? Placement
   {
     init => _placement = value;
+  }
+
+  /// <summary>
+  /// Где и какого размера открыть окно: размер экрана → прямоугольник окна. Задаёт и размер, а не только место
+  /// (<see cref="Placement"/>); окно не меньше своего минимального размера.
+  /// </summary>
+  public Func<Vector2, Rect2>? InitialBounds
+  {
+    init => _initialBounds = value;
   }
 
   /// <summary>
@@ -326,7 +355,8 @@ public partial class HudWindow : PanelContainer
   }
 
   /// <summary>
-  /// Вписать содержимое в окно: оно масштабируется так, чтобы целиком поместиться, и занимает всё окно.
+  /// Вписать содержимое в окно: оно масштабируется так, чтобы целиком поместиться, и занимает всё окно
+  /// (содержимое <see cref="IFillsHudWindow"/> не масштабируется).
   /// </summary>
   private void LayoutContent()
   {
@@ -336,7 +366,7 @@ public partial class HudWindow : PanelContainer
     var minimum = _content.GetCombinedMinimumSize();
     var available = _host.Size;
     var scale = 1f;
-    if (minimum.X > 0 && minimum.Y > 0)
+    if (_content is not IFillsHudWindow && minimum.X > 0 && minimum.Y > 0)
       scale = Mathf.Clamp(Mathf.Min(available.X / minimum.X, available.Y / minimum.Y), MinContentScale, MaxContentScale);
 
     _content.Position = Vector2.Zero;
@@ -352,7 +382,7 @@ public partial class HudWindow : PanelContainer
     if (!IsInsideTree())
       return;
 
-    var content = _content?.GetCombinedMinimumSize() ?? Vector2.Zero;
+    var content = _content is IFillsHudWindow fill ? fill.InitialSize : _content?.GetCombinedMinimumSize() ?? Vector2.Zero;
     // Начальный размер — по заголовку с полным названием типа, хотя сжать окно потом можно и сильнее.
     _kindPicker.FitToLongestItem = true;
     var header = _header.GetCombinedMinimumSize();
@@ -360,7 +390,15 @@ public partial class HudWindow : PanelContainer
     var margins = GetThemeStylebox("panel").GetMinimumSize();
     Size = new Vector2(Mathf.Max(header.X, content.X), header.Y + HeaderSeparation + content.Y) + margins;
 
-    if (_placement is not null || Position == Vector2.Zero)
+    if (_initialBounds is not null)
+    {
+      var bounds = _initialBounds(GetViewportRect().Size);
+      _initialBounds = null;
+      _placement = null;
+      Size = bounds.Size.Max(GetCombinedMinimumSize());
+      Position = bounds.Position;
+    }
+    else if (_placement is not null || Position == Vector2.Zero)
     {
       var screen = GetViewportRect().Size;
       Position = _placement?.Invoke(Size, screen) ?? (screen - Size) / 2;

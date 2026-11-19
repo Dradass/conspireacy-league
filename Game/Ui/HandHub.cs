@@ -22,15 +22,38 @@ public sealed class HandHub
   /// пока ходит бот, видна рука последнего игрока-человека.</param>
   public HandHub(GameSession session)
   {
-    _hand = (session.Players.FirstOrDefault(player => !player.IsBot) ?? session.CurrentPlayer).Hand;
+    Session = session;
+    Owner = session.Players.FirstOrDefault(player => !player.IsBot) ?? session.CurrentPlayer;
+    _hand = Owner.Hand;
     _hand.Changed += OnHandChanged;
     session.Turns.TurnChanged += ShowHandOf;
+    // Игра через сервер: руку целиком заменяет обновление партии — событий о каждой карточке нет.
+    session.Restored += OnRestored;
+  }
+
+  private void OnRestored()
+  {
+    if (_selectedCard is { } selected && !_hand.Contains(selected))
+      SelectedCard = null;
+    if (_draggedCard is { } dragged && !_hand.Contains(dragged))
+      DraggedCard = null;
+    OnHandChanged();
   }
 
   /// <summary>
   /// Показываемая рука.
   /// </summary>
   public Hand Hand => _hand;
+
+  /// <summary>
+  /// Игрок, чья рука показана.
+  /// </summary>
+  public Player Owner { get; private set; }
+
+  /// <summary>
+  /// Сессия игры.
+  /// </summary>
+  public GameSession Session { get; }
 
   /// <summary>
   /// Сменилась рука или её карточки.
@@ -130,6 +153,7 @@ public sealed class HandHub
     if (player.IsBot)
       return;
     _hand.Changed -= OnHandChanged;
+    Owner = player;
     _hand = player.Hand;
     _hand.Changed += OnHandChanged;
     OnHandChanged();

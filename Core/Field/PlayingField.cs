@@ -158,6 +158,13 @@ public sealed class PlayingField
   public bool FailureConsequences { get; set; } = true;
 
   /// <summary>
+  /// Раскрываются ли все закрытые персонажи перед итоговым подсчётом (<see cref="RevealAllHiddenCards"/>). Если нет,
+  /// владелец сам выбирает, кого из своих закрытых персонажей раскрыть (<see cref="RevealOwn"/>); остальные так и
+  /// остаются гражданами без теории.
+  /// </summary>
+  public bool RevealHiddenAtEnd { get; set; } = true;
+
+  /// <summary>
   /// Наибольшая грань, на которой проваленный бездомный уходит из игры.
   /// </summary>
   public const int HomelessDestroyDie = 2;
@@ -260,6 +267,52 @@ public sealed class PlayingField
   /// Добавить игрока и его рабочую зону.
   /// </summary>
   public void AddPlayer(Player player, Zone zone) => _playerZones.Add(player, zone);
+
+  /// <summary>
+  /// Клиент: восстановить поле по присланному сервером виду (<see cref="Client.ClientMirror"/>). Событий не вызывает.
+  /// </summary>
+  /// <param name="commonZone">Общая зона.</param>
+  /// <param name="cells">Карточки на поле — в личных штабах и в стопках теорий.</param>
+  /// <param name="columns">Стопки теорий слева направо в порядке появления.</param>
+  /// <param name="theoryCards">Карточки теорий у владельцев.</param>
+  internal void Restore(Zone commonZone, IEnumerable<RestoredCell> cells, IEnumerable<TheoryColumn> columns, IEnumerable<OwnedTheoryCard> theoryCards)
+  {
+    CommonZone = commonZone;
+    _cards.Clear();
+    _usedCells.Clear();
+    _rotatedCells.Clear();
+    _trainedBonuses.Clear();
+    _cardAdepts.Clear();
+    _chips.Clear();
+    _wheels.Clear();
+    foreach (var cell in cells)
+    {
+      _cards.Add(cell.Cell, cell.Card);
+      if (cell.Used)
+        _usedCells.Add(cell.Cell);
+      if (cell.Rotated)
+        _rotatedCells.Add(cell.Cell);
+      if (cell.Trained != 0)
+        _trainedBonuses[cell.Cell] = cell.Trained;
+      if (cell.Adepts > 0)
+        _cardAdepts[cell.Cell] = cell.Adepts;
+      if (cell.Chip is { } chip)
+        _chips[cell.Cell] = chip;
+      if (cell.Wheel is { } wheel)
+        _wheels[cell.Cell] = wheel;
+    }
+
+    _theoryColumns.Clear();
+    _theoryColumns.AddRange(columns);
+    _theoryCards.Clear();
+    _theoryCards.AddRange(theoryCards);
+    SyncTheoryRules();
+  }
+
+  /// <summary>
+  /// На сколько процентов изменена вероятность успеха персонажа обучением и ослаблением.
+  /// </summary>
+  public int TrainedBonusAt(Cell cell) => _trainedBonuses.GetValueOrDefault(cell);
 
   /// <summary>
   /// Карточка в ячейке.
@@ -450,7 +503,24 @@ public sealed class PlayingField
   /// Владеет ли игрок карточкой теории с такой пассивной способностью.
   /// </summary>
   private bool HoldsPassive<T>(Player? player) where T : PassiveAbility =>
-    player is not null && _theoryCards.Any(owned => owned.Owner == player && owned.Card.Passive is T);
+    player is not null && ActiveTheoryCards.Any(owned => owned.Owner == player && owned.Card.Passive is T);
+
+  /// <summary>
+  /// Действует ли пассивная способность карточки теории: пока штаб её теории закрыт, способность не работает.
+  /// </summary>
+  public bool IsTheoryCardActive(OwnedTheoryCard owned) => !IsTheoryClosed(owned.Card.Theory);
+
+  /// <summary>
+  /// Карточки теорий, пассивные способности которых сейчас действуют (<see cref="IsTheoryCardActive"/>).
+  /// </summary>
+  private IEnumerable<OwnedTheoryCard> ActiveTheoryCards => _theoryCards.Where(IsTheoryCardActive);
+
+  /// <summary>
+  /// Пассивная способность действующей карточки теории <paramref name="theory"/>; <c>null</c>, если карточки нет
+  /// или штаб теории закрыт.
+  /// </summary>
+  private PassiveAbility? ActivePassiveOf(Theory theory) =>
+    TheoryCardOf(theory) is { } owned && IsTheoryCardActive(owned) ? owned.Card.Passive : null;
 
   /// <summary>
   /// Персонаж защищён «Рептилоидами»: его владелец держит эту карточку теории. Такого персонажа нельзя смотреть,
@@ -642,7 +712,7 @@ public sealed class PlayingField
 
   /// <summary>
   /// Заменить бездомного или гражданина в теории карточкой с руки. Новая карточка становится собственностью игрока,
-  /// заменённая уходит из игры.
+  /// заменённая уходит игроку в руку.
   /// </summary>
   /// <exception cref="InvalidOperationException">Заменить нельзя.</exception>
   public void Replace(Cell cell, PersonCard card, Player player)
@@ -651,8 +721,10 @@ public sealed class PlayingField
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
+    var replaced = (PersonCard)CardAt(cell)!;
     player.Hand.Remove(card);
     ReplaceInTheory(ColumnAt(cell)!, cell, card, player);
+    player.Hand.Add(replaced);
   }
 
   /// <summary>
@@ -712,20 +784,19 @@ public sealed class PlayingField
   /// Персонажи в личных штабах всех игроков, которых можно убрать из игры.
   /// </summary>
   public IEnumerable<(Cell Cell, PlacementCheck Check)> RemovableCharacterTargets(Player player) =>
-    _playerZones
-      .SelectMany(zone => zone.Value.Cells)
+    _playerZones[player].Cells
       .Where(cell => CardAt(cell) is PersonCard)
       .Select(cell => (cell, CheckRemoveCharacter(cell, player)));
 
   /// <summary>
-  /// Проверить, может ли игрок убрать персонажа из личного штаба: своего — всегда, чужого — если его не защищает полицейский.
+  /// Проверить, может ли игрок убрать персонажа из личного штаба: только своего.
   /// </summary>
   public PlacementCheck CheckRemoveCharacter(Cell cell, Player player)
   {
-    if (CardAt(cell) is not PersonCard || OwnerOfCell(cell) is null)
+    if (CardAt(cell) is not PersonCard || OwnerOfCell(cell) is not { } owner)
       return PlacementCheck.Deny("Здесь нет персонажа из личного штаба.");
-    if (IsProtected(cell, player))
-      return PlacementCheck.Deny("Этого персонажа защищает полицейский.");
+    if (owner != player)
+      return PlacementCheck.Deny("Убрать можно только персонажа из своего личного штаба.");
 
     return PlacementCheck.Allowed;
   }
@@ -751,7 +822,7 @@ public sealed class PlayingField
   /// </summary>
   public bool IsFoiled(Cell cell) =>
     CardAt(cell) is PersonCard
-    && _theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell);
+    && ActiveTheoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell);
 
   /// <summary>
   /// Освободить ячейку от шапочки из фольги, фишки и руля: карточка остаётся у владельца, но больше не лежит на персонаже.
@@ -831,7 +902,7 @@ public sealed class PlayingField
   {
     if (CardAt(cell) is not PersonCard || OwnerOfCell(cell) is null)
       return PlacementCheck.Deny("Здесь нет персонажа из личного штаба.");
-    if (_theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell))
+    if (ActiveTheoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell))
       return PlacementCheck.Deny("На этом персонаже уже лежит шапочка из фольги.");
 
     return PlacementCheck.Allowed;
@@ -916,6 +987,28 @@ public sealed class PlayingField
     CardReplaced?.Invoke(cell);
   }
 
+  /// <summary>
+  /// Проверить, можно ли заменить профессионала из руки игрока политиком.
+  /// </summary>
+  public PlacementCheck CheckReplaceHandWithPolitician(Card card, Player player) =>
+    card is ProfessionalCard && player.Hand.Contains(card)
+      ? PlacementCheck.Allowed
+      : PlacementCheck.Deny("В руке нет профессионала.");
+
+  /// <summary>
+  /// Заменить профессионала из руки игрока первым попавшимся политиком (не из колоды); политик остаётся на месте
+  /// профессионала в руке, а профессионал уходит из игры.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Заменить нельзя.</exception>
+  public void ReplaceHandWithPolitician(Card card, Player player)
+  {
+    var check = CheckReplaceHandWithPolitician(card, player);
+    if (!check.IsAllowed)
+      throw new InvalidOperationException(check.Reason);
+
+    player.Hand.Replace(card, new GenericProfessionalCard(Profession.Politician));
+  }
+
   private static bool IsPolitician(PersonCard card) => card is GenericProfessionalCard { Profession: Profession.Politician };
 
   /// <summary>
@@ -924,15 +1017,17 @@ public sealed class PlayingField
   public bool CanSeeAllHidden(Player player) => HoldsPassive<BirdsDronesPassive>(player);
 
   /// <summary>
-  /// Персонажи (кроме бездомных и закрытых карточек) в личных штабах и теориях, которых можно понизить до бездомного.
+  /// Персонажи (кроме бездомных и закрытых карточек) в личных штабах игроков, которых можно понизить до бездомного.
+  /// Персонажей в штабах теорий «План Даллеса» не понижает.
   /// </summary>
   public IEnumerable<(Cell Cell, PlacementCheck Check)> DemoteTargets(Player player) =>
-    _cards.Keys
+    _playerZones
+      .SelectMany(zone => zone.Value.Cells)
       .Where(cell => CardAt(cell) is PersonCard and not HomelessCard and not HiddenCard)
       .Select(cell => (cell, CheckDemote(cell, player)));
 
   /// <summary>
-  /// Проверить, можно ли понизить персонажа до бездомного: закрытая теория и защищённые персонажи не трогаем,
+  /// Проверить, можно ли понизить персонажа до бездомного: только в личном штабе и без защиты,
   /// а за чужого персонажа нужно заплатить его владельцу его влияние (<see cref="DemoteFee"/>).
   /// </summary>
   /// <param name="cell">Ячейка персонажа.</param>
@@ -961,7 +1056,7 @@ public sealed class PlayingField
     if (CardAt(cell) is not PersonCard person)
       return null;
 
-    var owner = ColumnAt(cell)?.OwnerAt(cell) ?? OwnerOfCell(cell);
+    var owner = OwnerOfCell(cell);
     return owner is null || owner == player || person.Influence <= 0 ? null : (owner, person.Influence);
   }
 
@@ -973,19 +1068,9 @@ public sealed class PlayingField
     if (CardAt(cell) is not PersonCard || CardAt(cell) is HomelessCard or HiddenCard)
       return PlacementCheck.Deny("Здесь нет персонажа, которого можно понизить.");
 
-    if (ColumnAt(cell) is { } column)
-    {
-      if (column.IsClosed)
-        return PlacementCheck.Deny($"Штаб теории «{column}» закрыт — персонажей в нём не понизить.");
-      if (column.IsProtected())
-        return PlacementCheck.Deny("Эту теорию защищает полицейский.");
-      if (IsImmune(cell))
-        return PlacementCheck.Deny("Персонажей этого игрока защищают рептилоиды.");
-      return PlacementCheck.Allowed;
-    }
-
+    // Понижать можно только персонажей в личных штабах игроков, не в штабах теорий.
     if (OwnerOfCell(cell) is null)
-      return PlacementCheck.Deny("Здесь нет персонажа из личного штаба.");
+      return PlacementCheck.Deny("Понизить можно только персонажа из личного штаба игрока.");
     return IsProtected(cell, player)
       ? PlacementCheck.Deny("Этого персонажа защищает полицейский или шапочка из фольги.")
       : PlacementCheck.Allowed;
@@ -1028,7 +1113,7 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Понизить персонажа до бездомного той же теории (владелец остаётся прежним).
+  /// Понизить персонажа в личном штабе до бездомного той же теории (владелец остаётся прежним).
   /// </summary>
   /// <exception cref="InvalidOperationException">Понизить нельзя.</exception>
   public void Demote(Cell cell, Player player)
@@ -1047,12 +1132,6 @@ public sealed class PlayingField
 
     var card = (PersonCard)_cards[cell];
     var homeless = new HomelessCard(card.Theory);
-    if (ColumnAt(cell) is { } column)
-    {
-      ReplaceInTheory(column, cell, homeless);
-      return;
-    }
-
     ReleaseFoils(cell);
     _cards[cell] = homeless;
     CardReplaced?.Invoke(cell);
@@ -1064,7 +1143,7 @@ public sealed class PlayingField
   /// </summary>
   private void PayEbolaPassive(TheoryColumn column, Player newLeader)
   {
-    foreach (var owned in _theoryCards.Where(owned => owned.Card.Passive is EbolaPassive).ToList())
+    foreach (var owned in ActiveTheoryCards.Where(owned => owned.Card.Passive is EbolaPassive).ToList())
     {
       var holder = owned.Owner;
       if (holder == newLeader || !column.Members.Any(member => member.Owner == holder))
@@ -1080,10 +1159,11 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Сколько $ добавляет карточка теории «Сатанисты похищают детей» бездомному, который приносит деньги.
+  /// Сколько $ добавляет карточка теории «Сатанисты похищают детей» бездомному, который приносит деньги: только
+  /// бездомному владельца карточки.
   /// </summary>
   private int HomelessMoneyBonusAt(Cell cell) =>
-    CardAt(cell) is HomelessCard && _theoryCards.Any(owned => owned.Card.Passive is SatanistsPassive)
+    CardAt(cell) is HomelessCard && OwnerOfCell(cell) is { } owner && HoldsPassive<SatanistsPassive>(owner)
       ? SatanistsPassive.HomelessBonus
       : 0;
 
@@ -1179,6 +1259,100 @@ public sealed class PlayingField
       if (source == context.TargetTheory)
         throw new ArgumentException($"Для действия «{option}» теории-источник и цель должны быть разными.", nameof(context));
     }
+  }
+
+  /// <summary>
+  /// Проверить розыгрыш карточки личного штаба целиком, ничего не меняя: карточку можно сыграть, у неё есть такой
+  /// вариант действия, все цели выбраны и подходят (с учётом платы полицейскому), а у карточки, действие которой
+  /// выполняют или копируют, выбран её вариант действия. Так сервер отклоняет неверную команду до броска кубика
+  /// (<see cref="GameSession.PlayCard"/>), а не тратит на неё карточку.
+  /// </summary>
+  /// <param name="cell">Ячейка карточки.</param>
+  /// <param name="option">Вариант действия карточки.</param>
+  /// <param name="context">Контекст с выбранными целями.</param>
+  public PlacementCheck CheckUse(Cell cell, Effect option, GameContext context)
+  {
+    if (!CanUse(cell, context.CurrentPlayer))
+      return PlacementCheck.Deny("Эту карточку нельзя использовать.");
+    if (!_cards[cell].OnPlayFromHand.Options.Contains(option))
+      return PlacementCheck.Deny($"У карточки «{_cards[cell]}» нет действия «{option}».");
+
+    return CheckTargets(option, context.WithSourceCell(cell), depth: 0);
+  }
+
+  /// <summary>
+  /// Проверить применение карточки теории целиком, ничего не меняя (см. <see cref="UseTheoryCard"/>).
+  /// </summary>
+  /// <param name="card">Карточка теории.</param>
+  /// <param name="context">Контекст с выбранными целями.</param>
+  public PlacementCheck CheckTheoryCardUse(OwnedTheoryCard card, GameContext context)
+  {
+    if (!_theoryCards.Contains(card) || !CanUseTheoryCard(card, context.CurrentPlayer))
+      return PlacementCheck.Deny("Эту карточку теории нельзя применить.");
+
+    var effect = card.Card.OnPlayFromHand;
+    if (!effect.RequiresTheory && ColumnOf(card.Card.Theory) is { } home)
+      context = context.WithTargetTheory(home);
+    var check = CheckTargets(effect, context, depth: 0);
+    if (check.IsAllowed && card.Card.Passive is TinFoilPassive && context.TargetCell is { } foilCell)
+      return CheckFoil(foilCell);
+    return check;
+  }
+
+  /// <summary>
+  /// Насколько глубоко одна карточка выполняет действие другой: использовать чужую карточку (или сыграть свою),
+  /// которая копирует третью. Глубже не бывает — копирование не копирует копирование.
+  /// </summary>
+  private const int MaxBorrowDepth = 2;
+
+  /// <summary>
+  /// Проверить цели варианта действия (см. <see cref="CheckUse"/>) так же, как их потом использует выполнение:
+  /// <see cref="RequireTargets"/>, карточки на поле — <see cref="Effect.CheckTargetCell"/>, а действие чужой
+  /// карточки — как <see cref="ExecuteBorrowed"/> и <see cref="CopyRival"/>.
+  /// </summary>
+  private PlacementCheck CheckTargets(Effect option, GameContext context, int depth)
+  {
+    try
+    {
+      RequireTargets(option, context);
+    }
+    catch (ArgumentException error)
+    {
+      return PlacementCheck.Deny(error.Message);
+    }
+
+    if (!option.RequiresTargetCell || option.AcceptsHandCardTarget && context.HandCard is not null)
+      return PlacementCheck.Allowed;
+
+    if (!option.BorrowsTargetCard)
+    {
+      if (context.TargetCell is not { } target)
+        return option.TargetIsOptional ? PlacementCheck.Allowed : PlacementCheck.Deny($"Для действия «{option}» нужно выбрать карточку на поле.");
+      var targetCheck = option.CheckTargetCell(target, context);
+      if (!targetCheck.IsAllowed || !option.RequiresSecondTargetCell)
+        return targetCheck;
+      if (context.SecondTargetCell is not { } second)
+        return PlacementCheck.Deny($"Для действия «{option}» нужно выбрать две карточки.");
+      return option.CheckTargetCell(second, context);
+    }
+
+    // Копирование берёт карточку и её вариант отдельно (CopiedCell, CopiedOption), если они выбраны, —
+    // так же, как CopyRivalCardEffect.Execute и CopyRival.
+    var copying = option is CopyRivalCardEffect;
+    var borrowed = (copying ? context.CopiedCell ?? context.BorrowedCell : context.BorrowedCell)!.Value;
+    var borrowCheck = option.CheckTargetCell(borrowed, context);
+    if (!borrowCheck.IsAllowed)
+      return borrowCheck;
+    if (depth >= MaxBorrowDepth || CardAt(borrowed) is not { } card)
+      return PlacementCheck.Deny($"Действие «{option}» так выполнить нельзя.");
+
+    var chosen = copying ? context.CopiedOption ?? context.BorrowedOption : context.BorrowedOption;
+    if (chosen is null)
+      return PlacementCheck.Deny($"Для действия «{option}» нужно выбрать вариант действия карточки «{card}».");
+    if (!card.OnPlayFromHand.Options.Contains(chosen) || !chosen.CanBeBorrowed || copying && chosen is CopyRivalCardEffect)
+      return PlacementCheck.Deny($"Действие «{chosen}» карточки «{card}» так выполнить нельзя.");
+
+    return CheckTargets(chosen, context, depth + 1);
   }
 
   /// <summary>
@@ -1550,7 +1724,7 @@ public sealed class PlayingField
       throw new InvalidOperationException("Эту карточку нельзя использовать.");
 
     // Пассивная способность «Ленина — гриба»: неудачная проверка своего персонажа приносит деньги.
-    var mushrooms = _theoryCards.Count(owned => owned.Owner == player && owned.Card.Passive is LeninMushroomPassive);
+    var mushrooms = ActiveTheoryCards.Count(owned => owned.Owner == player && owned.Card.Passive is LeninMushroomPassive);
     if (mushrooms > 0)
       player.Earn(mushrooms * LeninMushroomPassive.MoneyPerFailure);
 
@@ -2016,25 +2190,27 @@ public sealed class PlayingField
   /// </summary>
   private void SyncTheoryRules()
   {
-    var antiVaccinationOwner = TheoryCardOf(TheoryCatalog.AntiVaccination)?.Owner;
-    var antarcticaOwners = _theoryCards.Where(owned => owned.Card.Passive is AntarcticaPassive).Select(owned => owned.Owner).ToList();
-    var illuminatiOwners = _theoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).Select(owned => owned.Owner).ToList();
+    var antiVaccinationOwner = TheoryCardOf(TheoryCatalog.AntiVaccination) is { } antiVaccination && IsTheoryCardActive(antiVaccination)
+      ? antiVaccination.Owner
+      : null;
+    var antarcticaOwners = ActiveTheoryCards.Where(owned => owned.Card.Passive is AntarcticaPassive).Select(owned => owned.Owner).ToList();
+    var illuminatiOwners = ActiveTheoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).Select(owned => owned.Owner).ToList();
     foreach (var column in _theoryColumns)
     {
       column.IlluminatiHiddenOwners = illuminatiOwners;
-      column.FounderInfluenceBonus = TheoryCardOf(column.Theory)?.Card.Passive is FlatEarthPassive ? FlatEarthPassive.FounderBonus : 0;
+      column.FounderInfluenceBonus = ActivePassiveOf(column.Theory) is FlatEarthPassive ? FlatEarthPassive.FounderBonus : 0;
       column.SolvencyMargin = antiVaccinationOwner is not null && column.IsHeadquarters && column.Owner == antiVaccinationOwner
         ? AntiVaccinationPassive.SolvencyBonus
         : 0;
       column.DoubleHomelessOwners = antarcticaOwners;
-      column.AdeptsShielded = TheoryCardOf(column.Theory)?.Card.Passive is TinFoilPassive;
+      column.AdeptsShielded = ActivePassiveOf(column.Theory) is TinFoilPassive;
     }
   }
 
   /// <summary>
   /// Штаб нельзя закрыть как несостоятельный, пока у теории лежит карточка с пассивной способностью «Плоской Земли».
   /// </summary>
-  private bool IsUncloseable(TheoryColumn column) => TheoryCardOf(column.Theory)?.Card.Passive is FlatEarthPassive;
+  private bool IsUncloseable(TheoryColumn column) => ActivePassiveOf(column.Theory) is FlatEarthPassive;
 
   /// <summary>
   /// Владелец карточки «Чипирование» — тот, кто положил фишку — может использовать чипированного персонажа как своего.
@@ -2058,7 +2234,7 @@ public sealed class PlayingField
 
   /// <summary>
   /// Проверить, можно ли положить фишку на персонажа: он в личном штабе, без фишки, и его не защищает полицейский.
-  /// В Check.Cost — сколько заплатить владельцу персонажа.
+  /// В Check.Cost — сколько заплатить владельцу персонажа: его влияние в $.
   /// </summary>
   public PlacementCheck CheckChip(Cell cell, Player player)
   {
@@ -2069,13 +2245,13 @@ public sealed class PlayingField
     if (IsProtected(cell, player))
       return PlacementCheck.Deny("Этого персонажа защищает полицейский или шапочка из фольги.");
 
-    return player.CanAfford(person.Cost)
-      ? PlacementCheck.Allow(person.Cost)
-      : PlacementCheck.Deny($"Недостаточно денег: нужно {person.Cost}$, а у вас {player.Money}$.");
+    return player.CanAfford(person.Influence)
+      ? PlacementCheck.Allow(person.Influence)
+      : PlacementCheck.Deny($"Недостаточно денег: нужно {person.Influence}$, а у вас {player.Money}$.");
   }
 
   /// <summary>
-  /// Положить фишку на персонажа в личном штабе и заплатить его владельцу стоимость персонажа.
+  /// Положить фишку на персонажа в личном штабе и заплатить его владельцу влияние персонажа в $.
   /// </summary>
   /// <exception cref="InvalidOperationException">Фишку положить нельзя.</exception>
   public void Chip(Cell cell, Player player)
@@ -2140,7 +2316,7 @@ public sealed class PlayingField
     if (!column.IsClosed)
       return null;
 
-    var owner = _theoryCards.FirstOrDefault(owned => owned.Card.Passive is IlluminatiPassive)?.Owner;
+    var owner = ActiveTheoryCards.FirstOrDefault(owned => owned.Card.Passive is IlluminatiPassive)?.Owner;
     return owner is not null && column.IsLeader(owner)
       ? owner
       : null;
@@ -2235,13 +2411,14 @@ public sealed class PlayingField
   /// <summary>
   /// Сколько $ добавляет карточка теории «Золотой миллиард» профессионалу в личном штабе: если его владелец
   /// держит такую карточку, то профессионал приносит на <see cref="GoldenBillionPassive.ProfessionalBonus"/>$ больше.
+  /// Пока штаб теории закрыт, бонуса нет.
   /// </summary>
   private int ProfessionMoneyBonusAt(Cell cell)
   {
     if (CardAt(cell) is not ProfessionalCard || _playerZones.Keys.FirstOrDefault(zonePlayer => _playerZones[zonePlayer].Contains(cell)) is not { } owner)
       return 0;
 
-    return _theoryCards.Any(card => card.Owner == owner && card.Card.Passive is GoldenBillionPassive)
+    return HoldsPassive<GoldenBillionPassive>(owner)
       ? GoldenBillionPassive.ProfessionalBonus
       : 0;
   }
@@ -2561,6 +2738,30 @@ public sealed class PlayingField
       HiddenCardRevealed?.Invoke(target);
       ResolveRevealed(target);
     }
+  }
+
+  /// <summary>
+  /// Нераскрытые закрытые карточки игрока в штабах теорий.
+  /// </summary>
+  public IEnumerable<Cell> OwnHiddenCells(Player player) =>
+    _theoryColumns
+      .SelectMany(column => column.Members)
+      .Where(member => member.Card is HiddenCard { IsRevealed: false } && member.Owner == player)
+      .Select(member => member.Cell)
+      .ToList();
+
+  /// <summary>
+  /// Владелец сам раскрывает свою закрытую карточку (в конце игры): бесплатно, с теми же последствиями, что и
+  /// раскрытие перед итоговым подсчётом.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Здесь нет нераскрытой закрытой карточки игрока.</exception>
+  public void RevealOwn(Cell cell, Player player)
+  {
+    if (CardAt(cell) is not HiddenCard { IsRevealed: false } hidden || ColumnAt(cell)?.OwnerAt(cell) != player)
+      throw new InvalidOperationException("Здесь нет вашей нераскрытой закрытой карточки.");
+    hidden.Reveal();
+    HiddenCardRevealed?.Invoke(cell);
+    ResolveRevealed(cell);
   }
 
   /// <summary>
@@ -3061,12 +3262,13 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Ближайший свободный столбец общей зоны от столбца <paramref name="column"/> в сторону <paramref name="direction"/>.
+  /// Ближайший свободный столбец от столбца <paramref name="column"/> в сторону <paramref name="direction"/> — до края поля:
+  /// если он за общей зоной, зона расширится при сдвиге (см. <see cref="ResolveColumnConflict"/>).
   /// </summary>
   /// <returns>Номер столбца или <c>null</c>, если свободного нет.</returns>
   private int? FreeColumn(int column, int direction)
   {
-    for (var target = column + direction; target >= CommonZone.Left && target < CommonZone.Left + CommonZone.Width; target += direction)
+    for (var target = column + direction; target >= 0 && target < Columns; target += direction)
     {
       if (TheoryAtColumn(target) is null)
         return target;
@@ -3094,6 +3296,19 @@ public sealed class PlayingField
     for (var column = free - direction; column != index; column -= direction)
       MoveColumn(TheoryAtColumn(column)!, direction);
     MoveColumn(moved, direction);
+
+    // Сдвинутые теории не должны выпасть за общую зону: зона тянется до свободного столбца.
+    var zoneRight = CommonZone.Left + CommonZone.Width - 1;
+    if (free < CommonZone.Left)
+    {
+      CommonZone = CommonZone with { Left = free, Width = zoneRight - free + 1 };
+      CommonZoneChanged?.Invoke(CommonZone);
+    }
+    else if (free > zoneRight)
+    {
+      CommonZone = CommonZone with { Width = free - CommonZone.Left + 1 };
+      CommonZoneChanged?.Invoke(CommonZone);
+    }
   }
 
   /// <summary>
@@ -3313,6 +3528,20 @@ public sealed class PlayingField
     var cost = Math.Max(0, JoiningPricePerInfluence * column.Influence - person.JoiningDiscount);
     return player.CanAfford(cost)
       ? PlacementCheck.Allow(cost, column)
-      : PlacementCheck.Deny($"Недостаточно денег: чтобы присоединиться к теории «{column.Theory}», нужно {cost}$, а у вас {player.Money}$.");
+      : PlacementCheck.DenyMoney(cost, $"Недостаточно денег: чтобы присоединиться к теории «{column.Theory}», нужно {cost}$, а у вас {player.Money}$.");
   }
+
+  /// <summary>
+  /// Места сверху стопок теорий, куда можно присоединить карточку без теории, с условиями — в том числе те,
+  /// куда сейчас не хватает денег (<see cref="PlacementCheck.LacksMoney"/>). Для карточки с теорией — пусто.
+  /// </summary>
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> JoiningSlots(Card card, Player player) =>
+    card is PersonCard { Theory: null }
+      ? _theoryColumns
+        .Select(column => column.Top.Above)
+        .Distinct()
+        .Select(cell => (cell, Check(card, cell, player)))
+        .Where(pair => pair.Item2.IsAllowed || pair.Item2.LacksMoney)
+        .ToList()
+      : [];
 }

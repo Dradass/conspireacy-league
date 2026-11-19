@@ -3,7 +3,7 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Passives;
 
 /// <summary>
-/// Пассивная способность карточки теории «Сатанисты похищают детей»: бездомные приносят
+/// Пассивная способность карточки теории «Сатанисты похищают детей»: бездомные владельца карточки приносят
 /// <see cref="HomelessBonus"/>$ сверх обычного дохода.
 /// </summary>
 /// <remarks>

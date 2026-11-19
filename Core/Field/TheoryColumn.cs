@@ -67,7 +67,8 @@ public sealed class TheoryColumn
   /// <summary>
   /// Миплы-лидеры под карточкой теории — чьего цвета, в порядке появления. Мипл считается лидером теории:
   /// даёт своему игроку влияние (<see cref="LeaderMeepleInfluence"/>) и долю дохода от адептов,
-  /// но не учитывается при проверке состоятельности штаба. Миплов снимают после дохода от адептов.
+  /// но не учитывается при проверке состоятельности штаба. Миплов снимают при обновлении рынка перед следующим раундом;
+  /// в итоговом подсчёте они остаются в теориях.
   /// </summary>
   public IReadOnlyList<Player> LeaderMeeples => _leaderMeeples;
 
@@ -119,24 +120,33 @@ public sealed class TheoryColumn
   public bool IsClosed { get; private set; }
 
   /// <summary>
+  /// Действующая ли теория сейчас: штаб не закрыт, у теории хотя бы <see cref="TheoryCardLeadersThreshold"/> лидеров
+  /// и влияние не меньше <see cref="ActiveInfluence"/>.
+  /// </summary>
+  public bool IsActive => !IsClosed && Leaders >= TheoryCardLeadersThreshold && Influence >= ActiveInfluence;
+
+  /// <summary>
   /// Несостоятелен ли штаб: в нём больше <see cref="SolvencyCheckLeadersThreshold"/> лидеров,
   /// и бездомных среди них больше, чем остальных персонажей. Штабы с меньшим числом лидеров не проверяются.
   /// Миплы-лидеры (<see cref="LeaderMeeples"/>) здесь не учитываются.
   /// </summary>
-  public bool IsInsolvent
+  public bool IsInsolvent => _members.Count > SolvencyCheckLeadersThreshold && SolvencySlack < 0;
+
+  /// <summary>
+  /// Запас состоятельности: на сколько ещё может вырасти перевес бездомных, прежде чем штаб станет несостоятельным
+  /// (без учёта порога <see cref="SolvencyCheckLeadersThreshold"/>). Меньше нуля — бездомных уже слишком много.
+  /// </summary>
+  internal int SolvencySlack
   {
     get
     {
-      if (_members.Count <= SolvencyCheckLeadersThreshold)
-        return false;
-
       // Бездомный владельца «Коммунистов в Антарктиде» считается за два.
       var homeless = _members.Where(CountsAsHomeless)
         .Sum(member => DoubleHomelessOwners.Contains(member.Owner) ? 2 : 1);
       var others = _members.Count(member => !CountsAsHomeless(member));
       // Каждый учёный в штабе делает закрытие сложнее (пассивная способность учёного в штабе теории).
       var scientists = _members.Count(member => member.Card.Passive is ScientistPassive);
-      return homeless > others + SolvencyMargin + scientists * ScientistPassive.SolvencyBonus;
+      return others + SolvencyMargin + scientists * ScientistPassive.SolvencyBonus - homeless;
     }
   }
 
@@ -275,6 +285,18 @@ public sealed class TheoryColumn
   internal void ClearLeaderMeeples() => _leaderMeeples.Clear();
 
   internal void Close() => IsClosed = true;
+
+  /// <summary>
+  /// Клиент: восстановить адептов, закрытие и миплов-лидеров по присланному сервером виду.
+  /// </summary>
+  internal void Restore(int adepts, bool closed, IEnumerable<Player> leaderMeeples)
+  {
+    ArgumentOutOfRangeException.ThrowIfNegative(adepts);
+    Adepts = adepts;
+    IsClosed = closed;
+    _leaderMeeples.Clear();
+    _leaderMeeples.AddRange(leaderMeeples);
+  }
 
   /// <summary>
   /// Штаб снова состоятелен: его открывают обратно (см. <see cref="PlayingField.ReopenSolventTheories"/>).

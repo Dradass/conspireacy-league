@@ -1,5 +1,7 @@
+using ConspiracyLeague.Core.Commands;
 using ConspiracyLeague.Core.Field;
 using ConspiracyLeague.Core.Game;
+using ConspiracyLeague.Game.Net;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
@@ -15,11 +17,17 @@ public partial class TurnButtons : VBoxContainer
 
   private Button _pass = null!;
   private Button _skipTheory = null!;
+  private Button _finishReveal = null!;
 
   /// <summary>
   /// Сессия игры.
   /// </summary>
   public GameSession Session { get; init; } = null!;
+
+  /// <summary>
+  /// Игра через сервер: кнопки отправляют команды. <c>null</c> — игра за одним компьютером.
+  /// </summary>
+  public NetworkGame? Net { get; init; }
 
   public override void _Ready()
   {
@@ -28,19 +36,42 @@ public partial class TurnButtons : VBoxContainer
 
     _pass = new Button { Name = "Pass", Text = "Пас", FocusMode = FocusModeEnum.None };
     _pass.AddThemeFontSizeOverride("font_size", FontSize);
-    _pass.Pressed += Session.Pass;
+    _pass.Pressed += () =>
+    {
+      if (Net is { } net)
+        net.Send(new PassCommand());
+      else
+        Session.Pass();
+    };
     AddChild(_pass);
 
     _skipTheory = new Button { Name = "SkipTheory", Text = "Не играть действие теории", FocusMode = FocusModeEnum.None, Visible = false };
     _skipTheory.AddThemeFontSizeOverride("font_size", FontSize);
-    _skipTheory.Pressed += Session.SkipTheoryTrigger;
+    _skipTheory.Pressed += () =>
+    {
+      if (Net is { } net)
+        net.Send(new SkipTheoryTriggerCommand());
+      else
+        Session.SkipTheoryTrigger();
+    };
     AddChild(_skipTheory);
+
+    // Конец игры: владелец закрытых персонажей раскрыл, кого хотел (только игра за одним компьютером).
+    _finishReveal = new Button { Name = "FinishReveal", Text = "Больше не раскрывать закрытых персонажей", FocusMode = FocusModeEnum.None, Visible = false };
+    _finishReveal.AddThemeFontSizeOverride("font_size", FontSize);
+    _finishReveal.Pressed += () =>
+    {
+      if (Session.Phase == GamePhase.FinalReveal && Session.FinalRevealPlayer is { IsBot: false })
+        Session.FinishFinalReveal();
+    };
+    AddChild(_finishReveal);
 
     Session.PhaseChanged += OnPhaseChanged;
     Session.PendingCheckChanged += OnPendingCheckChanged;
     Session.PendingPlacementChanged += OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged += OnPendingTheoryTriggerChanged;
     Session.Turns.TurnChanged += OnTurnChanged;
+    Session.Restored += UpdateButtons;
     UpdateButtons();
   }
 
@@ -51,6 +82,7 @@ public partial class TurnButtons : VBoxContainer
     Session.PendingCheckChanged -= OnPendingCheckChanged;
     Session.PendingPlacementChanged -= OnPendingPlacementChanged;
     Session.PendingTheoryTriggerChanged -= OnPendingTheoryTriggerChanged;
+    Session.Restored -= UpdateButtons;
   }
 
   private void OnPhaseChanged(GamePhase _) => UpdateButtons();
@@ -74,7 +106,8 @@ public partial class TurnButtons : VBoxContainer
       && Session.PendingPlacement is null && Session.PendingTheoryTrigger is null
       && !Session.CurrentPlayer.IsBot;
     _pass.Disabled = !canAct;
-    _pass.Visible = Session.Phase != GamePhase.GameOver;
+    _pass.Visible = Session.Phase is not (GamePhase.GameOver or GamePhase.FinalReveal);
+    _finishReveal.Visible = Session.Phase == GamePhase.FinalReveal && Session.FinalRevealPlayer is { IsBot: false };
     _skipTheory.Visible = Session.PendingTheoryTrigger is { Owner.IsBot: false };
   }
 }

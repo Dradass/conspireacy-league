@@ -19,6 +19,7 @@ public partial class RoundController : Node
   private const double StepPause = 1.0;
   private const double CameraPause = 0.5;
   private const double MarketPause = 1.0;
+  private const double PollInterval = 0.1;
 
   private Board _board = null!;
   private GameSession _session = null!;
@@ -130,20 +131,27 @@ public partial class RoundController : Node
     await Pause(CameraPause);
     if (!_session.RefreshMarket())
     {
+      // Владельцы закрытых персонажей по очереди раскрывают, кого хотят (FinalRevealController, BotController).
+      var revealed = "Закрытые карточки раскрыты.";
+      if (_session.Phase == GamePhase.FinalReveal)
+      {
+        await WaitFinalReveal();
+        revealed = "Владельцы раскрыли выбранных закрытых персонажей.";
+      }
       if (_session.Mode == GameMode.Race)
       {
         Hint?.Invoke(_session.IsLastRound
-          ? "Последний раунд окончен — гонка завершена. Закрытые карточки раскрыты. Подсчёт очков за теории на финише."
-          : "В колоде рынка не осталось карточек — гонка завершена. Закрытые карточки раскрыты. Подсчёт очков за теории на финише.");
+          ? $"Последний раунд окончен — гонка завершена. {revealed} Подсчёт очков за теории на финише."
+          : $"В колоде рынка не осталось карточек — гонка завершена. {revealed} Подсчёт очков за теории на финише.");
         return;
       }
       if (_session.Mode == GameMode.TheoryDevelopment)
       {
         // Очки считаются по итоговому состоянию поля: выплат в конце нет, партия сразу завершается.
-        Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Закрытые карточки раскрыты. Подсчёт очков.");
+        Hint?.Invoke($"В колоде рынка не осталось карточек — партия заканчивается. {revealed} Подсчёт очков.");
         return;
       }
-      Hint?.Invoke("В колоде рынка не осталось карточек — партия заканчивается. Закрытые карточки раскрываются. Итоговый подсчёт денег.");
+      Hint?.Invoke($"В колоде рынка не осталось карточек — партия заканчивается. {revealed} Итоговый подсчёт денег.");
       await Pause(StepPause);
       await PlayFinalScoring();
       return;
@@ -188,6 +196,16 @@ public partial class RoundController : Node
       Hint?.Invoke($"Повторный доход: адепты теории «{income.Column.Theory}» приносят {income.Total}$.");
       await _board.ShowIncome(income);
     }
+  }
+
+  /// <summary>
+  /// Дождаться, пока все владельцы закрытых персонажей закончат их раскрывать (<see cref="GamePhase.FinalReveal"/>).
+  /// </summary>
+  private async Task WaitFinalReveal()
+  {
+    // Подсказку, кто сейчас выбирает, показывает FinalRevealController.
+    while (_session.Phase == GamePhase.FinalReveal)
+      await Pause(PollInterval);
   }
 
   /// <summary>

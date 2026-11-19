@@ -7,11 +7,11 @@ namespace ConspiracyLeague.Core.Effects;
 /// <summary>
 /// Заменить бездомного или гражданина в любой теории (<see cref="GameContext.TargetCell"/>) на карточку с руки
 /// (<see cref="GameContext.HandCard"/>). Карточка с руки должна быть той же теории, что и заменяемая,
-/// либо обе без теории. Заменённая карточка уходит из игры.
+/// либо обе без теории. Заменённая карточка уходит игроку в руку.
 /// </summary>
 public sealed class ReplaceWithHandCardEffect : Effect
 {
-  public override string Description => "Заменить бездомного или гражданина в любой теории на карточку с руки";
+  public override string Description => "Заменить бездомного или гражданина в любой теории на карточку с руки и забрать его себе на руку";
 
   public override bool RequiresHandCard => true;
 

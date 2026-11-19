@@ -1,4 +1,4 @@
-using ConspiracyLeague.Core.Cards;
+﻿using ConspiracyLeague.Core.Cards;
 using ConspiracyLeague.Core.Cards.Theories;
 using ConspiracyLeague.Core.Effects;
 using ConspiracyLeague.Core.Field;
@@ -62,11 +62,11 @@ public sealed class Bot
     moves.AddRange(TheoryCardMoves(session, evaluator));
     moves.AddRange(PlaceMoves(session, evaluator));
     moves.AddRange(HiddenPlaceMoves(session, evaluator));
-    moves.AddRange(BuyMoves(session, evaluator));
+    moves.AddRange(LimitDuplicateBuys(BuyMoves(session, evaluator), moves.OfType<PlaceMove>().ToList()));
 
     var best = moves
       .Where(move => excluded is null || !excluded.Contains(move.Key))
-      .Where(move => move.Value >= (move is UseCardMove ? Profile.MinUseValue : Profile.MinValue))
+      .Where(move => move.Value >= (move is UseCardMove ? evaluator.Profile.MinUseValue : evaluator.Profile.MinValue))
       .MaxBy(move => move.Value);
     return best ?? new PassMove();
   }
@@ -132,8 +132,7 @@ public sealed class Bot
         session.PlaceHiddenFromHand(hidden.Card, hidden.Column);
         break;
       case UseCardMove use:
-        session.CheckSuccess(use.Cell);
-        session.UseCard(use.Option, use.Context);
+        session.PlayCard(use.Cell, use.Option, use.Context);
         break;
       case UseTheoryCardMove theory:
         session.UseTheoryCard(theory.Card, theory.Context);
@@ -163,6 +162,27 @@ public sealed class Bot
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// Конец игры (<see cref="GamePhase.FinalReveal"/>): следующий закрытый персонаж, которого боту стоит раскрыть, или
+  /// <c>null</c>. Раскрывает только персонажей с теорией штаба — за них платят бонус; персонаж другой теории
+  /// при раскрытии ушёл бы из штаба.
+  /// </summary>
+  public static Cell? ChooseFinalReveal(GameSession session) =>
+    session.FinalRevealTargets()
+      .Cast<Cell?>()
+      .FirstOrDefault(cell => session.Field.CardAt(cell!.Value) is HiddenCard { Face: PersonCard { Theory: { } theory } }
+        && session.Field.ColumnAt(cell.Value)?.Theory == theory);
+
+  /// <summary>
+  /// Конец игры: бот раскрывает выгодных закрытых персонажей (<see cref="ChooseFinalReveal"/>) и заканчивает выбор.
+  /// </summary>
+  public static void PlayFinalReveal(GameSession session)
+  {
+    while (ChooseFinalReveal(session) is { } cell)
+      session.RevealAtEnd(cell);
+    session.FinishFinalReveal();
   }
 
   /// <summary>
@@ -237,9 +257,14 @@ public sealed class Bot
           continue;
 
         var value = chance * plan.Value + evaluator.FailurePenalty(cell);
+        // Свой несыгранный тренер может сначала прокачать этого персонажа: сыграть его до тренировки — потерять бонус.
+        value -= evaluator.UntrainedLoss(cell, plan.Value);
+        // Сыгранный (перевёрнутый) бездомный уже не открыт: инспекция полицейского соперника за него ничего не получит.
+        if (card is HomelessCard)
+          value += evaluator.InspectionRisk();
         // Быстрое действие не тратит действие хода — его не жалко сыграть.
         if (option.IsQuick)
-          value += Profile.QuickBonus;
+          value += evaluator.Profile.QuickBonus;
         yield return new UseCardMove(cell, option, plan.Context, value);
       }
     }
@@ -281,7 +306,8 @@ public sealed class Bot
       {
         if (!check.IsAllowed || !Player.CanAfford(check.Cost))
           continue;
-        yield return new PlaceHiddenMove(card, column, evaluator.HiddenPlacementValue(card, column, check));
+        var value = evaluator.HiddenPlacementValue(card, column, check);
+        yield return new PlaceHiddenMove(card, column, value - evaluator.ReserveLoss(card, value, intoTheory: true));
       }
     }
   }
@@ -292,23 +318,70 @@ public sealed class Bot
     {
       if (!session.Market.CheckBuy(cell, Player).IsAllowed)
         continue;
-      if (BestPlacement(session, evaluator, card, extraCost: card.Cost) is not { } placement)
+      // Без карточки про запас на руке её можно купить, чтобы держать: потом войти ею в любую теорию.
+      var reserve = evaluator.ReserveCount == 0 ? evaluator.ReserveValue(card) : 0;
+      var placement = BestPlacement(session, evaluator, card, extraCost: card.Cost);
+      if (placement is null && reserve <= 0)
         continue;
 
       // Купленную карточку ещё нужно выложить — это второе действие, поэтому выгода меньше.
-      var value = placement.Value * Profile.BuyFactor - card.Cost * evaluator.MoneyWeight - evaluator.HandCrowding
-        + ThemedBuyBonus(card, placement.Column);
+      var placed = placement?.Value ?? 0;
+      var value = Math.Max(placed, reserve) * evaluator.Profile.BuyFactor - card.Cost * evaluator.MoneyWeight
+        - evaluator.HandCrowding
+        + ThemedBuyBonus(evaluator.Profile, card, placement?.Column)
+        + MarketUrgencyBonus(session, evaluator.Profile, card, placed, placement?.Column)
+        + evaluator.DenialValue(card);
       yield return new BuyMove(cell, card, value);
     }
+  }
+
+  /// <summary>
+  /// Покупка карточки, такая же есть на руке (тот же персонаж той же теории), не выгоднее, чем выложить карточку с руки:
+  /// иначе бот (у которого покупка весит больше выкладывания, <see cref="BotProfile.BuyFactor"/>) раз за разом покупает
+  /// бездомных и граждан, так и не выкладывая их.
+  /// </summary>
+  private static IEnumerable<BotMove> LimitDuplicateBuys(IEnumerable<BotMove> buys, IReadOnlyList<PlaceMove> places)
+  {
+    foreach (var move in buys)
+    {
+      if (move is BuyMove buy && places
+            .Where(place => place.Card.Name == buy.Card.Name && place.Card.Theory == buy.Card.Theory)
+            .Select(place => (double?)place.Value).Max() is { } placeValue && buy.Value >= placeValue)
+        yield return buy with { Value = placeValue - DuplicateBuyMargin };
+      else
+        yield return move;
+    }
+  }
+
+  /// <summary>
+  /// На столько покупка такой же карточки, как на руке, выгодна меньше, чем выкладывание карточки с руки.
+  /// </summary>
+  private const double DuplicateBuyMargin = 0.01;
+
+  /// <summary>
+  /// Прибавка за срочность покупки (<see cref="BotProfile.MarketUrgency"/>): чем больше соперников, которые ещё ходят и
+  /// могут купить эту карточку, по сравнению с числом карточек на рынке, тем вероятнее, что её заберут раньше.
+  /// </summary>
+  private double MarketUrgencyBonus(GameSession session, BotProfile profile, Card card, double placementValue, TheoryColumn? target)
+  {
+    // В развитии теорий — любая карточка; в гонке — только карточка теории, которую бот положит лидером в её штаб:
+    // таких мало, а в остальных случаях спешка с покупками не помогла.
+    var themed = session.Mode == GameMode.Race && card.Theory is { } theory && target?.Theory == theory;
+    if (profile.MarketUrgency <= 0 || placementValue <= 0 || card is not PersonCard person
+      || (session.Mode != GameMode.TheoryDevelopment && !themed))
+      return 0;
+    var buyers = session.Players.Count(rival => rival != Player && !session.Turns.HasPassed(rival) && rival.CanAfford(person.Cost));
+    var scarcity = Math.Min(1.0, (double)buyers / Math.Max(1, session.Market.OpenCards.Count));
+    return profile.MarketUrgency * scarcity * placementValue * profile.BuyFactor;
   }
 
   /// <summary>
   /// Прибавка к покупке карточки с теорией, которую бот подложит в штаб этой же теории: чем больше там адептов,
   /// тем выгоднее (<see cref="BotProfile.ThemedBuyBonus"/> за адепта, не больше <see cref="BotProfile.ThemedBuyAdeptsCap"/> адептов).
   /// </summary>
-  private double ThemedBuyBonus(Card card, TheoryColumn? target) =>
+  private static double ThemedBuyBonus(BotProfile profile, Card card, TheoryColumn? target) =>
     card.Theory is { } theory && target is { IsClosed: false } column && column.Theory == theory
-      ? Profile.ThemedBuyBonus * Math.Min(column.Adepts, Profile.ThemedBuyAdeptsCap)
+      ? profile.ThemedBuyBonus * Math.Min(column.Adepts, profile.ThemedBuyAdeptsCap)
       : 0;
 
   /// <summary>
@@ -326,10 +399,13 @@ public sealed class Bot
       if (!Player.CanAfford(check.Cost + extraCost))
         continue;
 
-      var value = session.Field.CommonZone.Contains(cell)
+      var intoTheory = session.Field.CommonZone.Contains(cell);
+      var value = intoTheory
         ? evaluator.TheoryPlacementValue(person, cell, check)
         : evaluator.PersonalPlacementValue(person, cell);
       value -= check.Cost * evaluator.MoneyWeight;
+      // Последнюю карточку про запас (с руки) бот выкладывает, только если это выгоднее, чем держать её.
+      value -= evaluator.ReserveLoss(person, value, intoTheory);
       if (best is null || value > best.Value.Value)
         best = (cell, value, check.Column);
     }

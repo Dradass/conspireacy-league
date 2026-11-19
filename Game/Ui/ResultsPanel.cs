@@ -163,7 +163,7 @@ public partial class ResultsPanel : Control
     var score = Session.ScoreOf(player);
     var details = new VBoxContainer();
     details.AddThemeConstantOverride("separation", 2);
-    details.AddChild(CreateSourceLabel($"Влияние лидеров × {VictoryPoints.LeaderPointsPerInfluence}: +{score.LeaderPoints} ПО"));
+    details.AddChild(CreateSourceLabel($"Влияние лидеров: +{score.LeaderPoints} ПО"));
     details.AddChild(CreateSourceLabel($"Адепты: +{score.AdeptPoints} ПО"));
     details.AddChild(CreateSourceLabel($"Теорий ({score.TheoryCount}): +{score.TheoryPoints} ПО"));
     details.AddChild(CreateSourceLabel($"Деньги {player.Money}$ (по 1 ПО за {VictoryPoints.MoneyPerPoint}$): +{score.MoneyPoints} ПО"));

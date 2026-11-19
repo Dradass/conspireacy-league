@@ -72,9 +72,19 @@ public partial class Board : Node2D
   private readonly Dictionary<Vector2I, PlacementCheck> _available = new();
 
   /// <summary>
+  /// Места присоединения к теориям (<see cref="SetJoinSlots"/>): их рисует <see cref="PlacementOverlay"/>, а не обычная подсветка.
+  /// </summary>
+  private readonly HashSet<Vector2I> _joinCells = [];
+
+  /// <summary>
   /// Зелёные стрелки над местами, куда можно положить дочернюю теорию семейства (во время перетаскивания).
   /// </summary>
   private readonly NeighbourArrows _arrows = new() { Name = "NeighbourArrows" };
+
+  /// <summary>
+  /// Подсветка мест поверх карточек: занятые доступные места и места присоединения к теориям с ценой.
+  /// </summary>
+  private readonly PlacementOverlay _placementOverlay = new() { Name = "PlacementOverlay" };
 
   private readonly Dictionary<Vector2I, CardView> _views = new();
 
@@ -124,6 +134,7 @@ public partial class Board : Node2D
     if (Radial)
       TurnPlayersTo(Session.CurrentPlayer);
     _arrows.Board = this;
+    _placementOverlay.Board = this;
     _highlight = new ColorRect
     {
       Name = "Highlight",
@@ -144,7 +155,6 @@ public partial class Board : Node2D
     _highlightCost.AddThemeColorOverride("font_outline_color", Colors.Black);
     _highlightCost.AddThemeConstantOverride("outline_size", 6);
     _highlight.AddChild(_highlightCost);
-    AddChild(_highlight);
 
     // Подсветка теорий лежит на поле, под карточками: карточки её перекрывают.
     AddChild(new TheoryHighlights { Name = "TheoryHighlights", Session = Session, Board = this });
@@ -163,8 +173,11 @@ public partial class Board : Node2D
     _effectsLayer = new Node2D { Name = "Effects" };
     AddChild(_effectsLayer);
     // Подсказки рынка рисуются поверх карточек: добавлены последними среди слоёв карточек.
-    _effectsLayer.AddChild(new MarketTheoryHints { Name = "MarketTheoryHints", Session = Session, Board = this });
+    _effectsLayer.AddChild(new CardTheoryHints { Name = "CardTheoryHints", Session = Session, Board = this });
+    // Подсветка мест и стрелки — поверх карточек: место для дочерней теории может быть занято другой теорией.
+    _effectsLayer.AddChild(_placementOverlay);
     _effectsLayer.AddChild(_arrows);
+    _effectsLayer.AddChild(_highlight);
 
     Field.AdeptsAdded += OnAdeptsAdded;
     Field.CardAdeptsAdded += OnCardAdeptsAdded;
@@ -201,6 +214,10 @@ public partial class Board : Node2D
     Market.CardMoved += OnMarketCardMoved;
     Session.Turns.TurnChanged += OnTurnChanged;
     Session.Turns.FirstPlayerChanged += OnFirstPlayerChanged;
+    Session.Restored += OnRestored;
+    // Сетевая игра: партия уже идёт — стол сразу показывает её целиком.
+    if (LocalPlayer is not null)
+      OnRestored();
   }
 
   public override void _ExitTree()
@@ -240,6 +257,7 @@ public partial class Board : Node2D
     Market.CardMoved -= OnMarketCardMoved;
     Session.Turns.TurnChanged -= OnTurnChanged;
     Session.Turns.FirstPlayerChanged -= OnFirstPlayerChanged;
+    Session.Restored -= OnRestored;
   }
 
   public override void _Process(double delta)
@@ -251,7 +269,7 @@ public partial class Board : Node2D
     // Игрок, который сейчас ходит, видит закрытую карточку, пока держит над ней мышь, если это его карточка
     // или он в неё уже смотрел. Только что подсмотренная карточка какое-то время видна и без мыши.
     var hovered = CellAt(GetGlobalMousePosition()) is { } cell ? ViewAt(cell) : null;
-    var player = Session.CurrentPlayer;
+    var player = Viewer;
     var known = hovered is { Card: HiddenCard hidden } && (hovered.CardOwner == player || hidden.IsKnownBy(player));
     // Закрытые карточки, в которые игрок смотрел (подсмотрел или раскрыл), он видит всю игру — приглушённо.
     var peeked = new HashSet<CardView>(_views.Values.Where(view => view.Card is HiddenCard { IsRevealed: false } seen && seen.IsKnownBy(player)));
@@ -314,7 +332,7 @@ public partial class Board : Node2D
     DrawTheoryTotals();
     DrawMarketDeck();
 
-    foreach (var (cell, check) in _available)
+    foreach (var (cell, check) in _available.Where(pair => !_joinCells.Contains(pair.Key)))
     {
       var color = check.Cost > 0 ? PaidColor : AllowedColor;
       DrawInSlot(cell, () =>
@@ -333,6 +351,23 @@ public partial class Board : Node2D
     _available.Clear();
     foreach (var (cell, check) in cells)
       _available[new Vector2I(cell.Column, cell.Row)] = check;
+    _placementOverlay.ShowCovered(_available.Keys.Where(cell => _views.ContainsKey(cell) && !_joinCells.Contains(cell)).ToList());
+    QueueRedraw();
+  }
+
+  /// <summary>
+  /// Показать места сверху стопок теорий, куда можно присоединить карточку без теории, с ценой: зелёным,
+  /// а если денег сейчас не хватает (<see cref="PlacementCheck.LacksMoney"/>) — красным.
+  /// </summary>
+  public void SetJoinSlots(IEnumerable<(Cell Cell, PlacementCheck Check)> slots)
+  {
+    var list = slots
+      .Select(slot => (new Vector2I(slot.Cell.Column, slot.Cell.Row),
+        slot.Check.IsAllowed ? slot.Check.Cost : slot.Check.RequiredMoney, slot.Check.IsAllowed))
+      .ToList();
+    _joinCells.Clear();
+    _joinCells.UnionWith(list.Select(slot => slot.Item1));
+    _placementOverlay.SetJoinSlots(list);
     QueueRedraw();
   }
 
@@ -358,6 +393,9 @@ public partial class Board : Node2D
   public void HideAvailable()
   {
     _available.Clear();
+    _placementOverlay.ShowCovered([]);
+    _joinCells.Clear();
+    _placementOverlay.SetJoinSlots([]);
     QueueRedraw();
   }
 
@@ -365,6 +403,12 @@ public partial class Board : Node2D
   /// Подсвечена ли ячейка как доступная.
   /// </summary>
   public bool IsAvailable(Vector2I cell) => _available.ContainsKey(cell);
+
+  /// <summary>
+  /// Лежит ли точка стола внутри общей зоны штабов теорий (в любом её месте, а не только над ячейкой).
+  /// </summary>
+  /// <param name="point">Точка в мировых координатах.</param>
+  public bool IsInCommonZone(Vector2 point) => Geometry2D.IsPointInPolygon(ToLocal(point), ZoneOutline(Field.CommonZone));
 
   /// <summary>
   /// Ячейка под точкой стола.
@@ -562,7 +606,8 @@ public partial class Board : Node2D
     _highlight.Position = CardCenter(target) - CellSize / 2;
     _highlight.Rotation = CellAngle(target);
     _highlight.Color = check is not { IsAllowed: true } ? DeniedColor : cost > 0 ? PaidColor : AllowedColor;
-    _highlightCost.Text = cost > 0 ? $"−{cost}$" : string.Empty;
+    // На местах присоединения к теориям цену уже показывает PlacementOverlay, без второй надписи.
+    _highlightCost.Text = cost > 0 && !_joinCells.Contains(target) ? $"−{cost}$" : string.Empty;
   }
 
   /// <summary>
@@ -923,30 +968,64 @@ public partial class Board : Node2D
   /// <summary>
   /// В теорию поставлен мипл-лидер: он падает под карточку теории, остальные миплы раздвигаются.
   /// </summary>
+  private static readonly Color CommunistRed = new("ff1a1a");
+  private static readonly Color GoldColor = new("e6b422");
+  private static readonly Color ScientistWhite = new("f2f2f2");
+  private static readonly Color CiaSuitColor = new("2c3038");
+  private static readonly Color BloodRed = new("8a0a0a");
+  private static readonly Color PresidentSuitBlue = new("1f4fb0");
+  private static readonly Color RobeColor = new("1e1b24");
+
   /// <summary>
-  /// Облик фигурок теории: инопланетяне — в теории «Инопланетяне среди нас» и её подтеориях,
-  /// люди в мантиях — в «Тайном правительстве» и её подтеориях.
+  /// Облик и цвет фигурок теории; у подтеорий — как у родительской. Остальные теории — обычные серые миплы.
   /// </summary>
-  private static MeepleView.MeepleLook LookOf(TheoryColumn column)
+  private static (MeepleView.MeepleLook Look, Color Color) StyleOf(TheoryColumn column)
   {
     var root = column.Theory.Parent ?? column.Theory;
     if (root == TheoryCatalog.AliensAmongUs)
-      return MeepleView.MeepleLook.Alien;
-    return root == TheoryCatalog.SecretGovernment ? MeepleView.MeepleLook.Robed : MeepleView.MeepleLook.Wooden;
+      return (MeepleView.MeepleLook.Alien, MeepleView.Gray);
+    if (root == TheoryCatalog.SecretGovernment)
+      return (MeepleView.MeepleLook.Robed, RobeColor);
+    if (root == TheoryCatalog.LeninMushroom)
+      return (MeepleView.MeepleLook.Mushroom, MeepleView.Gray);
+    if (root == TheoryCatalog.CommunistConspiracy)
+      return (MeepleView.MeepleLook.Wooden, CommunistRed);
+    if (root == TheoryCatalog.GoldenBillion)
+      return (MeepleView.MeepleLook.Wooden, GoldColor);
+    if (root == TheoryCatalog.ScienceConspiracy)
+      return (MeepleView.MeepleLook.LabCoat, ScientistWhite);
+    if (root == TheoryCatalog.CiaKillsPeople)
+      return (MeepleView.MeepleLook.Suit, CiaSuitColor);
+    if (root == TheoryCatalog.SatanistsKidnapChildren)
+      return (MeepleView.MeepleLook.Horned, BloodRed);
+    if (root == TheoryCatalog.TinFoilHat)
+      return (MeepleView.MeepleLook.FoilHat, MeepleView.Gray);
+    if (root == TheoryCatalog.PresidentDoubles)
+      return (MeepleView.MeepleLook.HalfSuit, PresidentSuitBlue);
+    return (MeepleView.MeepleLook.Wooden, MeepleView.Gray);
   }
+
+  /// <summary>
+  /// Облик мипла-лидера в теории: он всегда цвета владельца, поэтому от облика теории остаются только шапки,
+  /// рожки и костюм (половинный костюм — целым), а инопланетянин становится обычным миплом.
+  /// </summary>
+  private static MeepleView.MeepleLook LeaderLookOf(TheoryColumn column) => StyleOf(column).Look switch
+  {
+    MeepleView.MeepleLook.Alien => MeepleView.MeepleLook.Wooden,
+    MeepleView.MeepleLook.HalfSuit => MeepleView.MeepleLook.Suit,
+    var look => look,
+  };
 
   private void OnLeaderMeepleAdded(TheoryColumn column, Player player)
   {
     if (!_leaderMeeples.TryGetValue(column, out var meeples))
       _leaderMeeples[column] = meeples = [];
 
-    // Миплы-лидеры всегда цвета владельца: инопланетянин зелёный, поэтому для них остаётся деревянный облик.
-    var look = LookOf(column);
     var meeple = new MeepleView
     {
       Name = "LeaderMeeple",
       Color = PlayerPalette.MainOf(player.Color),
-      Look = look == MeepleView.MeepleLook.Alien ? MeepleView.MeepleLook.Wooden : look,
+      Look = LeaderLookOf(column),
       Scale = Vector2.One * LeaderMeepleScale,
       Height = LeaderMeepleDropHeight,
     };
@@ -1304,7 +1383,9 @@ public partial class Board : Node2D
         Name = $"Adepts{column.Theory.Name}",
         Position = CellCenter(theoryCell),
         Rotation = CellAngle(theoryCell),
-        Look = LookOf(column),
+        Look = StyleOf(column).Look,
+        Color = StyleOf(column).Color,
+        GroundsSource = () => AdeptGroundsOf(column.Theory.Name),
       };
       _adeptsLayer.AddChild(view);
       _adepts[column] = view;
@@ -1313,6 +1394,31 @@ public partial class Board : Node2D
     view.Add(count);
     // Перерисовываем итоги теорий: под теорией подписано количество адептов.
     QueueRedraw();
+  }
+
+  /// <summary>
+  /// Где бродят адепты теории — в координатах их узла (центр карточки теории, повёрнутый как она): карточки штаба
+  /// и все карточки рядом с ним, свои и чужие, на которые адепты заходят лишь неглубоко.
+  /// </summary>
+  private AdeptsView.Grounds AdeptGroundsOf(string theory)
+  {
+    var size = CardPainter.CardSize;
+    if (Field.TheoryColumns.FirstOrDefault(column => column.Theory.Name == theory) is not { } column)
+      return new AdeptsView.Grounds(new Rect2(-size / 2, size), []);
+
+    var theoryCell = column.TheoryCell.ToVector2I();
+    var origin = CellCenter(theoryCell);
+    var angle = CellAngle(theoryCell);
+    Rect2 Local(Vector2 center) => new((center - origin).Rotated(-angle) - size / 2, size);
+
+    var home = column.Cells.Select(cell => Local(CardCenter(cell.ToVector2I()))).Aggregate((a, b) => a.Merge(b));
+    var near = home.Grow(CellSize.X);
+    var cards = _views.Keys.Select(cell => Local(CardCenter(cell)))
+      .Concat(_marketViews.Keys.Select(cell => Local(CellCenter(cell))))
+      .Concat(_theoryViews.Keys.Select(owned => Local(CellCenter(owned.Cell.ToVector2I()))))
+      .Where(rect => near.Intersects(rect))
+      .ToList();
+    return new AdeptsView.Grounds(home, cards);
   }
 
   /// <summary>

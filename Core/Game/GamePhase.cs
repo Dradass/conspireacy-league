@@ -41,6 +41,12 @@ public enum GamePhase
   MarketRefresh,
 
   /// <summary>
+  /// Конец игры, если не все закрытые персонажи раскрываются сами (<see cref="Field.PlayingField.RevealHiddenAtEnd"/>):
+  /// владельцы закрытых персонажей по очереди раскрывают тех, кого хотят (<see cref="GameSession.FinalRevealPlayer"/>).
+  /// </summary>
+  FinalReveal,
+
+  /// <summary>
   /// Итоговый подсчёт: владельцы действующих теорий получают деньги за лидеров (<see cref="Field.LeadersBonus"/>).
   /// </summary>
   FinalLeadersBonus,

@@ -59,12 +59,8 @@ public partial class StartMenu : Control
     _mode.Selected = _mode.GetItemIndex((int)GameMode.TheoryDevelopment);
     column.AddChild(_mode);
 
-    column.AddChild(CreateButton("Network", "Сетевая игра", ShowNetworkNotice));
-    var localRow = new HBoxContainer();
-    localRow.AddThemeConstantOverride("separation", 12);
-    column.AddChild(localRow);
-    localRow.AddChild(CreateButton("Local", "Локальная игра", () => StartLocalGame()));
-    localRow.AddChild(CreateButton("Dev", "Режим разработчика", () => StartLocalGame(devMode: true)));
+    column.AddChild(CreateButton("Network", "Сетевая игра", StartNetworkGame));
+    column.AddChild(CreateButton("Local", "Локальная игра", StartLocalGame));
     column.AddChild(CreateButton("Options", "Опции", () => OptionsDialog.Open(this)));
     column.AddChild(CreateButton("Quit", "Выйти", () => GetTree().Quit()));
 
@@ -72,16 +68,6 @@ public partial class StartMenu : Control
     var light = new CanvasLayer { Name = "FlashlightLayer", Layer = FlashlightLayer };
     light.AddChild(new Flashlight { Name = "Flashlight" });
     AddChild(light);
-  }
-
-  /// <summary>
-  /// Сетевая игра пока не реализована: сообщаем об этом.
-  /// </summary>
-  private void ShowNetworkNotice()
-  {
-    var notice = new AcceptDialog { DialogText = "Сетевая игра пока не реализована." };
-    AddChild(notice);
-    notice.PopupCentered();
   }
 
   private static Button CreateButton(string name, string text, Action pressed)
@@ -103,22 +89,38 @@ public partial class StartMenu : Control
   /// Локальная игра: в окне выбирают количество игроков и вводят их имена, затем начинается партия.
   /// «Назад» возвращает в меню.
   /// </summary>
-  /// <param name="devMode">Запустить с режимом разработчика.</param>
-  private async void StartLocalGame(bool devMode = false)
+  private async void StartLocalGame()
   {
     var mode = SelectedMode;
-    var players = await PlayersDialog.Ask(this, devMode ? "Режим разработчика" : "Локальная игра");
-    if (players is null)
+    var setup = await PlayersDialog.Ask(this, "Локальная игра");
+    if (setup is null)
       return;
 
-    StartGame(players, devMode, mode);
+    StartGame(setup, mode);
+  }
+
+  /// <summary>
+  /// Сетевая игра: создать стол или подключиться (<see cref="NetworkDialog"/>), затем лобби (<see cref="NetworkLobby"/>).
+  /// Режим партии выбирает создатель стола в лобби.
+  /// </summary>
+  private async void StartNetworkGame()
+  {
+    if (await NetworkDialog.Ask(this) is not { } connection)
+      return;
+
+    var tree = GetTree();
+    var lobby = new NetworkLobby { Name = "NetworkLobby", Connection = connection };
+    tree.Root.AddChild(lobby);
+    tree.CurrentScene = lobby;
+    QueueFree();
   }
 
   /// <summary>
   /// Заменить меню партией с выбранными игроками, режимом и опциями (<see cref="GameOptions"/>).
   /// </summary>
-  private void StartGame(IReadOnlyList<PlayerSetup> players, bool devMode, GameMode mode)
+  private void StartGame(LocalGameSetup setup, GameMode mode)
   {
+    var players = setup.Players;
     var tree = GetTree();
     var game = new Main
     {
@@ -127,9 +129,9 @@ public partial class StartMenu : Control
       PlayerNames = players.Select(player => player.Name).ToList(),
       BotSeats = players.Select(player => player.IsBot).ToList(),
       BotLevels = players.Select(player => player.Level).ToList(),
-      DevMode = devMode,
       Mode = mode,
       FailureConsequences = GameOptions.CriticalFailure,
+      RevealHiddenAtEnd = setup.RevealHiddenAtEnd,
       RadialField = GameOptions.RadialField,
       BotSlowdown = GameOptions.BotSlowdown,
       FollowBots = GameOptions.FollowBots,

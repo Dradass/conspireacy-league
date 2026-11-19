@@ -9,3 +9,5 @@ obj/
 .vs/
 .idea/
 .vscode/
+# Сборки игры
+/build/

@@ -73,7 +73,7 @@ public sealed class GenericProfessionalCard : ProfessionalCard
     Profession.Driver => 8,
     Profession.Policeman => 9,
     Profession.Journalist => 9,
-    Profession.Scientist => 10,
+    Profession.Scientist => 11,
     Profession.Coach => 9,
     Profession.Actor => 12,
     Profession.SpecialAgent => 11,

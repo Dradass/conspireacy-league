@@ -21,6 +21,16 @@ public sealed record PlacementCheck
   public string? Reason { get; private init; }
 
   /// <summary>
+  /// Сколько $ нужно, если положить нельзя только потому, что не хватает денег; иначе 0.
+  /// </summary>
+  public int RequiredMoney { get; private init; }
+
+  /// <summary>
+  /// Положить нельзя только из-за нехватки денег (<see cref="RequiredMoney"/>).
+  /// </summary>
+  public bool LacksMoney => !IsAllowed && RequiredMoney > 0;
+
+  /// <summary>
   /// Стопка теории, к которой присоединится карточка. Отсутствует, если карточка начинает новую теорию
   /// или кладётся в рабочую зону игрока.
   /// </summary>
@@ -40,4 +50,9 @@ public sealed record PlacementCheck
     new() { IsAllowed = true, Cost = cost, Column = column, CreatesHeadquarters = createsHeadquarters };
 
   internal static PlacementCheck Deny(string reason) => new() { Reason = reason };
+
+  /// <summary>
+  /// Нельзя только потому, что не хватает денег: нужно <paramref name="cost"/>$.
+  /// </summary>
+  internal static PlacementCheck DenyMoney(int cost, string reason) => new() { Reason = reason, RequiredMoney = cost };
 }

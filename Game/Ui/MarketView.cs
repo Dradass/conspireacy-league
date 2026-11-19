@@ -37,6 +37,11 @@ public partial class MarketView : VBoxContainer
   /// </summary>
   public MarketHub Hub { get; init; } = null!;
 
+  /// <summary>
+  /// Для кого подсказки теорий над карточками (<see cref="TheoryMarkers"/>).
+  /// </summary>
+  public Func<Player> Viewer { get; init; } = null!;
+
   private Market Market => Session.Market;
 
   /// <summary>
@@ -95,6 +100,8 @@ public partial class MarketView : VBoxContainer
     var hash = new HashCode();
     hash.Add(Market.DeckCount);
     hash.Add(Hub.DraggedCell);
+    foreach (var card in Market.OpenCards.Values)
+      MarkersHash(ref hash, TheoryMarkers.For(Session, Viewer(), card));
     foreach (var (cell, card) in Market.OpenCards.OrderBy(pair => pair.Key.Row).ThenBy(pair => pair.Key.Column))
     {
       hash.Add(cell);
@@ -102,6 +109,12 @@ public partial class MarketView : VBoxContainer
     }
 
     return hash.ToHashCode();
+  }
+
+  private static void MarkersHash(ref HashCode hash, IReadOnlyList<TheoryMarkers.Marker> markers)
+  {
+    foreach (var marker in markers)
+      hash.Add(marker);
   }
 
   private Rect2 SlotRect(int column, int row) => new(
@@ -124,7 +137,10 @@ public partial class MarketView : VBoxContainer
         var rect = SlotRect(column, row);
         var cell = new Cell(column, row);
         if (Market.OpenCards.TryGetValue(cell, out var card) && Hub.DraggedCell != cell.ToVector2I())
+        {
           CardPainter.DrawFace(_grid, rect, card);
+          TheoryMarkers.DrawOnTopEdge(_grid, rect, TheoryMarkers.For(Session, Viewer(), card));
+        }
         // Средняя строка — только для дополнительных карточек: пустые места в ней не рисуем, чтобы не путать.
         else if (row != Market.DeckCell.Row)
           _grid.DrawRect(rect, EmptyCellColor, filled: false);

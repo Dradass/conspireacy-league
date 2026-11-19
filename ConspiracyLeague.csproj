@@ -8,11 +8,11 @@
     <RootNamespace>ConspiracyLeague</RootNamespace>
   </PropertyGroup>
 
-  <!-- Core — отдельный проект с игровой логикой, его исходники сюда не включаем. -->
+  <!-- Core — отдельный проект с игровой логикой, Tests — его тесты; их исходники сюда не включаем. -->
   <ItemGroup>
-    <Compile Remove="Core/**" />
-    <None Remove="Core/**" />
-    <EmbeddedResource Remove="Core/**" />
+    <Compile Remove="Core/**;Tests/**;Server/**" />
+    <None Remove="Core/**;Tests/**;Server/**" />
+    <EmbeddedResource Remove="Core/**;Tests/**;Server/**" />
   </ItemGroup>
 
   <ItemGroup>

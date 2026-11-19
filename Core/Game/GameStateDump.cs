@@ -31,7 +31,7 @@ public static class GameStateDump
     var players = session.Players.Select(player => new DumpPlayer(
       player.Name,
       player.Money,
-      player.Hand.Cards.Select(card => card.Name).ToList())).ToList();
+      player.Hand.Cards.Select(card => card.Theory is { } theory ? $"{card.Name} [{theory.Name}]" : card.Name).ToList())).ToList();
 
     var zones = field.PlayerZones.SelectMany(pair => pair.Value.Cells
         .Where(cell => field.CardAt(cell) is not null)
@@ -67,6 +67,7 @@ public static class GameStateDump
     var market = session.Market.OpenCards.Select(pair => new DumpMarketCard(
       CellText(pair.Key),
       pair.Value.Name,
+      pair.Value.Theory?.Name,
       pair.Value.Cost,
       pair.Value.Influence)).ToList();
 
@@ -100,6 +101,7 @@ public static class GameStateDump
       CellText(cell),
       zoneOwner,
       card.Name,
+      card.Theory?.Name,
       card.GetType().Name,
       card is PersonCard person ? person.Influence : 0,
       card is PersonCard costed ? costed.Cost : 0,
@@ -145,7 +147,7 @@ public static class GameStateDump
   public sealed record DumpBoardView(string Cell, string Name, string Position, string? FieldCard);
 
   /// <summary>
-  /// Игрок: деньги и карточки в руке.
+  /// Игрок: деньги и карточки в руке (у карточки с теорией — теория в скобках).
   /// </summary>
   public sealed record DumpPlayer(string Name, int Money, IReadOnlyList<string> Hand);
 
@@ -156,6 +158,7 @@ public static class GameStateDump
     string Cell,
     string Zone,
     string Name,
+    string? Theory,
     string Kind,
     int Influence,
     int Cost,
@@ -194,5 +197,5 @@ public static class GameStateDump
   /// <summary>
   /// Открытая карточка рынка.
   /// </summary>
-  public sealed record DumpMarketCard(string Cell, string Name, int Cost, int Influence);
+  public sealed record DumpMarketCard(string Cell, string Name, string? Theory, int Cost, int Influence);
 }

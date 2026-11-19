@@ -10,6 +10,13 @@ namespace ConspiracyLeague.Game.Ui;
 public sealed record PlayerSetup(string Name, bool IsBot, BotLevel Level = BotLevel.Easy);
 
 /// <summary>
+/// Что выбрали в окне перед партией: игроки по порядку и правила партии.
+/// </summary>
+/// <param name="Players">Игроки по порядку.</param>
+/// <param name="RevealHiddenAtEnd">Раскрывать ли всех закрытых персонажей в конце игры; иначе владельцы выбирают сами.</param>
+public sealed record LocalGameSetup(IReadOnlyList<PlayerSetup> Players, bool RevealHiddenAtEnd);
+
+/// <summary>
 /// Окно перед началом партии: количество игроков и строка с именем, галочкой «Бот» и уровнем бота для каждого. «Начать» запускает партию,
 /// «Назад» (или Esc) возвращает в стартовое меню.
 /// </summary>
@@ -28,20 +35,21 @@ public partial class PlayersDialog : MenuDialog
   private readonly List<CheckBox> _bots = [];
   private readonly List<OptionButton> _levels = [];
   private string _title = string.Empty;
-  private TaskCompletionSource<IReadOnlyList<PlayerSetup>?> _result = null!;
+  private TaskCompletionSource<LocalGameSetup?> _result = null!;
   private Label _countLabel = null!;
   private HSlider _count = null!;
   private VBoxContainer _rows = null!;
+  private OptionButton _revealHidden = null!;
 
   /// <summary>
   /// Показать окно поверх <paramref name="parent"/> и дождаться решения игроков.
   /// </summary>
   /// <param name="title">Заголовок окна: какую партию начинают.</param>
-  /// <returns>Игроки по порядку (имя и бот ли это) или <c>null</c>, если нажали «Назад».</returns>
-  public static Task<IReadOnlyList<PlayerSetup>?> Ask(Node parent, string title)
+  /// <returns>Игроки по порядку и правила партии или <c>null</c>, если нажали «Назад».</returns>
+  public static Task<LocalGameSetup?> Ask(Node parent, string title)
   {
     var dialog = new PlayersDialog { Name = "PlayersDialog", _title = title };
-    dialog._result = new TaskCompletionSource<IReadOnlyList<PlayerSetup>?>();
+    dialog._result = new TaskCompletionSource<LocalGameSetup?>();
     parent.AddChild(dialog);
     return dialog._result.Task;
   }
@@ -70,6 +78,20 @@ public partial class PlayersDialog : MenuDialog
     _rows = new VBoxContainer { Name = "Names" };
     _rows.AddThemeConstantOverride("separation", 6);
     column.AddChild(_rows);
+
+    // По умолчанию закрытых персонажей перед итоговым подсчётом раскрывают их владельцы — кого захотят.
+    var reveal = new HBoxContainer { Name = "RevealHiddenRow" };
+    reveal.AddThemeConstantOverride("separation", 8);
+    var revealLabel = CreateLabel("Раскрывать всех закрытых персонажей в конце игры");
+    revealLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+    reveal.AddChild(revealLabel);
+    _revealHidden = new OptionButton { Name = "RevealHidden", FocusMode = FocusModeEnum.None };
+    _revealHidden.AddThemeFontSizeOverride("font_size", FieldFontSize);
+    _revealHidden.AddItem("Да", 1);
+    _revealHidden.AddItem("Нет", 0);
+    _revealHidden.Selected = _revealHidden.GetItemIndex(0);
+    reveal.AddChild(_revealHidden);
+    column.AddChild(reveal);
 
     var buttons = new HBoxContainer();
     buttons.AddThemeConstantOverride("separation", 12);
@@ -110,8 +132,8 @@ public partial class PlayersDialog : MenuDialog
       level.AddThemeFontSizeOverride("font_size", FieldFontSize);
       level.AddItem("Лёгкий", (int)BotLevel.Easy);
       level.AddItem("Средний", (int)BotLevel.Medium);
-      level.AddItem("Сложный", (int)BotLevel.Hard);
-      level.AddItem("Очень сложный", (int)BotLevel.VeryHard);
+      level.AddItem("Тяжёлый", (int)BotLevel.Hard);
+      level.AddItem("Ультра", (int)BotLevel.Ultra);
 
       var bot = new CheckBox { Name = $"Bot{number}", Text = "Бот", FocusMode = FocusModeEnum.None };
       bot.AddThemeFontSizeOverride("font_size", FieldFontSize);
@@ -169,7 +191,7 @@ public partial class PlayersDialog : MenuDialog
         _bots[index].ButtonPressed,
         (BotLevel)_levels[index].GetSelectedId()))
       .ToList();
-    _result.TrySetResult(players);
+    _result.TrySetResult(new LocalGameSetup(players, _revealHidden.GetSelectedId() == 1));
     QueueFree();
   }
 
