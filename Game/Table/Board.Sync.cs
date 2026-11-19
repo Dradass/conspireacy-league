@@ -219,7 +219,11 @@ public partial class Board
         MoveNode(view, CellCenter(cell), CellAngle(cell), SnapDuration);
       else if (column.Adepts > 0)
       {
-        view = new AdeptsView { Name = $"Adepts{name}", Position = CellCenter(cell), Rotation = CellAngle(cell), Look = StyleOf(column).Look, Color = StyleOf(column).Color };
+        view = new AdeptsView
+        {
+          Name = $"Adepts{name}", Position = CellCenter(cell), Rotation = CellAngle(cell), Look = StyleOf(column).Look, Color = StyleOf(column).Color,
+          GroundsSource = () => AdeptGroundsOf(name),
+        };
         _adeptsLayer.AddChild(view);
         _shownAdepts[name] = 0;
       }

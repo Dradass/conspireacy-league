@@ -661,10 +661,14 @@ public partial class CardUseController : Node
       return;
     }
 
-    // Подсвечиваем места, куда ляжет карточка, — платные выделены, как при выкладывании с руки.
-    _board.ShowAvailable(HiddenChecks(card, targeting.Active)
-      .Where(target => target.Check.IsAllowed)
-      .Select(target => (target.Column.Top.Above, target.Check)));
+    // Подсвечиваем места, куда ляжет карточка, с ценой, как при перетаскивании с руки: зелёным,
+    // а если денег сейчас не хватает — красным (выбрать такое место нельзя).
+    var slots = HiddenChecks(card, targeting.Active)
+      .Where(target => target.Check.IsAllowed || target.Check.LacksMoney)
+      .Select(target => (target.Column.Top.Above, target.Check))
+      .ToList();
+    _board.SetJoinSlots(slots);
+    _board.ShowAvailable(slots.Where(target => target.Check.IsAllowed));
     Hint?.Invoke("Выберите теорию: карточка ляжет сверху её стопки рубашкой вверх. "
       + "Можно выбрать в руке другую карточку. Esc или щелчок мимо карточек — отмена.");
   }

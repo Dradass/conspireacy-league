@@ -705,8 +705,9 @@ public sealed class GameSession
     var reopened = Field.ReopenSolventTheories();
     SolvencyOfRound = new SolvencyChanges(closed, reopened);
 
-    // Пассивные способности карточек теорий срабатывают в конце раунда, уже после закрытия штабов.
-    foreach (var owned in Field.TheoryCards.ToList())
+    // Пассивные способности карточек теорий срабатывают в конце раунда, уже после закрытия штабов;
+    // у теорий с закрытым штабом способности не действуют.
+    foreach (var owned in Field.TheoryCards.Where(Field.IsTheoryCardActive).ToList())
     {
       var earned = 0;
       void OnEarned(Player _, int amount) => earned += amount;

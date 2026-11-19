@@ -356,22 +356,20 @@ public partial class Board : Node2D
   }
 
   /// <summary>
-  /// Запомнить места сверху стопок теорий, куда можно присоединить карточку без теории, и их цену. Показываются
-  /// зелёным с суммой, пока включены (<see cref="SetJoinSlotsVisible"/>).
+  /// Показать места сверху стопок теорий, куда можно присоединить карточку без теории, с ценой: зелёным,
+  /// а если денег сейчас не хватает (<see cref="PlacementCheck.LacksMoney"/>) — красным.
   /// </summary>
-  public void SetJoinSlots(IEnumerable<(Cell Cell, int Cost)> slots)
+  public void SetJoinSlots(IEnumerable<(Cell Cell, PlacementCheck Check)> slots)
   {
-    var list = slots.Select(slot => (new Vector2I(slot.Cell.Column, slot.Cell.Row), slot.Cost)).ToList();
+    var list = slots
+      .Select(slot => (new Vector2I(slot.Cell.Column, slot.Cell.Row),
+        slot.Check.IsAllowed ? slot.Check.Cost : slot.Check.RequiredMoney, slot.Check.IsAllowed))
+      .ToList();
     _joinCells.Clear();
     _joinCells.UnionWith(list.Select(slot => slot.Item1));
     _placementOverlay.SetJoinSlots(list);
     QueueRedraw();
   }
-
-  /// <summary>
-  /// Показать или спрятать места присоединения к теориям (<see cref="SetJoinSlots"/>).
-  /// </summary>
-  public void SetJoinSlotsVisible(bool visible) => _placementOverlay.SetJoinSlotsVisible(visible);
 
   /// <summary>
   /// Подсветить ячейки, которые можно выбрать целью действия.
@@ -398,7 +396,6 @@ public partial class Board : Node2D
     _placementOverlay.ShowCovered([]);
     _joinCells.Clear();
     _placementOverlay.SetJoinSlots([]);
-    _placementOverlay.SetJoinSlotsVisible(false);
     QueueRedraw();
   }
 
@@ -609,7 +606,7 @@ public partial class Board : Node2D
     _highlight.Position = CardCenter(target) - CellSize / 2;
     _highlight.Rotation = CellAngle(target);
     _highlight.Color = check is not { IsAllowed: true } ? DeniedColor : cost > 0 ? PaidColor : AllowedColor;
-    // На местах присоединения к теориям цену уже показывает PlacementOverlay — зелёным, без второй надписи.
+    // На местах присоединения к теориям цену уже показывает PlacementOverlay, без второй надписи.
     _highlightCost.Text = cost > 0 && !_joinCells.Contains(target) ? $"−{cost}$" : string.Empty;
   }
 
@@ -1388,6 +1385,7 @@ public partial class Board : Node2D
         Rotation = CellAngle(theoryCell),
         Look = StyleOf(column).Look,
         Color = StyleOf(column).Color,
+        GroundsSource = () => AdeptGroundsOf(column.Theory.Name),
       };
       _adeptsLayer.AddChild(view);
       _adepts[column] = view;
@@ -1396,6 +1394,31 @@ public partial class Board : Node2D
     view.Add(count);
     // Перерисовываем итоги теорий: под теорией подписано количество адептов.
     QueueRedraw();
+  }
+
+  /// <summary>
+  /// Где бродят адепты теории — в координатах их узла (центр карточки теории, повёрнутый как она): карточки штаба
+  /// и все карточки рядом с ним, свои и чужие, на которые адепты заходят лишь неглубоко.
+  /// </summary>
+  private AdeptsView.Grounds AdeptGroundsOf(string theory)
+  {
+    var size = CardPainter.CardSize;
+    if (Field.TheoryColumns.FirstOrDefault(column => column.Theory.Name == theory) is not { } column)
+      return new AdeptsView.Grounds(new Rect2(-size / 2, size), []);
+
+    var theoryCell = column.TheoryCell.ToVector2I();
+    var origin = CellCenter(theoryCell);
+    var angle = CellAngle(theoryCell);
+    Rect2 Local(Vector2 center) => new((center - origin).Rotated(-angle) - size / 2, size);
+
+    var home = column.Cells.Select(cell => Local(CardCenter(cell.ToVector2I()))).Aggregate((a, b) => a.Merge(b));
+    var near = home.Grow(CellSize.X);
+    var cards = _views.Keys.Select(cell => Local(CardCenter(cell)))
+      .Concat(_marketViews.Keys.Select(cell => Local(CellCenter(cell))))
+      .Concat(_theoryViews.Keys.Select(owned => Local(CellCenter(owned.Cell.ToVector2I()))))
+      .Where(rect => near.Intersects(rect))
+      .ToList();
+    return new AdeptsView.Grounds(home, cards);
   }
 
   /// <summary>

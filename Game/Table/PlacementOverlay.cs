@@ -6,7 +6,7 @@ namespace ConspiracyLeague.Game.Table;
 /// <summary>
 /// Подсветка мест для перетаскиваемой карточки поверх карточек стола: доступные места, где уже лежит карточка
 /// (дочерняя теория встаёт на место другой теории и сдвигает её), и свободные места сверху стопок теорий, куда карточку
-/// без теории можно положить за плату, — зелёным, с суммой.
+/// без теории можно положить за плату, — зелёным, с суммой; если денег на такое место сейчас не хватает — красным.
 /// </summary>
 public partial class PlacementOverlay : Node2D
 {
@@ -19,10 +19,10 @@ public partial class PlacementOverlay : Node2D
 
   private static readonly Color PlaceColor = new(0.55f, 0.95f, 0.6f);
   private static readonly Color PriceColor = UiStyle.Glow;
+  private static readonly Color LackColor = new(1f, 0.35f, 0.3f);
 
   private IReadOnlyList<Vector2I> _covered = [];
-  private IReadOnlyList<(Vector2I Cell, int Cost)> _joinSlots = [];
-  private bool _joinVisible;
+  private IReadOnlyList<(Vector2I Cell, int Cost, bool Affordable)> _joinSlots = [];
 
   /// <summary>
   /// Стол: где лежат ячейки и как они повёрнуты.
@@ -39,23 +39,12 @@ public partial class PlacementOverlay : Node2D
   }
 
   /// <summary>
-  /// Места сверху стопок теорий, куда можно присоединить карточку без теории, и цена каждого.
-  /// Видны, только пока включены (<see cref="SetJoinSlotsVisible"/>).
+  /// Места сверху стопок теорий, куда можно присоединить карточку без теории, и цена каждого;
+  /// <c>Affordable</c> = <c>false</c> — денег сейчас не хватает (место красное).
   /// </summary>
-  public void SetJoinSlots(IReadOnlyList<(Vector2I Cell, int Cost)> slots)
+  public void SetJoinSlots(IReadOnlyList<(Vector2I Cell, int Cost, bool Affordable)> slots)
   {
     _joinSlots = slots;
-    QueueRedraw();
-  }
-
-  /// <summary>
-  /// Показать или спрятать места присоединения к теориям.
-  /// </summary>
-  public void SetJoinSlotsVisible(bool visible)
-  {
-    if (_joinVisible == visible)
-      return;
-    _joinVisible = visible;
     QueueRedraw();
   }
 
@@ -65,30 +54,28 @@ public partial class PlacementOverlay : Node2D
     foreach (var cell in _covered)
     {
       DrawSetTransformMatrix(Board.SlotTransform(cell));
-      DrawSlot(slot);
+      DrawSlot(slot, PlaceColor);
     }
 
-    if (_joinVisible)
+    // Цифры — шрифтом чисел интерфейса, зелёным свечением с тёмной обводкой, как остальной интерфейс;
+    // если денег не хватает — место и цена красные.
+    var font = UiStyle.NumberFont;
+    foreach (var (cell, cost, affordable) in _joinSlots)
     {
-      // Цифры — шрифтом чисел интерфейса, зелёным свечением с тёмной обводкой, как остальной интерфейс.
-      var font = UiStyle.NumberFont;
-      foreach (var (cell, cost) in _joinSlots)
-      {
-        DrawSetTransformMatrix(Board.SlotTransform(cell));
-        DrawSlot(slot);
-        var text = cost > 0 ? $"−{cost}$" : "0$";
-        var position = new Vector2(slot.Position.X, PriceFontSize / 3f);
-        DrawStringOutline(font, position, text, HorizontalAlignment.Center, slot.Size.X, PriceFontSize, PriceOutline, UiStyle.Dark);
-        DrawString(font, position, text, HorizontalAlignment.Center, slot.Size.X, PriceFontSize, PriceColor);
-      }
+      DrawSetTransformMatrix(Board.SlotTransform(cell));
+      DrawSlot(slot, affordable ? PlaceColor : LackColor);
+      var text = cost > 0 ? $"−{cost}$" : "0$";
+      var position = new Vector2(slot.Position.X, PriceFontSize / 3f);
+      DrawStringOutline(font, position, text, HorizontalAlignment.Center, slot.Size.X, PriceFontSize, PriceOutline, UiStyle.Dark);
+      DrawString(font, position, text, HorizontalAlignment.Center, slot.Size.X, PriceFontSize, affordable ? PriceColor : LackColor);
     }
 
     DrawSetTransformMatrix(Transform2D.Identity);
   }
 
-  private void DrawSlot(Rect2 slot)
+  private void DrawSlot(Rect2 slot, Color color)
   {
-    DrawRect(slot, PlaceColor with { A = FillAlpha });
-    DrawRect(slot.Grow(-BorderWidth / 2), PlaceColor with { A = BorderAlpha }, filled: false, width: BorderWidth);
+    DrawRect(slot, color with { A = FillAlpha });
+    DrawRect(slot.Grow(-BorderWidth / 2), color with { A = BorderAlpha }, filled: false, width: BorderWidth);
   }
 }

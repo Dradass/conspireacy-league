@@ -503,7 +503,24 @@ public sealed class PlayingField
   /// Владеет ли игрок карточкой теории с такой пассивной способностью.
   /// </summary>
   private bool HoldsPassive<T>(Player? player) where T : PassiveAbility =>
-    player is not null && _theoryCards.Any(owned => owned.Owner == player && owned.Card.Passive is T);
+    player is not null && ActiveTheoryCards.Any(owned => owned.Owner == player && owned.Card.Passive is T);
+
+  /// <summary>
+  /// Действует ли пассивная способность карточки теории: пока штаб её теории закрыт, способность не работает.
+  /// </summary>
+  public bool IsTheoryCardActive(OwnedTheoryCard owned) => !IsTheoryClosed(owned.Card.Theory);
+
+  /// <summary>
+  /// Карточки теорий, пассивные способности которых сейчас действуют (<see cref="IsTheoryCardActive"/>).
+  /// </summary>
+  private IEnumerable<OwnedTheoryCard> ActiveTheoryCards => _theoryCards.Where(IsTheoryCardActive);
+
+  /// <summary>
+  /// Пассивная способность действующей карточки теории <paramref name="theory"/>; <c>null</c>, если карточки нет
+  /// или штаб теории закрыт.
+  /// </summary>
+  private PassiveAbility? ActivePassiveOf(Theory theory) =>
+    TheoryCardOf(theory) is { } owned && IsTheoryCardActive(owned) ? owned.Card.Passive : null;
 
   /// <summary>
   /// Персонаж защищён «Рептилоидами»: его владелец держит эту карточку теории. Такого персонажа нельзя смотреть,
@@ -695,7 +712,7 @@ public sealed class PlayingField
 
   /// <summary>
   /// Заменить бездомного или гражданина в теории карточкой с руки. Новая карточка становится собственностью игрока,
-  /// заменённая уходит из игры.
+  /// заменённая уходит игроку в руку.
   /// </summary>
   /// <exception cref="InvalidOperationException">Заменить нельзя.</exception>
   public void Replace(Cell cell, PersonCard card, Player player)
@@ -704,8 +721,10 @@ public sealed class PlayingField
     if (!check.IsAllowed)
       throw new InvalidOperationException(check.Reason);
 
+    var replaced = (PersonCard)CardAt(cell)!;
     player.Hand.Remove(card);
     ReplaceInTheory(ColumnAt(cell)!, cell, card, player);
+    player.Hand.Add(replaced);
   }
 
   /// <summary>
@@ -803,7 +822,7 @@ public sealed class PlayingField
   /// </summary>
   public bool IsFoiled(Cell cell) =>
     CardAt(cell) is PersonCard
-    && _theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell);
+    && ActiveTheoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell);
 
   /// <summary>
   /// Освободить ячейку от шапочки из фольги, фишки и руля: карточка остаётся у владельца, но больше не лежит на персонаже.
@@ -883,7 +902,7 @@ public sealed class PlayingField
   {
     if (CardAt(cell) is not PersonCard || OwnerOfCell(cell) is null)
       return PlacementCheck.Deny("Здесь нет персонажа из личного штаба.");
-    if (_theoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell))
+    if (ActiveTheoryCards.Any(owned => owned.Card.Passive is TinFoilPassive && owned.AttachedTo == cell))
       return PlacementCheck.Deny("На этом персонаже уже лежит шапочка из фольги.");
 
     return PlacementCheck.Allowed;
@@ -1124,7 +1143,7 @@ public sealed class PlayingField
   /// </summary>
   private void PayEbolaPassive(TheoryColumn column, Player newLeader)
   {
-    foreach (var owned in _theoryCards.Where(owned => owned.Card.Passive is EbolaPassive).ToList())
+    foreach (var owned in ActiveTheoryCards.Where(owned => owned.Card.Passive is EbolaPassive).ToList())
     {
       var holder = owned.Owner;
       if (holder == newLeader || !column.Members.Any(member => member.Owner == holder))
@@ -1705,7 +1724,7 @@ public sealed class PlayingField
       throw new InvalidOperationException("Эту карточку нельзя использовать.");
 
     // Пассивная способность «Ленина — гриба»: неудачная проверка своего персонажа приносит деньги.
-    var mushrooms = _theoryCards.Count(owned => owned.Owner == player && owned.Card.Passive is LeninMushroomPassive);
+    var mushrooms = ActiveTheoryCards.Count(owned => owned.Owner == player && owned.Card.Passive is LeninMushroomPassive);
     if (mushrooms > 0)
       player.Earn(mushrooms * LeninMushroomPassive.MoneyPerFailure);
 
@@ -2171,25 +2190,27 @@ public sealed class PlayingField
   /// </summary>
   private void SyncTheoryRules()
   {
-    var antiVaccinationOwner = TheoryCardOf(TheoryCatalog.AntiVaccination)?.Owner;
-    var antarcticaOwners = _theoryCards.Where(owned => owned.Card.Passive is AntarcticaPassive).Select(owned => owned.Owner).ToList();
-    var illuminatiOwners = _theoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).Select(owned => owned.Owner).ToList();
+    var antiVaccinationOwner = TheoryCardOf(TheoryCatalog.AntiVaccination) is { } antiVaccination && IsTheoryCardActive(antiVaccination)
+      ? antiVaccination.Owner
+      : null;
+    var antarcticaOwners = ActiveTheoryCards.Where(owned => owned.Card.Passive is AntarcticaPassive).Select(owned => owned.Owner).ToList();
+    var illuminatiOwners = ActiveTheoryCards.Where(owned => owned.Card.Passive is IlluminatiPassive).Select(owned => owned.Owner).ToList();
     foreach (var column in _theoryColumns)
     {
       column.IlluminatiHiddenOwners = illuminatiOwners;
-      column.FounderInfluenceBonus = TheoryCardOf(column.Theory)?.Card.Passive is FlatEarthPassive ? FlatEarthPassive.FounderBonus : 0;
+      column.FounderInfluenceBonus = ActivePassiveOf(column.Theory) is FlatEarthPassive ? FlatEarthPassive.FounderBonus : 0;
       column.SolvencyMargin = antiVaccinationOwner is not null && column.IsHeadquarters && column.Owner == antiVaccinationOwner
         ? AntiVaccinationPassive.SolvencyBonus
         : 0;
       column.DoubleHomelessOwners = antarcticaOwners;
-      column.AdeptsShielded = TheoryCardOf(column.Theory)?.Card.Passive is TinFoilPassive;
+      column.AdeptsShielded = ActivePassiveOf(column.Theory) is TinFoilPassive;
     }
   }
 
   /// <summary>
   /// Штаб нельзя закрыть как несостоятельный, пока у теории лежит карточка с пассивной способностью «Плоской Земли».
   /// </summary>
-  private bool IsUncloseable(TheoryColumn column) => TheoryCardOf(column.Theory)?.Card.Passive is FlatEarthPassive;
+  private bool IsUncloseable(TheoryColumn column) => ActivePassiveOf(column.Theory) is FlatEarthPassive;
 
   /// <summary>
   /// Владелец карточки «Чипирование» — тот, кто положил фишку — может использовать чипированного персонажа как своего.
@@ -2295,7 +2316,7 @@ public sealed class PlayingField
     if (!column.IsClosed)
       return null;
 
-    var owner = _theoryCards.FirstOrDefault(owned => owned.Card.Passive is IlluminatiPassive)?.Owner;
+    var owner = ActiveTheoryCards.FirstOrDefault(owned => owned.Card.Passive is IlluminatiPassive)?.Owner;
     return owner is not null && column.IsLeader(owner)
       ? owner
       : null;
@@ -2390,13 +2411,14 @@ public sealed class PlayingField
   /// <summary>
   /// Сколько $ добавляет карточка теории «Золотой миллиард» профессионалу в личном штабе: если его владелец
   /// держит такую карточку, то профессионал приносит на <see cref="GoldenBillionPassive.ProfessionalBonus"/>$ больше.
+  /// Пока штаб теории закрыт, бонуса нет.
   /// </summary>
   private int ProfessionMoneyBonusAt(Cell cell)
   {
     if (CardAt(cell) is not ProfessionalCard || _playerZones.Keys.FirstOrDefault(zonePlayer => _playerZones[zonePlayer].Contains(cell)) is not { } owner)
       return 0;
 
-    return _theoryCards.Any(card => card.Owner == owner && card.Card.Passive is GoldenBillionPassive)
+    return HoldsPassive<GoldenBillionPassive>(owner)
       ? GoldenBillionPassive.ProfessionalBonus
       : 0;
   }
@@ -3506,6 +3528,20 @@ public sealed class PlayingField
     var cost = Math.Max(0, JoiningPricePerInfluence * column.Influence - person.JoiningDiscount);
     return player.CanAfford(cost)
       ? PlacementCheck.Allow(cost, column)
-      : PlacementCheck.Deny($"Недостаточно денег: чтобы присоединиться к теории «{column.Theory}», нужно {cost}$, а у вас {player.Money}$.");
+      : PlacementCheck.DenyMoney(cost, $"Недостаточно денег: чтобы присоединиться к теории «{column.Theory}», нужно {cost}$, а у вас {player.Money}$.");
   }
+
+  /// <summary>
+  /// Места сверху стопок теорий, куда можно присоединить карточку без теории, с условиями — в том числе те,
+  /// куда сейчас не хватает денег (<see cref="PlacementCheck.LacksMoney"/>). Для карточки с теорией — пусто.
+  /// </summary>
+  public IEnumerable<(Cell Cell, PlacementCheck Check)> JoiningSlots(Card card, Player player) =>
+    card is PersonCard { Theory: null }
+      ? _theoryColumns
+        .Select(column => column.Top.Above)
+        .Distinct()
+        .Select(cell => (cell, Check(card, cell, player)))
+        .Where(pair => pair.Item2.IsAllowed || pair.Item2.LacksMoney)
+        .ToList()
+      : [];
 }
