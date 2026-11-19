@@ -60,7 +60,7 @@ public partial class AdeptsView : Node2D
   /// <summary>
   /// Ближе этого адепты не встают друг к другу.
   /// </summary>
-  private const float Personal = 9f;
+  private const float Personal = 11f;
 
   private const float LeaveDistance = 60f;
 
@@ -80,6 +80,14 @@ public partial class AdeptsView : Node2D
   private const float MaxScareSpeed = 3f;
 
   private static readonly float[] StandingHeadings = [90, 135, 180, 225, 270];
+
+  /// <summary>
+  /// Во сколько раз фигурки крупнее своего рисунка (<see cref="WalkingAdeptView"/>).
+  /// </summary>
+  private const float FigureScale = 1.25f;
+
+  private static readonly Color[] SkinTones = [new("f1d0ae"), new("e8c9a0"), new("d9a57a"), new("b9805a"), new("8d5a3b")];
+  private static readonly Color[] HairColors = [new("2b211c"), new("4a3426"), new("6b4a2e"), new("a0773f"), new("d9c08a"), new("8c8c8c")];
 
   private static readonly Color BadgeColor = new("7a4fa3");
   private static readonly Color BadgeTextColor = Colors.White;
@@ -264,6 +272,8 @@ public partial class AdeptsView : Node2D
       {
         Height = DropHeight, Modulate = Colors.Transparent, Look = Look, Color = Color, Build = WalkingAdeptView.BodyBuild.Slim,
         Phase = _random.Randf() * Mathf.Tau, Heading = StandingHeadings[_random.RandiRange(0, StandingHeadings.Length - 1)],
+        SkinTone = SkinTones[_random.RandiRange(0, SkinTones.Length - 1)], HairColor = HairColors[_random.RandiRange(0, HairColors.Length - 1)],
+        Scale = Vector2.One * FigureScale,
       };
       _meeples.Add(meeple);
       added.Add(meeple);
@@ -284,7 +294,7 @@ public partial class AdeptsView : Node2D
       var stagger = DropStagger * added.IndexOf(meeple);
       if (grounds is { } place)
       {
-        var wanderer = new Wanderer { Reach = StepsInto(meeple), Pace = _random.RandfRange(1.8f, 2.6f) };
+        var wanderer = new Wanderer { Reach = StepsInto(meeple), Pace = _random.RandfRange(2.2f, 3f) };
         _wanderers[meeple] = wanderer;
         meeple.Position = SpawnPoint(place, wanderer.Reach);
         wanderer.Target = meeple.Position;
@@ -356,7 +366,8 @@ public partial class AdeptsView : Node2D
     }
 
     meeple.FaceTowards(target - meeple.Position);
-    var step = meeple.ScreenStepLength;
+    // Шаг и скорость фигурки — в её собственных пикселях, а идёт она в пикселях узла.
+    var step = meeple.ScreenStepLength * meeple.Scale.X;
     double duration;
     if (hurry)
     {
@@ -364,7 +375,7 @@ public partial class AdeptsView : Node2D
       meeple.StepsPerSecond = distance / (float)duration / step;
     }
     else
-      duration = distance / meeple.WalkSpeed;
+      duration = distance / (meeple.WalkSpeed * meeple.Scale.X);
 
     meeple.Walking = true;
     var tween = meeple.CreateTween();
@@ -382,7 +393,7 @@ public partial class AdeptsView : Node2D
   /// <summary>
   /// Насколько глубоко этот адепт готов заходить на карточки: 2–3 его шага.
   /// </summary>
-  private float StepsInto(WalkingAdeptView meeple) => meeple.StepLength * _random.RandfRange(2f, 3f);
+  private float StepsInto(WalkingAdeptView meeple) => meeple.StepLength * meeple.Scale.X * _random.RandfRange(2f, 3f);
 
   /// <summary>
   /// Куда пойти погулять: недалеко от текущего места, в полосе вокруг штаба, не заходя на карточки глубже

@@ -974,7 +974,7 @@ public partial class Board : Node2D
   private static readonly Color CiaSuitColor = new("2c3038");
   private static readonly Color BloodRed = new("8a0a0a");
   private static readonly Color PresidentSuitBlue = new("1f4fb0");
-  private static readonly Color RobeColor = new("d9a55b");
+  private static readonly Color RobeColor = new("1e1b24");
 
   /// <summary>
   /// Облик и цвет фигурок теории; у подтеорий — как у родительской. Остальные теории — обычные серые миплы.

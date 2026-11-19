@@ -30,7 +30,7 @@ public partial class AdeptWalkSamples : Node2D
     (MeepleView.MeepleLook.Wooden, MeepleView.Gray, "Обычный"),
     (MeepleView.MeepleLook.Suit, new Color("2c3038"), "Костюм"),
     (MeepleView.MeepleLook.LabCoat, new Color("f2f2f2"), "Халат"),
-    (MeepleView.MeepleLook.Robed, new Color("d9a55b"), "Мантия"),
+    (MeepleView.MeepleLook.Robed, new Color("1e1b24"), "Мантия"),
     (MeepleView.MeepleLook.Horned, new Color("8a0a0a"), "Рожки"),
     (MeepleView.MeepleLook.Alien, MeepleView.Gray, "Пришелец"),
   ];
