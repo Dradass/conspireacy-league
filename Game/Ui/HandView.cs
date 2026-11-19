@@ -1,3 +1,4 @@
+using ConspiracyLeague.Game.Cards;
 using Godot;
 
 namespace ConspiracyLeague.Game.Ui;
@@ -94,7 +95,7 @@ public partial class HandView : PanelContainer
 
     foreach (var card in Hub.Hand.Cards)
     {
-      var view = HandCardView.Create(card);
+      var view = HandCardView.Create(card, shown => TheoryMarkers.For(Hub.Session, Hub.Owner, shown));
       view.DragStarted += OnCardPressed;
       view.InfoPressed += source => Hub.RaiseInfoPressed(source.Card);
       view.InfoReleased += _ => Hub.RaiseInfoReleased();

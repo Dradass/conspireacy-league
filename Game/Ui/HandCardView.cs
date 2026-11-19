@@ -19,11 +19,17 @@ public partial class HandCardView : Control
   private static readonly Color SelectedColor = new(0.55f, 0.95f, 0.6f);
 
   private bool _selected;
+  private IReadOnlyList<TheoryMarkers.Marker> _markers = [];
 
   /// <summary>
   /// Отображаемая карточка.
   /// </summary>
   public Card Card { get; private set; } = null!;
+
+  /// <summary>
+  /// Подсказки теорий над карточкой (<see cref="TheoryMarkers"/>): что сейчас показать.
+  /// </summary>
+  public Func<Card, IReadOnlyList<TheoryMarkers.Marker>>? Markers { get; init; }
 
   /// <summary>
   /// Центр карточки в координатах слоя интерфейса.
@@ -61,9 +67,10 @@ public partial class HandCardView : Control
   /// <summary>
   /// Создать отображение карточки в руке.
   /// </summary>
-  public static HandCardView Create(Card card) => new()
+  public static HandCardView Create(Card card, Func<Card, IReadOnlyList<TheoryMarkers.Marker>>? markers = null) => new()
   {
     Card = card,
+    Markers = markers,
     Name = card.GetType().Name,
     CustomMinimumSize = CardSize,
     MouseFilter = MouseFilterEnum.Stop,
@@ -92,10 +99,23 @@ public partial class HandCardView : Control
     DragStarted?.Invoke(this);
   }
 
+  /// <summary>
+  /// Подсказки зависят от руки и поля: сверяем их каждый кадр и перерисовываем только при изменении.
+  /// </summary>
+  public override void _Process(double delta)
+  {
+    var markers = Markers?.Invoke(Card) ?? [];
+    if (markers.SequenceEqual(_markers))
+      return;
+    _markers = markers;
+    QueueRedraw();
+  }
+
   public override void _Draw()
   {
     var rect = new Rect2(Vector2.Zero, CardSize);
     CardPainter.DrawFace(this, rect, Card);
+    TheoryMarkers.DrawOnTopEdge(this, rect, _markers);
     if (_selected)
       DrawRect(rect.Grow(-SelectedBorderWidth / 2), SelectedColor, filled: false, width: SelectedBorderWidth);
   }

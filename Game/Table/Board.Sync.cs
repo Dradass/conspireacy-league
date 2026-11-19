@@ -36,6 +36,17 @@ public partial class Board
   public Player Viewer => LocalPlayer ?? Session.CurrentPlayer;
 
   /// <summary>
+  /// Чья рука показана на экране (<see cref="Ui.HandHub.Owner"/>): для него рисуются подсказки теорий над карточками.
+  /// </summary>
+  public Func<Player>? HandOwner { get; set; }
+
+  /// <summary>
+  /// Для кого подсказки теорий (<see cref="CardTheoryHints"/>): игрок этого компьютера или игрок, чья рука на экране —
+  /// пока ходит бот, это последний ходивший человек, а не бот.
+  /// </summary>
+  public Player HintsViewer => LocalPlayer ?? HandOwner?.Invoke() ?? Session.CurrentPlayer;
+
+  /// <summary>
   /// Привести стол к партии целиком (см. описание класса).
   /// </summary>
   private void OnRestored()

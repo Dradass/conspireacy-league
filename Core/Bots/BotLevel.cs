@@ -253,7 +253,8 @@ public sealed record BotProfile
   /// на два хода, если одной карты не хватает. В гонке доводит до финиша свою главную теорию, входит в чужие теории,
   /// которые вот-вот финишируют, не копит деньги впустую и не вкладывается в личный штаб в ущерб лидерам. Покупает
   /// карточки теорий, лежащих на поле, если иначе их положит лидером соперник. Держит на руке карточку без теории
-  /// про запас, чтобы войти ею в чужую теорию, когда будет выгодно (кроме игры на деньги).
+  /// про запас, чтобы войти ею в чужую теорию, когда будет выгодно (кроме игры на деньги). В развитии теорий
+  /// не переоценивает личный штаб и входит в теории, куда владелец будет приводить адептов.
   /// </summary>
   public static BotProfile Easy { get; } = ByModes(new()
   {
@@ -279,7 +280,7 @@ public sealed record BotProfile
 
   /// <summary>
   /// Средний бот: веса подобраны партиями против лёгкого бота. Ещё охотнее покупает карточки, выше ценит
-  /// персонажей в личном штабе и дольше копит на сильных.
+  /// персонажей в личном штабе (кроме развития теорий) и дольше копит на сильных.
   /// </summary>
   public static BotProfile Medium { get; } = ByModes(Easy with
   {
@@ -299,7 +300,7 @@ public sealed record BotProfile
   {
     ByMode = new Dictionary<GameMode, BotProfile>
     {
-      [GameMode.TheoryDevelopment] = Medium with { MoneyFactor = 1.6, NewTheoryFactor = 1.3 },
+      [GameMode.TheoryDevelopment] = Medium.ForMode(GameMode.TheoryDevelopment) with { MoneyFactor = 1.6, NewTheoryFactor = 1.3 },
       [GameMode.Money] = Medium.ForMode(GameMode.Money) with { UsesFactor = 1.4, ScientistExact = 1, HomelessHarm = 1 },
       [GameMode.Race] = Medium.ForMode(GameMode.Race) with { MoneyFactor = 4, InfluenceFactor = 0.6, NewTheoryFactor = 0.5 },
     },
@@ -308,7 +309,7 @@ public sealed record BotProfile
   /// <summary>
   /// Ультра бот: веса подобраны партиями против тяжёлого бота. Сильнее учитывает выгоду соперников, делает и мелкие
   /// выгодные ходы, охотнее покупает карточки своих теорий и меньше копит. В развитии теорий не гонится за основанием
-  /// новых теорий, не переоценивает личный штаб (охотнее входит в теории и перехватывает их), не закрывает свои штабы
+  /// новых теорий, не закрывает свои штабы
   /// бездомными и не дарит очки владельцам чужих теорий; в гонке упорнее доводит до финиша свою главную теорию.
   /// </summary>
   public static BotProfile Ultra { get; } = WithMode(WithMode(WithAll(Hard, profile => profile with
@@ -320,10 +321,6 @@ public sealed record BotProfile
   }), GameMode.TheoryDevelopment, profile => profile with
   {
     NewTheoryFactor = 1,
-    // Разбор партий против людей: боты выкладывали все стартовые карточки в личный штаб и весь матч играли «получить $»,
-    // не основывая и не перехватывая теорий. Персонаж в личном штабе играет не больше раза за раунд — без завышения
-    // его розыгрышей карточки идут в штабы теорий, а адепты — в свои теории.
-    UsesFactor = 1,
     // Боты закрывали свои штабы бездомными: проверяем состоятельность точно и считаем потерю всего штаба.
     InsolvencyCare = 1,
     // Каждый лидер в чужой теории — очки её владельцу; в партиях с людьми боты так дарили очки победителю.
@@ -339,12 +336,27 @@ public sealed record BotProfile
   /// бот ценит меньше (<see cref="RaceUsesFactor"/>).
   /// </summary>
   /// <remarks>
-  /// В игре на деньги каждый персонаж в личном штабе приносит деньги, а войти в чужую теорию почти никогда не выгоднее:
-  /// карточку про запас бот там не держит (<see cref="HandReserve"/>).
+  /// <para>В игре на деньги каждый персонаж в личном штабе приносит деньги, а войти в чужую теорию почти никогда не
+  /// выгоднее: карточку про запас бот там не держит (<see cref="HandReserve"/>).</para>
+  /// <para>В развитии теорий — по разбору партий против людей: боты выкладывали все карточки в личный штаб и весь матч
+  /// играли «получить $», не входя в теории, куда владелец приводит адептов. Персонаж в личном штабе играет не больше
+  /// раза за раунд (<see cref="TheoryUsesFactor"/>), а будущих адептов чужой теории бот учитывает
+  /// (<see cref="TheoryAdeptGrowth"/>). В партиях ботов между собой это чуть слабее: там все копят деньги.</para>
   /// </remarks>
   private static BotProfile ByModes(BotProfile profile) =>
-    WithMode(WithMode(profile, GameMode.Race, race => race with { UsesFactor = RaceUsesFactor }),
-      GameMode.Money, money => money with { HandReserve = 0 });
+    WithMode(WithMode(WithMode(profile, GameMode.Race, race => race with { UsesFactor = RaceUsesFactor }),
+      GameMode.Money, money => money with { HandReserve = 0 }),
+      GameMode.TheoryDevelopment, theory => theory with { UsesFactor = TheoryUsesFactor, AdeptGrowth = TheoryAdeptGrowth });
+
+  /// <summary>
+  /// Сколько розыгрышей персонажа из личного штаба бот ожидает в развитии теорий на каждый оставшийся раунд.
+  /// </summary>
+  private const double TheoryUsesFactor = 1.0;
+
+  /// <summary>
+  /// Какую долю будущих адептов теорий бот засчитывает в развитии теорий (<see cref="AdeptGrowth"/>).
+  /// </summary>
+  private const double TheoryAdeptGrowth = 1.0;
 
   /// <summary>
   /// Сколько розыгрышей персонажа из личного штаба бот ожидает в гонке на каждый оставшийся раунд.

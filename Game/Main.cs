@@ -203,6 +203,7 @@ public partial class Main : Node2D
 
 	// Общее состояние окон интерфейса: окон руки, штаба и рынка может быть сколько угодно, контроллеры работают с хабами.
 	var hand = new HandHub(session);
+	board.HandOwner = () => hand.Owner;
 	var personalHq = new PersonalHqHub();
 	personalHq.FocusRequested += player => camera.FocusOn(CameraTarget(board, player));
 	var market = new MarketHub();

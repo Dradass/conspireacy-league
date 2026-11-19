@@ -4,7 +4,8 @@ using ConspiracyLeague.Core.Theories;
 namespace ConspiracyLeague.Core.Cards.Theories;
 
 /// <summary>
-/// Карточка теории «План Даллеса»: понизить любого персонажа в бездомного, заплатив владельцу
+/// Карточка теории «План Даллеса»: понизить любого персонажа в личном штабе игрока в бездомного,
+/// заплатив владельцу
 /// пониженного персонажа его влияние (денег не приносит).
 /// </summary>
 public sealed class DullesPlanCard : TheoryCard

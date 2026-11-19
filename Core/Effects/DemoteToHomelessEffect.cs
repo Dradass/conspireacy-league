@@ -4,12 +4,13 @@ using ConspiracyLeague.Core.Game;
 namespace ConspiracyLeague.Core.Effects;
 
 /// <summary>
-/// Понизить персонажа (<see cref="GameContext.TargetCell"/>) до бездомного. За чужого персонажа игрок платит его
+/// Понизить персонажа в личном штабе игрока (<see cref="GameContext.TargetCell"/>) до бездомного; персонажей в штабах
+/// теорий не трогает. За чужого персонажа игрок платит его
 /// владельцу его влияние (<see cref="PlayingField.DemoteFee"/>); своего понижать бесплатно. Денег действие не приносит.
 /// </summary>
 public sealed class DemoteToHomelessEffect : Effect
 {
-  public override string Description => "Понизить любого персонажа в бездомного, заплатив его владельцу его влияние";
+  public override string Description => "Понизить любого персонажа в личном штабе игрока в бездомного, заплатив его владельцу его влияние";
 
   public override bool RequiresTargetCell => true;
 

@@ -47,6 +47,11 @@ public partial class PersonalHqView : PanelContainer
   public Player? FixedPlayer { get; init; }
 
   /// <summary>
+  /// Для кого подсказки теорий над карточками (<see cref="TheoryMarkers"/>).
+  /// </summary>
+  public Func<Player> Viewer { get; init; } = null!;
+
+  /// <summary>
   /// Можно ли положить сюда карточку из руки: только в свой штаб, а не в окно чужого штаба.
   /// </summary>
   public bool AcceptsDrops => FixedPlayer is null;
@@ -173,6 +178,8 @@ public partial class PersonalHqView : PanelContainer
       hash.Add(Field.IsUsed(cell));
       hash.Add(Field.IsRotated(cell));
       hash.Add(card is HiddenCard { IsRevealed: true });
+      foreach (var marker in TheoryMarkers.For(Session, Viewer(), card))
+        hash.Add(marker);
     }
 
     return hash.ToHashCode();
@@ -218,7 +225,10 @@ public partial class PersonalHqView : PanelContainer
     else if (card is HiddenCard { IsRevealed: false } hidden)
       CardPainter.DrawHiddenBack(_grid, local, hidden);
     else
+    {
       CardPainter.DrawFace(_grid, local, card is HiddenCard shown ? shown.Face : card);
+      TheoryMarkers.DrawOnTopEdge(_grid, local, TheoryMarkers.For(Session, Viewer(), card));
+    }
 
     _grid.DrawSetTransform(Vector2.Zero, 0, Vector2.One);
   }

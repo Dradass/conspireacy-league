@@ -173,7 +173,7 @@ public partial class Board : Node2D
     _effectsLayer = new Node2D { Name = "Effects" };
     AddChild(_effectsLayer);
     // Подсказки рынка рисуются поверх карточек: добавлены последними среди слоёв карточек.
-    _effectsLayer.AddChild(new MarketTheoryHints { Name = "MarketTheoryHints", Session = Session, Board = this });
+    _effectsLayer.AddChild(new CardTheoryHints { Name = "CardTheoryHints", Session = Session, Board = this });
     // Подсветка мест и стрелки — поверх карточек: место для дочерней теории может быть занято другой теорией.
     _effectsLayer.AddChild(_placementOverlay);
     _effectsLayer.AddChild(_arrows);

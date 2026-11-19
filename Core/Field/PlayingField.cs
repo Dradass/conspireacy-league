@@ -998,15 +998,17 @@ public sealed class PlayingField
   public bool CanSeeAllHidden(Player player) => HoldsPassive<BirdsDronesPassive>(player);
 
   /// <summary>
-  /// Персонажи (кроме бездомных и закрытых карточек) в личных штабах и теориях, которых можно понизить до бездомного.
+  /// Персонажи (кроме бездомных и закрытых карточек) в личных штабах игроков, которых можно понизить до бездомного.
+  /// Персонажей в штабах теорий «План Даллеса» не понижает.
   /// </summary>
   public IEnumerable<(Cell Cell, PlacementCheck Check)> DemoteTargets(Player player) =>
-    _cards.Keys
+    _playerZones
+      .SelectMany(zone => zone.Value.Cells)
       .Where(cell => CardAt(cell) is PersonCard and not HomelessCard and not HiddenCard)
       .Select(cell => (cell, CheckDemote(cell, player)));
 
   /// <summary>
-  /// Проверить, можно ли понизить персонажа до бездомного: закрытая теория и защищённые персонажи не трогаем,
+  /// Проверить, можно ли понизить персонажа до бездомного: только в личном штабе и без защиты,
   /// а за чужого персонажа нужно заплатить его владельцу его влияние (<see cref="DemoteFee"/>).
   /// </summary>
   /// <param name="cell">Ячейка персонажа.</param>
@@ -1035,7 +1037,7 @@ public sealed class PlayingField
     if (CardAt(cell) is not PersonCard person)
       return null;
 
-    var owner = ColumnAt(cell)?.OwnerAt(cell) ?? OwnerOfCell(cell);
+    var owner = OwnerOfCell(cell);
     return owner is null || owner == player || person.Influence <= 0 ? null : (owner, person.Influence);
   }
 
@@ -1047,19 +1049,9 @@ public sealed class PlayingField
     if (CardAt(cell) is not PersonCard || CardAt(cell) is HomelessCard or HiddenCard)
       return PlacementCheck.Deny("Здесь нет персонажа, которого можно понизить.");
 
-    if (ColumnAt(cell) is { } column)
-    {
-      if (column.IsClosed)
-        return PlacementCheck.Deny($"Штаб теории «{column}» закрыт — персонажей в нём не понизить.");
-      if (column.IsProtected())
-        return PlacementCheck.Deny("Эту теорию защищает полицейский.");
-      if (IsImmune(cell))
-        return PlacementCheck.Deny("Персонажей этого игрока защищают рептилоиды.");
-      return PlacementCheck.Allowed;
-    }
-
+    // Понижать можно только персонажей в личных штабах игроков, не в штабах теорий.
     if (OwnerOfCell(cell) is null)
-      return PlacementCheck.Deny("Здесь нет персонажа из личного штаба.");
+      return PlacementCheck.Deny("Понизить можно только персонажа из личного штаба игрока.");
     return IsProtected(cell, player)
       ? PlacementCheck.Deny("Этого персонажа защищает полицейский или шапочка из фольги.")
       : PlacementCheck.Allowed;
@@ -1102,7 +1094,7 @@ public sealed class PlayingField
   }
 
   /// <summary>
-  /// Понизить персонажа до бездомного той же теории (владелец остаётся прежним).
+  /// Понизить персонажа в личном штабе до бездомного той же теории (владелец остаётся прежним).
   /// </summary>
   /// <exception cref="InvalidOperationException">Понизить нельзя.</exception>
   public void Demote(Cell cell, Player player)
@@ -1121,12 +1113,6 @@ public sealed class PlayingField
 
     var card = (PersonCard)_cards[cell];
     var homeless = new HomelessCard(card.Theory);
-    if (ColumnAt(cell) is { } column)
-    {
-      ReplaceInTheory(column, cell, homeless);
-      return;
-    }
-
     ReleaseFoils(cell);
     _cards[cell] = homeless;
     CardReplaced?.Invoke(cell);

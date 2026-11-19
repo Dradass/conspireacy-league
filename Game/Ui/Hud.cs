@@ -213,11 +213,11 @@ public partial class Hud : CanvasLayer
 
   private Control CreateContent(HudWindow window) => window.Kind switch
   {
-    HudWindowKind.Market => new MarketView { Name = "Market", Session = Session, Hub = Market },
+    HudWindowKind.Market => new MarketView { Name = "Market", Session = Session, Hub = Market, Viewer = () => Board.HintsViewer },
     HudWindowKind.Theories => new TheoriesView { Name = "Theories", Board = Board, Hub = Theories },
     HudWindowKind.Hand => new HandView { Name = "Hand", Hub = Hand },
-    HudWindowKind.PersonalHq => new PersonalHqView { Name = "PersonalHq", Session = Session, Hub = PersonalHq },
-    HudWindowKind.OtherHq => new PersonalHqView { Name = "OtherHq", Session = Session, Hub = PersonalHq, FixedPlayer = window.ShownPlayer },
+    HudWindowKind.PersonalHq => new PersonalHqView { Name = "PersonalHq", Session = Session, Hub = PersonalHq, Viewer = () => Board.HintsViewer },
+    HudWindowKind.OtherHq => new PersonalHqView { Name = "OtherHq", Session = Session, Hub = PersonalHq, FixedPlayer = window.ShownPlayer, Viewer = () => Board.HintsViewer },
     HudWindowKind.Players => new PlayersInfoView { Name = "Players", Session = Session },
     HudWindowKind.History => new HistoryView { Name = "History", History = History },
     _ => throw new ArgumentOutOfRangeException(nameof(window), window.Kind, null),
